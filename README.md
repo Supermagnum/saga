@@ -72,13 +72,130 @@ voice call, Saga plays no role.
       transcript) before switching to encrypted frames — prevents silent
       desync and binds the handshake against replay/splicing.
    f. Cipher profile ack (which AEAD/profile to use for this call).
-4. **No response / timeout:** call proceeds as normal unencrypted cellular
-   call. No error shown to user beyond a neutral "not encrypted" indicator.
+4. **No response / timeout — branches on prior expectation, not silent
+   in the general case:**
+   - **No key ever resolved for this contact (never encrypted before):**
+     call proceeds as a normal unencrypted call. Neutral "not encrypted"
+     indicator only — no prior expectation exists to violate.
+   - **A key resolves for this contact, or a prior call with them was
+     encrypted, and *this* call's handshake fails or times out:** this is
+     treated as a potential downgrade attack, not a neutral fallback. The
+     call does not proceed silently — see §5a.
 5. **Media:** RTP audio encrypted via negotiated AEAD (default:
    ChaCha20-Poly1305, one key per call, frame counter as nonce).
 6. **UI state:** in-call UI shows "securing…" until handshake completes,
    then flips to "encrypted." If handshake fails after connect, flips to
    unencrypted rather than dropping the call.
+
+## 5a. Downgrade handling (security-critical)
+
+Rationale: a "not encrypted" outcome is only safe to treat as neutral when
+there was never an expectation of encryption in the first place. Once a
+contact's key is known — whether from a prior successful encrypted call or
+an out-of-band exchange — a handshake failure on a subsequent call to that
+same contact is indistinguishable from active interference (an attacker
+blocking/delaying the handshake while letting the call itself connect).
+Silently downgrading in that case defeats the point of having encryption at
+all, and the person on the call has no way to notice it happened.
+
+**Behavior:**
+
+- Saga tracks, per contact, whether encryption has ever succeeded with them
+  (a local "encryption established" flag/counter, not a server-side record).
+- **Downgrade on a never-encrypted contact:** proceed silently, per §5 step 4
+  — this is the existing, non-security-critical path.
+- **Downgrade on a previously-encrypted contact:** do not silently connect
+  unencrypted. Interrupt with an explicit warning before the call connects
+  (or immediately upon connecting, if the handshake fails mid-setup):
+  "Couldn't secure this call with [contact] — it's usually encrypted. This
+  could mean a network problem, or someone interfering with the call."
+  Require an explicit tap to continue unencrypted or to cancel the call.
+  This is friction by design — the failure mode here should be annoying,
+  not invisible.
+- Each downgrade event for a previously-encrypted contact is logged
+  locally (timestamp, contact) so a person can review whether this has
+  happened once (plausibly transient) or repeatedly (plausibly an active,
+  ongoing interception) — a single occurrence and a pattern warrant
+  different levels of concern, and only the person reviewing their own call
+  history is in a position to judge that.
+
+**Open items:**
+- [ ] Exact UX for the warning (modal that blocks connecting vs. a banner
+      that allows connecting through it) — needs to be obviously
+      interruptive, not a small icon change easy to miss.
+- [ ] Whether "encryption established" should require more than one
+      successful past call before treating a downgrade as suspicious
+      (avoids false alarms from a contact's very first call happening to
+      fail its handshake for an unrelated reason).
+- [ ] Should apply symmetrically to the decentralized-mode (Iroh) transport
+      once §14 moves from forward-looking design to implementation.
+
+## 5b. Mid-call security transitions (encrypted -> unsecured)
+
+§5a covers downgrade at call *setup*. This covers the case where a call is
+already encrypted and connected, and the secure session is subsequently
+lost mid-call — a distinct and arguably more serious event, since it means
+something that was working stopped working, rather than never having
+started.
+
+**First: what can legitimately cause this, given §3 rules out in-call
+rekeying?** Two realistic triggers, with different correct responses:
+
+1. **Network handover** (e.g. WiFi calling switches to cellular data mid-call,
+   or vice versa). The underlying data path changes, which may force a fresh
+   handshake rather than a continuation of the existing one. This is a
+   legitimate, non-adversarial event.
+2. **Sustained decryption failure** on the media stream (corrupted/dropped
+   SRTP frames beyond what replay/loss tolerance handles). This is *not*
+   necessarily benign — an attacker able to selectively corrupt or block
+   packets could induce exactly this condition on demand, which makes it a
+   plausible attack surface if the response to it is "fall back to
+   plaintext and keep going."
+
+**Policy (different response per trigger):**
+
+- **Handover-triggered:** treat as a bounded re-handshake window, not an
+  immediate downgrade. If the re-handshake completes within [TBD short
+  timeout], the call continues encrypted with no visible interruption. If
+  it fails, this is treated identically to §5a's downgrade case (this
+  contact has an established encryption expectation) — warning triggers,
+  not silent continuation.
+- **Decryption-failure-triggered:** default to **terminating the call
+  rather than falling back to plaintext RTP.** Silently accepting
+  plaintext media after the secure session breaks down is the same shape
+  of attack surface as the setup-time downgrade in §5a, except mid-call —
+  and arguably easier for an attacker to trigger deliberately (corrupt a
+  few packets) than blocking a handshake outright. This needs explicit
+  sign-off as a design decision, since it trades call continuity for
+  security; the alternative (continue unsecured with warning, same as the
+  handover case) is usable but reopens the attack surface §5a was written
+  to close.
+
+**Audio warning (this message's ask):**
+
+- A short, distinct audio tone plays at the moment a call's security state
+  actually transitions from encrypted to unsecured mid-call (i.e. the
+  handover case resolves to "downgraded," per the policy above) — not
+  during the brief re-handshake window itself, and not repeated for the
+  remainder of the call.
+- Toggle: **Settings > "Play audio warning on mid-call security loss"**,
+  independent of the always-on visual warning icon (§13's "Downgraded"
+  state) and the logging behavior (§5a) — the tone is an additive alert on
+  top of those, not a replacement for either, since a mid-call tone is easy
+  to miss in a noisy environment or if the phone isn't at the ear at that
+  exact moment.
+- Deliberately a distinct sound, not reused from any existing call/system
+  sound, to avoid ambiguity about what triggered it.
+
+**Open items:**
+
+- [ ] Decide the decryption-failure policy (terminate vs. downgrade-with-
+      warning) — this is a real security-vs-usability tradeoff, not a
+      detail to default silently.
+- [ ] Define the re-handshake timeout window for the handover case.
+- [ ] Confirm default state for the audio-warning toggle (on by default is
+      recommended given the stakes, but "optional" implies user control
+      either way).
 
 ## 6. Cryptography
 
@@ -334,12 +451,18 @@ name tag, and whether a handshake has completed for the active call.
 |---|---|---|
 | **Encryption possible** | Peer's key resolves from the contact's Galdra name tag; handshake not yet run or in progress | Open padlock |
 | **Encrypted** | Handshake completed, transcript confirmed (Section 12 message 3), session key active | Closed padlock |
-| **Key not found** | No key resolves for the contact's name tag (unknown contact, revoked/missing entry, or signature verification fails) | Key-with-red-X, styled after [`key-error.svg`](https://github.com/Supermagnum/gnupg-hamradio/blob/main/icons/key-error.svg) from the gnupg-hamradio icon set |
+| **Key not found** | No key resolves for the contact's name tag (unknown contact, revoked/missing entry, or signature verification fails); no prior expectation of encryption | Key-with-red-X, styled after [`key-error.svg`](https://github.com/Supermagnum/gnupg-hamradio/blob/main/icons/key-error.svg) from the gnupg-hamradio icon set |
+| **Downgraded (warning)** | A key resolves, or this contact has been encrypted before (§5a), but this call's handshake failed/timed out | Distinct broken-padlock/warning icon (not the same as "key not found") — paired with the interruptive warning from §5a, not passive icon-only signaling |
 
 Notes:
 - "Key not found" takes priority for display over "encryption possible" —
   i.e. if the contact has no resolvable key, don't show an open padlock
   implying encryption is one tap away when it isn't.
+- "Downgraded (warning)" takes priority over every other state — it must
+  never be visually confusable with "key not found," since the two
+  represent very different situations (never expected encryption, vs.
+  expected it and didn't get it this time). Collapsing them into one icon
+  is exactly the failure mode §5a exists to prevent.
 - Transition from open -> closed padlock should be the same point the
   in-call status hint text flips from "Securing..." to "Encrypted"
   (Section 5, step 6) -- one state change, not two independent signals.
