@@ -9,8 +9,7 @@ Saga lets two phones make what looks and behaves like a normal cellular call,
 while transparently negotiating end-to-end encryption over the data path
 whenever both ends support it. If the peer doesn't support Saga, or no data
 connectivity is available, the call may fall back to a normal unencrypted
-cellular call — but only silently for contacts with no prior encrypted
-history. Once encryption has been established with a contact, a failed
+cellular call — but never silently. Once encryption has been established with a contact, a failed
 handshake requires explicit user confirmation before continuing unencrypted
 (see §5a). Encryption is never required to place a call, and is not visible
 as a separate "app" experience — it rides inside the native dialer UI.
