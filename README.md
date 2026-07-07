@@ -611,3 +611,86 @@ keep it distinct from the GPLv3-encumbered managed-mode build.
 - [ ] Decide whether missed-call/offline presence is a v-next requirement;
       if so, evaluate OpenDHT integration effort at that point.
 - [ ] Prototype token identity <-> Iroh node identity binding.
+
+## 15. Testing: mock token & two-emulator encryption verification
+
+Test-only material, strictly scoped to verifying the handshake and
+encrypt/decrypt pipeline across two emulated Android devices before any real
+hardware token or real audio device is involved.
+
+### 15.1 Mock token — scope and enforcement
+
+The mock token implements the same `ephemeral-session` wire format the real
+Galdralag firmware defines (§7.4) — same message shapes, same
+`x25519-dalek`/`ed25519-dalek` primitives — but backed by an in-memory
+software keypair instead of hardware-backed TRNG and secure storage. It
+exists to exercise the handshake, `ConnectionService` lifecycle, and SRTP
+pipeline on two emulators without physical tokens plugged into either.
+
+Scope is enforced at build time, not by convention:
+
+- Lives in a separate crate path in the repo (e.g. `testing/mock-token`),
+  not alongside the real token-integration code.
+- Gated behind a Cargo feature (e.g. `mock-token`) that is **not** enabled
+  in release build profiles — a mock token must be structurally unable to
+  ship in a production build, not merely undocumented for one.
+- Mock-issued keys/identities are marked as such wherever they surface
+  (logs, test fixtures) so a mock-derived session can never be confused
+  with a real hardware-backed one.
+
+### 15.2 Two-emulator setup
+
+- Run two AVD instances concurrently. On Android Emulator 36.5+, both
+  instances share a virtual Wi-Fi network by default with zero-config
+  peer-to-peer discovery (NSD/Wi-Fi Direct) — no manual port redirection
+  needed for local peer connectivity. On older emulator versions, fall back
+  to manual `redir`/`adb forward` bridging via the host (`10.0.2.2`).
+- Self-managed `ConnectionService`/`PhoneAccount` registration (§11) works
+  natively in the emulator — no hardware dependency — so the full in-call
+  UI lifecycle is testable on both instances.
+- Managed-mode (Flexisip) testing: point both AVDs at a Flexisip instance
+  reachable from both (host-run or on the shared virtual network).
+  Decentralized-mode (Iroh) testing: the shared Wi-Fi network gives a
+  realistic local-discovery path distinct from the relay-fallback path,
+  worth testing separately from each other.
+
+### 15.3 No audio hardware access required
+
+Codec behavior (Opus encode/decode, framing, packet loss concealment) is
+deterministic and already well-characterized — validating it does not
+require live microphone/speaker hardware. Known synthetic input (e.g. a
+fixed tone or deterministic bit pattern) is fed directly into the encoder on
+one emulator; the decrypted, decoded output on the peer emulator is
+compared against the expected result. This confirms the full pipeline
+(handshake → SRTP encryption → transport → decryption → decode) without any
+emulator audio I/O passthrough. Real microphone/speaker validation is
+separate, later, real-device work — not part of this test.
+
+### 15.4 Encryption/decryption test procedure
+
+1. **Handshake success:** both emulators run the mock-token
+   `ephemeral-session` exchange; assert both sides derive an identical
+   session key (via the mutual transcript-MAC confirmation, §12 message 3 /
+   §7.4) and the UI transitions open padlock → closed padlock (§13) at the
+   correct point (§5 step 6).
+2. **Encrypted media round-trip:** feed known synthetic input into the
+   encoder on emulator A; assert the SRTP frames arriving at emulator B
+   decrypt to the expected output using the derived session key.
+3. **Never-encrypted-contact fallback:** with no prior mock-token exchange
+   recorded for a given test contact, force a handshake failure; assert the
+   call proceeds silently unencrypted with the neutral key-not-found state
+   (§5 step 4, §13) — no warning triggered.
+4. **Downgrade-on-known-contact:** after a successful encrypted exchange
+   (step 1) is recorded for a test contact, force a subsequent handshake
+   failure for the same contact; assert the §5a interruptive warning fires,
+   the downgraded-warning icon (§13) is shown (and is visually distinct from
+   the key-not-found state), and the event is logged locally.
+5. **Mid-call transition:** with an active encrypted call between the two
+   emulators, simulate a network-path change (§5b handover case); assert
+   the bounded re-handshake completes within the 4 s window (§8) with no
+   visible interruption, or — if forced to fail — assert the same §5a
+   downgrade behavior fires mid-call, including the audio-warning tone if
+   the setting is enabled (§5b).
+6. **CI integration:** both AVDs can run headless, making this a candidate
+   for automated regression testing on every change to the handshake or
+   SRTP pipeline, rather than a manual-only test procedure.
