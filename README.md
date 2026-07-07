@@ -8,17 +8,21 @@
 Saga lets two phones make what looks and behaves like a normal cellular call,
 while transparently negotiating end-to-end encryption over the data path
 whenever both ends support it. If the peer doesn't support Saga, or no data
-connectivity is available, the call falls back silently to a normal
-unencrypted cellular call. Encryption is never required, never blocks the
-call, and is not visible as a separate "app" experience — it rides inside
-the native dialer UI.
+connectivity is available, the call may fall back to a normal unencrypted
+cellular call — but only silently for contacts with no prior encrypted
+history. Once encryption has been established with a contact, a failed
+handshake requires explicit user confirmation before continuing unencrypted
+(see §5a). Encryption is never required to place a call, and is not visible
+as a separate "app" experience — it rides inside the native dialer UI.
 
 ## 2. Goals
 
 - Calls appear in the native Android in-call UI, call log, and Bluetooth/car
   integrations — indistinguishable from a carrier call.
 - Encryption activates automatically when both peers support it; otherwise
-  the call proceeds as a normal unencrypted call with no user action needed.
+  the call may proceed unencrypted — silently only for contacts that have
+  never been encrypted before, with an explicit warning for previously
+  encrypted contacts (§5a).
 - Key exchange uses the hardware token's on-device ephemeral ECDH + signature
   primitive — the long-term key never touches key agreement, only signs the
   ephemeral offer (forward secrecy per call).
@@ -29,13 +33,15 @@ the native dialer UI.
 
 ## 3. Non-goals (this iteration)
 
-- No in-call rekeying / ratcheting — one handshake per call.
+- No in-call rekeying / ratcheting — one handshake per call; SRTP replay
+  window limits single-key call duration to roughly 15–20 minutes at typical
+  VoIP rates (see §8).
 - No group calls in v1 core flow (§1–§13 describe two-party calling only);
   group calling and decentralized routing options are captured as a
   forward-looking design in §14 but not part of this iteration's build.
 - No app-native calling UI on Android — must use system Telecom integration.
-- Linux side is a SIP/RTP peer only; no illusion of a "native OS dialer"
-  since none exists to blend into.
+- Linux side is a SIP/RTP reference peer only (§8); no illusion of a
+  "native OS dialer" since none exists to blend into.
 
 ## 4. Architecture
 
@@ -53,7 +59,8 @@ the native dialer UI.
 ```
 
 Fallback path (no Saga peer / no data): call routes as an ordinary cellular
-voice call, Saga plays no role.
+voice call. Silent downgrade only when no prior encrypted history exists
+with that contact; otherwise §5a applies.
 
 ## 5. Call flow
 
@@ -155,8 +162,9 @@ rekeying?** Two realistic triggers, with different correct responses:
 **Policy (different response per trigger):**
 
 - **Handover-triggered:** treat as a bounded re-handshake window, not an
-  immediate downgrade. If the re-handshake completes within [TBD short
-  timeout], the call continues encrypted with no visible interruption. If
+  immediate downgrade. If the re-handshake completes within **4 s** (same
+  hard timeout as setup handshake, §8), the call continues encrypted with no
+  visible interruption. If
   it fails, this is treated identically to §5a's downgrade case (this
   contact has an established encryption expectation) — warning triggers,
   not silent continuation.
@@ -192,7 +200,8 @@ rekeying?** Two realistic triggers, with different correct responses:
 - [ ] Decide the decryption-failure policy (terminate vs. downgrade-with-
       warning) — this is a real security-vs-usability tradeoff, not a
       detail to default silently.
-- [ ] Define the re-handshake timeout window for the handover case.
+- [x] Re-handshake timeout for the handover case: **4 s**, aligned with the
+      setup handshake hard timeout (§8).
 - [ ] Confirm default state for the audio-warning toggle (on by default is
       recommended given the stakes, but "optional" implies user control
       either way).
@@ -202,7 +211,7 @@ rekeying?** Two realistic triggers, with different correct responses:
 | Stage | Primitive | Notes |
 |---|---|---|
 | Key agreement | Token: ephemeral ECDH, long-term key signs ephemeral offer | On-device TRNG, forward secret per call |
-| Transcript binding | HKDF `info` = hash of handshake transcript | Hand-rolled 3-message handshake, not full Noise — revisit if session shapes grow (see §8) |
+| Transcript binding | HKDF `info` = hash of handshake transcript | Hand-rolled 3-message handshake, not full Noise — revisit if session shapes grow (see §7.4) |
 | Session cipher | ChaCha20-Poly1305 (default profile) | Per-RTP-frame, nonce derived from sequence number |
 | Media framing | SRTP | Handles replay protection, per-packet IV derivation |
 
@@ -283,18 +292,61 @@ messages over SIP/Iroh rather than defining a new one:
       addition (e.g. just the cipher-profile-ack field), not a rewrite of
       the handshake itself.
 
-## 8. Open questions
+## 8. Decisions (formerly open questions)
 
-- [ ] Measured token APDU latency for one ECDH + one sign operation
-      (end-to-end, both directions) — determines handshake budget.
-- [ ] Confirm handshake reliably completes inside call-setup window on both
-      VoLTE and VoWiFi paths; VoWiFi adds IPsec/IMS tunnel overhead on top
-      of the same IMS stack.
-- [ ] Decide fallback UX wording/iconography for "not encrypted."
-- [ ] Rekeying policy for abnormally long calls (out of scope for v1, but
-      note the decision).
-- [ ] Linux peer: SIP/RTP client scope — full softphone, or reference
-      implementation only?
+### Handshake budget
+
+- [x] **Planning budget (pending hardware measurement):** allocate **2 s**
+  target / **4 s** hard timeout from data-path availability before downgrade
+  logic applies (§5 step 4 / §5a). UI shows "Securing…" throughout; the probe
+  runs in parallel with call setup and does not block ringback/connect.
+  Per-side token work (ephemeral ECDH generate + sign) is estimated at
+  ~100–600 ms; full-exchange critical path is ~300 ms–1.5 s crypto plus 1–2
+  SIP RTTs.
+- [ ] **Verify on hardware:** benchmark Galdralag token APDU latency for one
+  ECDH + one sign per direction (`T_generate + T_sign + T_verify + T_ecdh`,
+  end-to-end both ways); adjust the 2 s / 4 s numbers if measurement
+  exceeds estimate.
+
+### VoLTE / VoWiFi fit
+
+- [x] Handshake uses the same IP/SIP path liblinphone already employs (LTE
+  data or WiFi), not the circuit voice bearer. Expect completion inside
+  normal call-setup windows on both VoLTE (simultaneous data) and VoWiFi when
+  an IP route to the peer exists; add **+500 ms** slack on VoWiFi for
+  IPsec/ePDG overhead. Primary failure mode is voice-up/data-down (handshake
+  times out → downgrade per §5).
+- [ ] **Verify in the field:** carrier test matrix on both VoLTE and VoWiFi
+  paths; confirm ≥95% handshake completion before callee answers.
+
+### Fallback UX ("not encrypted")
+
+- [x] Adopt §13 icon states and paired status text: open padlock +
+  "Securing…" (in progress), closed padlock + "Encrypted", key-with-red-X +
+  "Not encrypted" (neutral, never-encrypted contact), broken-padlock/warning
+  icon + §5a modal (previously encrypted, handshake failed). Do not merge
+  "key not found" and "downgraded" visuals — they represent different
+  situations and must stay distinct.
+- [ ] Confirm license of the gnupg-hamradio icon set (§13 TODO) or redraw
+  equivalent glyphs in-house.
+
+### Rekeying (long calls)
+
+- [x] **v1: no in-call rekeying** — one ephemeral ECDH handshake yields one
+  session key for the entire call (§3). Mid-call path change gets a bounded
+  re-handshake (§5b), not periodic rekey. Known ceiling: the SRTP replay
+  window (~2¹⁵ frames) imposes a practical limit of roughly 15–20 minutes at
+  typical VoIP packet rates on a single key; accept for v1, revisit in v2 if
+  long-call use cases matter.
+
+### Linux peer scope
+
+- [x] **Reference implementation only** — a `liblinphone`-based CLI or
+  minimal test harness is sufficient to register SIP, place/receive calls,
+  run the Saga handshake, and verify encrypted media (with a token bridge for
+  crypto parity with Android). Not a full softphone product: no contacts
+  app, dialer polish, or end-user packaging. Purpose: dev/test peer for
+  Android work and CI interoperability checks.
 
 ## 9. Explicitly rejected approach
 
