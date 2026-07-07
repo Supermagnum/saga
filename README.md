@@ -30,7 +30,9 @@ the native dialer UI.
 ## 3. Non-goals (this iteration)
 
 - No in-call rekeying / ratcheting — one handshake per call.
-- No group calls.
+- No group calls in v1 core flow (§1–§13 describe two-party calling only);
+  group calling and decentralized routing options are captured as a
+  forward-looking design in §14 but not part of this iteration's build.
 - No app-native calling UI on Android — must use system Telecom integration.
 - Linux side is a SIP/RTP peer only; no illusion of a "native OS dialer"
   since none exists to blend into.
@@ -92,13 +94,77 @@ Cipher profile selection reuses the token's existing named-profile concept
 uses a single fast AEAD per frame, not cascaded ciphers, due to latency
 sensitivity.
 
-## 7. Rust crates (working list)
+## 7. Rust crates — minimum self-rolled design criteria
 
-- `webrtc-srtp` / `webrtc` — RTP/SRTP framing over the data path
-- `chacha20poly1305` (RustCrypto) — session cipher
-- `x25519-dalek` / `p256` — host-side crypto if any operations happen off-token
-- `snow` — deferred; add only if the handshake needs to grow beyond the
-  fixed 3-message signed-ECDH pattern (e.g. supporting multiple DH modes)
+**Design rule:** Saga writes as close to zero original cryptographic or
+protocol-framing code as possible. Every primitive and every handshake
+message format is either (a) a crate already used by Galdralag-firmware, or
+(b) an existing, audited crate for a need the firmware doesn't cover
+(RTP/SRTP transport, decentralized networking). No self-rolled crypto, no
+self-rolled handshake state machine where the firmware already defines one.
+
+### 7.1 Reused directly from Galdralag-firmware's own dependency set
+
+Galdralag-firmware's cryptographic dependency policy draws everything from
+audited RustCrypto/dalek crates, nothing implemented in-tree. Saga adopts
+the same crates for the overlapping needs, rather than picking equivalents:
+
+| Crate | Used for in Saga | Matches firmware's use |
+|---|---|---|
+| `x25519-dalek` | ECDH half of the handshake | Same crate, same curve (X25519, RFC 7748) |
+| `ed25519-dalek` | Signing the ephemeral offer with the long-term token key | Same crate, same signature scheme (RFC 8032) |
+| `chacha20poly1305` | Per-frame AEAD for SRTP media and the group-call frame-encryption layer (§14) | Same crate, same cipher (RFC 8439) |
+| `hkdf` | Session key derivation from the ECDH shared secret + transcript | Same crate |
+| `blake3` | Transcript hashing / integrity binding | Same crate |
+| `zeroize` | Clearing session keys and derived secrets from memory on drop | Same crate, same pattern (`Zeroize`/`ZeroizeOnDrop`) |
+| `subtle` | Constant-time comparison anywhere Saga compares secret-derived values (e.g. transcript MAC verification) | Same crate (`ConstantTimeEq`) |
+
+`aes-gcm`, `sha2`, `sha3`, `blake2`, `pbkdf2`, `hmac`, `p256`, `p384` are in
+the firmware's dependency set but not currently needed on the Saga side —
+listed here only so a future cipher-profile choice (e.g. matching a
+`conservative` or Brainpool-based token profile) doesn't introduce a new
+crate where one is already vetted and in use.
+
+`vsss-rs` (Shamir) is a firmware/vault concern, not a calling-app concern —
+excluded from Saga's dependency list unless a future feature needs the phone
+app itself to handle key shares.
+
+### 7.2 Existing crates for needs the firmware doesn't cover
+
+| Crate | Used for | Why not self-rolled |
+|---|---|---|
+| `webrtc-srtp` / `webrtc` | RTP/SRTP packet framing, replay protection, per-packet IV derivation | Getting SRTP framing subtly wrong by hand is a known footgun; use the existing pure-Rust implementation |
+| `iroh` | Decentralized-mode transport (§14.4): NAT traversal, relay fallback, dial-by-public-key | Solves QUIC/NAT-traversal/relay correctly; not something to reimplement |
+
+### 7.3 Explicitly cut
+
+- **`snow` (Noise Protocol Framework)** — removed entirely, not just
+  deferred. Since Galdralag-firmware already ships an authenticated
+  ephemeral ECDH session protocol (`ephemeral-session` crate, documented in
+  `docs/EPHEMERAL_SESSION.md`), adopting a second, independently-designed
+  handshake framework (Noise) alongside it would itself be the kind of
+  redundant, harder-to-audit surface this design criteria exists to avoid.
+- Any bespoke SRTP, ICE, or DTLS code — covered by `webrtc`/`webrtc-srtp`.
+
+### 7.4 Open item superseding §12
+
+**§12's 3-message handshake format was drafted before this repository was
+located and is very likely redundant.** Galdralag-firmware already defines
+and tests an authenticated ephemeral ECDH session protocol with its own
+wire format (`docs/EPHEMERAL_SESSION.md`, crate `ephemeral-session`). The
+minimum-self-rolled rule means Saga should transport *that* protocol's
+messages over SIP/Iroh rather than defining a new one:
+
+- [ ] Read `docs/EPHEMERAL_SESSION.md` and the `ephemeral-session` crate
+      directly; confirm whether its wire format already includes transcript
+      confirmation and cipher-profile negotiation (§12's messages 2–3), or
+      whether Saga still needs a thin wrapper for those two things.
+- [ ] If the firmware's protocol covers it end-to-end, retire §12 in favor
+      of a reference to that protocol rather than maintaining a parallel
+      spec.
+- [ ] If a wrapper is still needed, keep it to the smallest possible
+      addition (e.g. just the cipher-profile-ack field), not a rewrite of
+      the handshake itself.
 
 ## 8. Open questions
 
@@ -257,3 +323,117 @@ to unencrypted, per Section 5 step 4.
 keys themselves provide freshness -- likely redundant and removable once the
 transcript-hash construction is finalized; kept here as a placeholder pending
 review.
+
+## 13. Call-state icon (padlock)
+
+Reuses Galdra's existing human-readable name-tag / keyring model: the icon
+state is driven by whether a resolved key exists for the current contact's
+name tag, and whether a handshake has completed for the active call.
+
+| State | Condition | Icon |
+|---|---|---|
+| **Encryption possible** | Peer's key resolves from the contact's Galdra name tag; handshake not yet run or in progress | Open padlock |
+| **Encrypted** | Handshake completed, transcript confirmed (Section 12 message 3), session key active | Closed padlock |
+| **Key not found** | No key resolves for the contact's name tag (unknown contact, revoked/missing entry, or signature verification fails) | Key-with-red-X, styled after [`key-error.svg`](https://github.com/Supermagnum/gnupg-hamradio/blob/main/icons/key-error.svg) from the gnupg-hamradio icon set |
+
+Notes:
+- "Key not found" takes priority for display over "encryption possible" —
+  i.e. if the contact has no resolvable key, don't show an open padlock
+  implying encryption is one tap away when it isn't.
+- Transition from open -> closed padlock should be the same point the
+  in-call status hint text flips from "Securing..." to "Encrypted"
+  (Section 5, step 6) -- one state change, not two independent signals.
+- **TODO:** confirm license of the gnupg-hamradio icon set before vendoring
+  any SVGs into the Saga app; no LICENSE file was visible when checked. If
+  incompatible or unclear, redraw equivalent open/closed/error padlock
+  glyphs in-house using the same visual language (padlock shape + red X
+  overlay for the error state) to avoid provenance issues.
+
+## 14. Group calls & decentralized routing (forward-looking design)
+
+Not part of the v1 build (see §3), but captured here so the two-party
+architecture doesn't foreclose it.
+
+### 14.1 Why carrier conference-merge is unusable
+
+Carrier-side call merging routes audio mixing through the carrier's network,
+giving the carrier cleartext access to the mixed stream. Incompatible with
+end-to-end encryption. Group calls with encryption intact must be handled
+entirely at the app/data layer, following the pattern used by Signal and
+Messenger:
+
+- **SRTP/DTLS** secures the hop to whatever relay forwards media.
+- **A second, frame-level encryption layer** (SFrame-style) secures the
+  actual audio/video content end-to-end regardless of what the relay does —
+  the relay only ever forwards ciphertext frames, never decrypts them.
+- **Sender Keys** distribute a per-participant symmetric key once, over
+  existing pairwise sessions (O(N) key distribution), rather than
+  re-encrypting media per-recipient.
+
+### 14.2 Mesh vs. relay threshold
+
+- **Small groups (roughly ≤4–5 participants):** full mesh, no relay. Each
+  device runs the §12 pairwise handshake with every other participant
+  (O(N²) handshakes) and sends/receives N−1 direct SRTP streams. No new
+  key-management scheme needed — pure extension of the two-party design.
+- **Larger groups:** O(N²) handshakes/bandwidth stop scaling; a relay
+  (SFU-equivalent) is needed. Media stays opaque to the relay via the
+  frame-level encryption layer above; the token's role stays pairwise
+  ECDH+signature, now bootstrapping sender-key distribution instead of a
+  session key used directly for media.
+- Exact threshold is untested — deferred until real bandwidth/latency
+  numbers are available (do not implement until then).
+
+### 14.3 Two deployment modes
+
+| Mode | Signaling/discovery | Relay | Trust model |
+|---|---|---|---|
+| **Managed** | SIP via Flexisip (self-hosted or provider-run) | Flexisip conference focus | Traditional SIP account; familiar to Linphone base; single operator per deployment, but anyone can run one |
+| **Decentralized** | Iroh (peer identity = public key, built-in NAT traversal + relay fallback) | Ad-hoc peer relay, or federated relay discovered via Iroh | No mandatory operator; encrypted even across relay hops |
+
+Both modes reuse the same §12 handshake and §6 cipher stack — only the
+signaling/transport substrate differs.
+
+### 14.4 Decentralized transport: Iroh (recommended)
+
+**Iroh** (Rust-native, v1.0 released June 2026) is the recommended transport
+for decentralized mode, over the previously-considered OpenDHT/Jami stack:
+
+- Dial-by-public-key model: connects to a peer's identity key directly,
+  handling NAT traversal and relay fallback internally (QUIC + TLS 1.3).
+  Maps cleanly onto Saga's token-based identity — the token's long-term key
+  can plausibly serve as the Iroh node identity.
+- When a direct path can't be established, traffic still routes through an
+  encrypted relay that cannot decrypt it — decentralization survives the
+  fallback case, unlike a plain TURN relay.
+- Existing reference implementations validate the approach directly:
+  `callme` (n0's own peer-to-peer audio call tool, Opus over `iroh-roq`,
+  `cpal` for cross-platform audio I/O) and `iroh-live` (media livestreaming
+  over Media-over-QUIC, with a working Android demo doing bidirectional
+  camera/mic capture through a Rust core + JNI bridge — the same
+  architecture shape as §11's `ConnectionService` sketch).
+- `iroh-live` already has a room/ticket concept for multi-party sessions,
+  and MoQ transports each audio/video track as an independent QUIC stream,
+  so a dropped video packet never blocks audio — a reasonable primitive if
+  group calls need per-participant streams through a relay.
+
+**Gap:** Iroh solves live connectivity, not store-and-forward presence — it
+doesn't help reach a peer whose device is currently offline/asleep. If
+missed-call notification via a decentralized store is ever required,
+OpenDHT (Jami's stack) remains the fallback option for that specific need,
+kept as a secondary consideration rather than the primary transport.
+
+**Licensing interaction:** Iroh is typically permissively licensed
+(MIT/Apache-2.0 — confirm exact terms before depending on it), while
+Linphone/Flexisip (§10) are GPLv3. No conflict combining them in one binary
+(permissive code can be included in a GPL project), but if a fully
+permissive, decentralized-only build is ever wanted as a separate product,
+keep it distinct from the GPLv3-encumbered managed-mode build.
+
+### 14.5 Open items
+
+- [ ] Confirm Iroh's exact license before dependency lock-in.
+- [ ] Determine mesh/relay participant-count threshold empirically.
+- [ ] Decide whether missed-call/offline presence is a v-next requirement;
+      if so, evaluate OpenDHT integration effort at that point.
+- [ ] Prototype token identity <-> Iroh node identity binding.
