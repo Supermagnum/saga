@@ -121,12 +121,16 @@ echo ""
 echo "=== Case 2: Encrypted Iroh (alice calls bob) + media round-trip ==="
 clear_prefs "$SERIAL_A"
 push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
 if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
+   && wait_for_incoming_ringing "$SERIAL_B" "bob" \
+   && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case2-bob-ringing.png" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\].*$PHONE_BOB_RG" "encrypted handshake" \
    && check_log "$SERIAL_A" "Playing call_secure exactly once" \
    && check_log "$SERIAL_B" "Saga Media Round-Trip.*decrypted_ok=true" \
    && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
-  record "CASE2:PASS alice->bob secure cue + encrypted + media + storage flag"
+  record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag"
 else
   record "CASE2:FAIL"
   adb -s "$SERIAL_A" logcat -d | rg "Saga|Iroh|Media|MOCK_TOKEN|Handshake|Dial Target" | tail -12 || true
@@ -138,12 +142,16 @@ echo ""
 echo "=== Case 2b: Encrypted Iroh (bob calls alice) ==="
 clear_prefs "$SERIAL_B"
 push_pref "$SERIAL_B" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+adb -s "$SERIAL_A" logcat -c 2>/dev/null || true
 if contact_call "$SERIAL_B" "$CONTACT_ALICE" "$SERIAL_A" true \
+   && wait_for_incoming_ringing "$SERIAL_A" "alice" \
+   && capture_callee_screencap "$SERIAL_A" "/tmp/saga-case2b-alice-ringing.png" \
+   && answer_incoming "$SERIAL_A" "15550100010" \
    && wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\].*$PHONE_ALICE_RG" "encrypted handshake" \
    && check_log "$SERIAL_B" "Playing call_secure exactly once" \
    && check_log "$SERIAL_A" "Saga Media Round-Trip.*decrypted_ok=true" \
    && enc_flag "$SERIAL_B" "$PHONE_ALICE"; then
-  record "CASE2b:PASS bob->alice secure cue + encrypted + media"
+  record "CASE2b:PASS bob->alice secure cue + encrypted + inbound ring + media"
 else
   record "CASE2b:FAIL"
   adb -s "$SERIAL_B" logcat -d | rg "Saga|Iroh|Media|Handshake|Dial Target" | tail -12 || true
@@ -176,13 +184,20 @@ push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
 if enc_flag "$SERIAL_A" "$PHONE_BOB" 2>/dev/null; then
   record "CASE3:FAIL encryption flag already set before call"
 else
+  adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
   contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true || record "CASE3:FAIL contact_call"
-  if wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted handshake" \
+  if wait_for_incoming_ringing "$SERIAL_B" "bob (first-trust)" \
+     && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case3-bob-ringing.png" \
+     && answer_incoming "$SERIAL_B" "15550100011" \
+     && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted handshake" \
+     && check_log "$SERIAL_A" "Playing call_secure exactly once" \
+     && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" \
      && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
-    record "CASE3:PASS flag set after alice->bob handshake"
+    record "CASE3:PASS first-trust ring + answer + encrypted + flag set"
   else
     record "CASE3:FAIL"
     adb -s "$SERIAL_A" logcat -d | rg "Handshake|encryption|Dial Target" | tail -8 || true
+    adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|Incoming|setActive" | tail -8 || true
   fi
 fi
 stop_caller "$SERIAL_A"
@@ -191,14 +206,21 @@ echo ""
 echo "=== Case 4: Downgrade on known contact (alice calls bob) ==="
 clear_prefs "$SERIAL_A"
 push_pref "$SERIAL_A" "$E2E_DIR/saga_encryption_peer.xml" saga_encryption_established.xml
+push_pref "$SERIAL_B" "$E2E_DIR/saga_encryption_peer_bob.xml" saga_encryption_established.xml
 push_pref "$SERIAL_A" "$E2E_DIR/saga_test_true.xml" saga_test.xml
+adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
 if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
+   && wait_for_incoming_ringing "$SERIAL_B" "bob (downgrade)" \
+   && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case4-bob-ringing.png" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Downgraded\]" "downgrade handshake" \
-   && check_log "$SERIAL_A" "Saga Downgrade Event.*recorded downgrade"; then
-  record "CASE4:PASS downgrade state + local log entry"
+   && check_log "$SERIAL_A" "Saga Downgrade Event.*recorded downgrade" \
+   && check_log "$SERIAL_B" "Handshake settled to \[Downgraded\]"; then
+  record "CASE4:PASS ring + answer + downgrade state + local log entry"
 else
   record "CASE4:FAIL"
-  adb -s "$SERIAL_A" logcat -d | rg "Downgrade|Handshake" | tail -10 || true
+  adb -s "$SERIAL_A" logcat -d | rg "Downgrade|Handshake|settled" | tail -12 || true
+  adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|Downgrade|setActive|Handshake" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
 
@@ -207,8 +229,13 @@ echo "=== Case 5: Mid-call rehandshake (alice calls bob) ==="
 clear_prefs "$SERIAL_A"
 push_pref "$SERIAL_A" "$E2E_DIR/saga_encryption_peer.xml" saga_encryption_established.xml
 push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
 if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
-   && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted baseline"; then
+   && wait_for_incoming_ringing "$SERIAL_B" "bob (mid-call setup)" \
+   && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case5-bob-ringing.png" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
+   && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted baseline" \
+   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
   adb -s "$SERIAL_A" logcat -c
   midcall_test "$SERIAL_A" "$PHONE_BOB" true
   sleep 5
@@ -223,7 +250,7 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
        && check_log "$SERIAL_A" "settled to \[Downgraded\]" \
        && ! check_log "$SERIAL_A" "Playing call_unsecure exactly once"; then
       record "CASE5b:PASS crypto failure reuses Case 4 downgrade log + distinct mid-call tone"
-      record "CASE5:PASS"
+      record "CASE5:PASS ring + answer + mid-call re-handshake paths"
     else
       record "CASE5b:FAIL"
       record "CASE5:FAIL"
@@ -235,6 +262,8 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
   fi
 else
   record "CASE5:FAIL could not establish encrypted call for mid-call test"
+  adb -s "$SERIAL_A" logcat -d | rg "Handshake|Encrypted|settled" | tail -8 || true
+  adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|Incoming" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
 
@@ -244,13 +273,19 @@ adb -s "$SERIAL_A" shell setprop gsm.operator.alpha CarrierA 2>/dev/null || true
 adb -s "$SERIAL_B" shell setprop gsm.operator.alpha CarrierB 2>/dev/null || true
 clear_prefs "$SERIAL_A"
 push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
 if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
+   && wait_for_incoming_ringing "$SERIAL_B" "bob (carrier props)" \
+   && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case6-bob-ringing.png" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" \
-   && check_log "$SERIAL_A" "settled to \[Encrypted\]"; then
-  record "CASE6:PASS encrypted with carrier props (emulator relay via WiFi)"
+   && check_log "$SERIAL_A" "settled to \[Encrypted\]" \
+   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
+  record "CASE6:PASS ring + answer + encrypted with carrier props (WiFi kept for relay)"
 else
   record "CASE6:FAIL"
-  adb -s "$SERIAL_A" logcat -d | rg "Saga|Handshake|secure" | tail -10 || true
+  adb -s "$SERIAL_A" logcat -d | rg "Saga|Handshake|secure|settled" | tail -10 || true
+  adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|secure" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
 

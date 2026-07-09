@@ -13,10 +13,19 @@ object SagaDialer {
     /** Non-routable placeholder; real peer is in [EXTRA_PEER_ID] for Telecom. */
     const val IROH_PLACEHOLDER_TEL = "+15550100999"
     const val EXTRA_PEER_ID = "org.saga.EXTRA_PEER_ID"
+    const val EXTRA_SESSION_ID = "org.saga.EXTRA_SESSION_ID"
+    const val EXTRA_LOOKUP_KEY = "org.saga.EXTRA_LOOKUP_KEY"
+    const val EXTRA_REMOTE_ENDPOINT_ID = "org.saga.EXTRA_REMOTE_ENDPOINT_ID"
+    const val EXTRA_CONTACT_NAME = "org.saga.EXTRA_CONTACT_NAME"
 
     fun parseIrohUri(uri: Uri?): IrohNodeId? = SagaCallUri.parsePeer(uri)
 
     fun peerIdFromConnectionRequest(uri: Uri?, extras: Bundle?): IrohNodeId? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_PEER_ID)?.let { raw ->
+            IrohNodeId.parse(raw)?.let { return it }
+            return IrohNodeId(raw)
+        }
         val outgoing = extras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
         outgoing?.getString(EXTRA_PEER_ID)?.let { raw ->
             IrohNodeId.parse(raw)?.let { return it }
@@ -25,6 +34,24 @@ object SagaDialer {
             IrohNodeId.parse(raw)?.let { return it }
         }
         return parseIrohUri(uri)
+    }
+
+    fun sessionIdFromConnectionRequest(extras: Bundle?): String? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_SESSION_ID)?.let { return it }
+        return extras?.getString(EXTRA_SESSION_ID)
+    }
+
+    fun lookupKeyFromConnectionRequest(extras: Bundle?): String? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_LOOKUP_KEY)?.let { return it }
+        return extras?.getString(EXTRA_LOOKUP_KEY)
+    }
+
+    fun contactNameFromConnectionRequest(extras: Bundle?): String? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_CONTACT_NAME)?.let { return it }
+        return extras?.getString(EXTRA_CONTACT_NAME)
     }
 
     fun placeCall(context: Context, target: DialTarget) {

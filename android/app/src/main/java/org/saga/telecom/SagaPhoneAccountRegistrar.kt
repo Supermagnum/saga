@@ -27,6 +27,31 @@ object SagaPhoneAccountRegistrar {
         Log.i(TAG, "Registered Saga phone account (tel + saga schemes)")
     }
 
+    fun ensureEnabled(context: Context): Boolean {
+        val telecomManager = context.getSystemService(TelecomManager::class.java) ?: return false
+        val handle = phoneAccountHandle(context)
+        var account = telecomManager.getPhoneAccount(handle)
+        if (account == null) {
+            Log.w(TAG, "PhoneAccount missing — re-registering")
+            register(context)
+            account = telecomManager.getPhoneAccount(handle)
+        }
+        if (account == null) {
+            Log.e(TAG, "PhoneAccount still missing after register handle=[$handle]")
+            return false
+        }
+        if (!account.isEnabled) {
+            Log.w(
+                TAG,
+                "PhoneAccount registered but disabled — enable via Settings or cmd telecom set-phone-account-enabled"
+            )
+            account = telecomManager.getPhoneAccount(handle)
+        }
+        val enabled = account?.isEnabled == true
+        Log.i(TAG, "PhoneAccount present=[${account != null}] enabled=[$enabled] handle=[$handle]")
+        return account != null
+    }
+
     fun phoneAccountHandle(context: Context): PhoneAccountHandle {
         return PhoneAccountHandle(
             ComponentName(context, SagaConnectionService::class.java),

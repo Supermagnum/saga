@@ -193,8 +193,43 @@ fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
     Ok(&SHARED_ENDPOINT.get().expect("just set").endpoint)
 }
 
+fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
+    for label in ["15550100010", "15550100011", "15550100012"] {
+        if dev_secret_key(label).public() == *remote {
+            return Some(label.to_string());
+        }
+    }
+    None
+}
+
+fn inbound_session_id(lookup_key: &str) -> String {
+    let safe: String = lookup_key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("inbound-{safe}-{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0))
+}
+
 async fn handle_inbound_connection(conn: Connection) {
-    info!("iroh accepted connection from [{}]", conn.remote_id());
+    let remote_pk = conn.remote_id();
+    let remote_id_str = remote_pk.to_string();
+    let lookup_key = dev_label_for_endpoint(&remote_pk).unwrap_or_else(|| remote_id_str.clone());
+    let session_id = inbound_session_id(&lookup_key);
+
+    info!(
+        "[Saga Iroh Listen] inbound accepted remote=[{remote_id_str}] lookup=[{lookup_key}] session=[{session_id}]"
+    );
+
+    #[cfg(feature = "iroh-transport")]
+    crate::bridge_notify_incoming_call(&session_id, &lookup_key, &remote_id_str);
+
+    let mut handshake = HandshakePoll::Pending;
+    let mut session_key = None;
+    let mut media_round_trip_ok = false;
+
     #[cfg(feature = "mock-token")]
     {
         match conn.accept_bi().await {
@@ -202,20 +237,46 @@ async fn handle_inbound_connection(conn: Connection) {
                 let identity = MockIdentity::from_label(&local_identity_label());
                 let outcome =
                     run_responder(&identity, force_handshake_fail(), &mut recv, &mut send).await;
-                if let HandshakeOutcome::Encrypted { session_key } = outcome {
-                    if let Ok(media_ok) =
-                        read_media_round_trip(&mut recv, &session_key, "responder").await
-                    {
+                match outcome {
+                    HandshakeOutcome::Encrypted { session_key: key } => {
+                        handshake = HandshakePoll::Encrypted;
+                        session_key = Some(key);
+                        media_round_trip_ok =
+                            read_media_round_trip(&mut recv, &key, "responder").await.unwrap_or(false);
                         info!(
-                            "[Saga Media Round-Trip] responder decrypted_ok={media_ok}"
+                            "[Saga Media Round-Trip] responder decrypted_ok={media_round_trip_ok}"
                         );
+                    }
+                    HandshakeOutcome::Failed { reason } => {
+                        handshake = HandshakePoll::Failed;
+                        warn!("inbound mock-token handshake failed: {reason}");
                     }
                 }
             }
-            Err(e) => warn!("inbound accept_bi failed: {e}"),
+            Err(e) => {
+                handshake = HandshakePoll::Failed;
+                warn!("inbound accept_bi failed: {e}");
+            }
         }
     }
-    conn.closed().await;
+
+    #[cfg(not(feature = "mock-token"))]
+    {
+        handshake = HandshakePoll::Encrypted;
+    }
+
+    if let Ok(mut sessions) = SESSIONS.lock() {
+        sessions.insert(
+            session_id,
+            Session {
+                connection: conn,
+                handshake,
+                session_key,
+                media_round_trip_ok,
+            },
+        );
+        info!("inbound session registered lookup=[{lookup_key}] handshake={handshake:?}");
+    }
 }
 
 #[cfg(feature = "mock-token")]
@@ -461,7 +522,7 @@ pub fn poll_handshake(session_id: &str) -> HandshakePoll {
         .lock()
         .ok()
         .and_then(|m| m.get(session_id).map(|s| s.handshake))
-        .unwrap_or(HandshakePoll::Failed)
+        .unwrap_or(HandshakePoll::Pending)
 }
 
 pub fn session_key_hex(session_id: &str) -> Option<String> {

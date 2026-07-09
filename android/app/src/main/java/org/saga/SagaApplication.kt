@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import org.saga.contacts.TestContactSeeder
 import org.saga.iroh.DevIdentityStore
+import org.saga.iroh.IrohIncomingCallBridge
 import org.saga.iroh.IrohNativeBridge
 import org.saga.iroh.IrohRelayStatus
 import org.saga.iroh.IrohRelayStore
@@ -18,6 +19,8 @@ class SagaApplication : Application() {
         super.onCreate()
         Log.i(TAG, "SagaApplication started (contact-keys=phone-labels-v3)")
         SagaPhoneAccountRegistrar.register(this)
+        SagaPhoneAccountRegistrar.ensureEnabled(this)
+        IrohIncomingCallBridge.init(this)
         IrohRelayStatus.registerQueryReceiver(this)
         IrohRelayStore.getUrl(this)?.let { relayUrl ->
             Log.i(TAG, "Using custom Iroh relay url=[$relayUrl]")

@@ -17,32 +17,53 @@ import org.saga.iroh.SagaCallUri
 object DialTargetResolver {
     private const val TAG = "[Saga Dial Target]"
 
+    /** When true, resolve to cellular even if the contact has a Saga key (user-initiated unencrypted). */
+    const val EXTRA_FORCE_UNENCRYPTED = "org.saga.EXTRA_FORCE_UNENCRYPTED"
+
     fun fromIntent(context: Context, intent: Intent): DialTarget? {
+        val preferCellular = intent.getBooleanExtra(EXTRA_FORCE_UNENCRYPTED, false)
         val data = intent.data
         if (data == null) {
-            return intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)?.let { fromInput(context, it) }
+            return intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)
+                ?.let { fromInput(context, it, preferCellular) }
         }
         return when (data.scheme?.lowercase()) {
-            "tel" -> fromTelUri(context, data)
+            "tel" -> fromTelUri(context, data, preferCellular)
             SagaCallUri.SCHEME -> {
                 val peer = data.schemeSpecificPart?.removePrefix("//") ?: return null
                 IrohNodeId.parse(peer)?.let { DialTarget.Iroh(it, peer) }
             }
-            "content" -> fromContactUri(context, data)
+            "content" -> fromContactUri(context, data, preferCellular = preferCellular)
             else -> {
                 val phone = intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)
                 if (!phone.isNullOrBlank()) {
-                    fromInput(context, phone)
+                    fromInput(context, phone, preferCellular)
                 } else {
-                    fromInput(context, data.schemeSpecificPart ?: data.toString())
+                    fromInput(context, data.schemeSpecificPart ?: data.toString(), preferCellular)
                 }
             }
         }
     }
 
-    fun fromContactUri(context: Context, contactUri: Uri, contactName: String? = null): DialTarget? {
+    fun fromContactUri(
+        context: Context,
+        contactUri: Uri,
+        contactName: String? = null,
+        preferCellular: Boolean = false
+    ): DialTarget? {
         val displayName = contactName ?: queryDisplayName(context, contactUri)
         val phone = queryPrimaryPhone(context, contactUri)?.let { normalizePhone(it) }
+        if (preferCellular) {
+            if (!phone.isNullOrBlank()) {
+                Log.i(
+                    TAG,
+                    "Resolved contact [${displayName ?: phone}] to cellular (explicit unencrypted) [$phone]"
+                )
+                return DialTarget.Cellular(phone)
+            }
+            Log.w(TAG, "Explicit unencrypted dial but contact has no phone [$contactUri]")
+            return null
+        }
         ContactKeyRepository.readPublicKeyBytes(context, contactUri)?.let { keyBytes ->
             val peer = ContactKeyStore.peerIdFromKeyBytes(keyBytes) ?: return null
             val lookup = phone ?: contactUri.toString()
@@ -62,21 +83,25 @@ object DialTargetResolver {
         return null
     }
 
-    fun fromContactDisplayName(context: Context, displayName: String): DialTarget? {
+    fun fromContactDisplayName(
+        context: Context,
+        displayName: String,
+        preferCellular: Boolean = false
+    ): DialTarget? {
         val name = displayName.trim()
         val uri = lookupContactUriByDisplayName(context, name) ?: return null
-        return fromContactUri(context, uri, name)
+        return fromContactUri(context, uri, name, preferCellular)
     }
 
-    fun fromInput(context: Context, raw: String): DialTarget? {
+    fun fromInput(context: Context, raw: String, preferCellular: Boolean = false): DialTarget? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
 
         if (trimmed.startsWith("content://")) {
-            return fromContactUri(context, Uri.parse(trimmed))
+            return fromContactUri(context, Uri.parse(trimmed), preferCellular = preferCellular)
         }
 
-        fromContactDisplayName(context, trimmed)?.let { return it }
+        fromContactDisplayName(context, trimmed, preferCellular)?.let { return it }
 
         IrohNodeId.parse(trimmed)?.let { peer ->
             Log.w(TAG, "Resolved legacy direct peer label [$trimmed] — prefer contact name dial")
@@ -86,6 +111,10 @@ object DialTargetResolver {
         if (looksLikePhoneNumber(trimmed)) {
             val normalized = normalizePhone(trimmed)
             if (normalized.length >= 7) {
+                if (preferCellular) {
+                    Log.i(TAG, "Resolved cellular number (explicit unencrypted) [$normalized]")
+                    return DialTarget.Cellular(normalized)
+                }
                 ContactKeyRepository.readPublicKeyBytesForPhone(context, normalized)?.let { keyBytes ->
                     val peer = ContactKeyStore.peerIdFromKeyBytes(keyBytes) ?: return@let null
                     Log.i(TAG, "Resolved phone [$normalized] to Iroh peer via Contacts key")
@@ -100,10 +129,10 @@ object DialTargetResolver {
         return null
     }
 
-    private fun fromTelUri(context: Context, uri: Uri): DialTarget? {
+    private fun fromTelUri(context: Context, uri: Uri, preferCellular: Boolean = false): DialTarget? {
         val number = uri.schemeSpecificPart?.removePrefix("//")?.trim().orEmpty()
         if (number.isEmpty()) return null
-        return fromInput(context, number)
+        return fromInput(context, number, preferCellular)
     }
 
     private fun queryDisplayName(context: Context, contactUri: Uri): String? {

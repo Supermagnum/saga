@@ -151,6 +151,10 @@ ensure_callee_listening() {
   if saga_process_running "$serial" && check_log "$serial" "$LISTEN_MARKER"; then
     return 0
   fi
+  if saga_process_running "$serial"; then
+    adb -s "$serial" shell am force-stop org.saga
+    sleep 1
+  fi
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
   if poll_for_log_marker "$serial" "$LISTEN_MARKER" "listen" "$LISTEN_POLL_MAX_SECS"; then
@@ -198,6 +202,44 @@ contact_call() {
 
 stop_caller() {
   adb -s "$1" shell am force-stop org.saga
+}
+
+# Callee-side ringing verification (addNewIncomingCall bridge).
+wait_for_incoming_ringing() {
+  local serial="$1" label="${2:-callee}"
+  local max_secs="${3:-45}"
+  local interval=2
+  local elapsed=0
+  while (( elapsed < max_secs )); do
+    if check_log "$serial" "CHECKPOINT addNewIncomingCall returned" \
+       && check_log "$serial" "CHECKPOINT onCreateIncomingConnection entered" \
+       && check_log "$serial" "CHECKPOINT Connection STATE_RINGING" \
+       && check_log "$serial" "CHECKPOINT onCallAdded.*telecomState=\[2\]"; then
+      record "RING:PASS $label [$serial] incoming UI checkpoints"
+      return 0
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+  record "RING:FAIL $label [$serial] after ${max_secs}s"
+  return 1
+}
+
+capture_callee_screencap() {
+  local serial="$1" dest="$2"
+  adb -s "$serial" shell screencap -p /sdcard/saga_ring.png >/dev/null 2>&1 || true
+  adb -s "$serial" pull /sdcard/saga_ring.png "$dest" >/dev/null 2>&1 || true
+  if [[ -f "$dest" ]]; then
+    record "SCREENCAP: saved [$dest] ($(stat -c%s "$dest" 2>/dev/null || echo '?') bytes)"
+  else
+    record "SCREENCAP:WARN pull failed for [$serial]"
+  fi
+}
+
+answer_incoming() {
+  local serial="$1" lookup_key="$2"
+  adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
+    -a org.saga.TEST_ANSWER_INCOMING --es lookup_key "$lookup_key" >/dev/null 2>&1 || true
 }
 
 restart() {

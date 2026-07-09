@@ -20,6 +20,7 @@ import org.saga.security.DowngradeEventLog
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallSecurityAudioWarning
 import org.saga.telecom.SagaIrohConnection
+import android.telecom.Connection
 import java.util.concurrent.ConcurrentHashMap
 
 class IrohDialManager private constructor(context: Context) {
@@ -28,7 +29,86 @@ class IrohDialManager private constructor(context: Context) {
     private val handshakeCoordinator = SagaHandshakeCoordinator(appContext, encryptionStore)
     private val sessions = ConcurrentHashMap<String, IrohCallSession>()
     private val lookupKeys = ConcurrentHashMap<String, String>()
+    private val incomingConnections = ConcurrentHashMap<String, SagaIrohConnection>()
+    private val pendingIncomingActivation = ConcurrentHashMap<String, SagaHandshakeState>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    fun startIncoming(
+        peerId: IrohNodeId,
+        rustSessionId: String,
+        connection: SagaIrohConnection,
+        telecomCallKey: String,
+        lookupKey: String,
+        contactName: String
+    ) {
+        val session = InboundIrohCallSession(peerId, rustSessionId)
+        sessions[telecomCallKey] = session
+        lookupKeys[telecomCallKey] = lookupKey
+        incomingConnections[telecomCallKey] = connection
+        Log.i(
+            TAG,
+            "startIncoming contact=[$contactName] lookup=[$lookupKey] session=[$rustSessionId]"
+        )
+
+        session.connect(
+            onConnected = {
+                handshakeCoordinator.start(lookupKey, session.sessionId) { state ->
+                    onIncomingHandshakeSettled(lookupKey, telecomCallKey, state, connection)
+                }
+            },
+            onFailed = {
+                onIncomingHandshakeSettled(
+                    lookupKey,
+                    telecomCallKey,
+                    handshakeCoordinator.resolveFailure(lookupKey),
+                    connection
+                )
+            }
+        )
+    }
+
+    fun onIncomingAnswered(telecomCallKey: String) {
+        val connection = incomingConnections[telecomCallKey]
+        if (connection == null) {
+            Log.w(TAG, "onIncomingAnswered: no connection for [$telecomCallKey]")
+            return
+        }
+        connection.setActive()
+        Log.i(TAG, "CHECKPOINT incoming Connection setActive key=[$telecomCallKey]")
+        pendingIncomingActivation.remove(telecomCallKey)?.let { state ->
+            publishHandshakeState(
+                lookupKeys[telecomCallKey] ?: telecomCallKey,
+                telecomCallKey,
+                state,
+                connection,
+                activateConnection = false
+            )
+        }
+    }
+
+    private fun onIncomingHandshakeSettled(
+        lookupKey: String,
+        telecomCallKey: String,
+        state: SagaHandshakeState,
+        connection: SagaIrohConnection
+    ) {
+        if (state == SagaHandshakeState.Downgraded) {
+            publishHandshakeState(lookupKey, telecomCallKey, state, connection, activateConnection = true)
+            incomingConnections.remove(telecomCallKey)
+            return
+        }
+        if (connection.state == Connection.STATE_RINGING) {
+            pendingIncomingActivation[telecomCallKey] = state
+            connection.onHandshakeState(state)
+            Log.i(
+                TAG,
+                "Incoming handshake settled to [$state] while RINGING — waiting for answer"
+            )
+            return
+        }
+        publishHandshakeState(lookupKey, telecomCallKey, state, connection, activateConnection = true)
+        incomingConnections.remove(telecomCallKey)
+    }
 
     fun startOutgoing(
         peerId: IrohNodeId,
@@ -61,6 +141,8 @@ class IrohDialManager private constructor(context: Context) {
     fun endCall(telecomCallKey: String) {
         sessions.remove(telecomCallKey)?.disconnect()
         lookupKeys.remove(telecomCallKey)
+        incomingConnections.remove(telecomCallKey)
+        pendingIncomingActivation.remove(telecomCallKey)
     }
 
     fun sessionIdForCall(telecomCallKey: String): String? = sessions[telecomCallKey]?.sessionId
@@ -170,11 +252,20 @@ class IrohDialManager private constructor(context: Context) {
         if (state != SagaHandshakeState.Securing) {
             Log.i(TAG, "Handshake settled to [$state] for [$lookupKey]")
         }
-        if (activateConnection && connection != null &&
-            state != SagaHandshakeState.Downgraded &&
-            state != SagaHandshakeState.Securing
-        ) {
-            connection.setActive()
+        if (activateConnection && connection != null && state != SagaHandshakeState.Securing) {
+            // Outgoing calls stay in DIALING until setActive(); skipping Downgraded used to
+            // leave ringback playing forever on the caller. Incoming downgrade while still
+            // RINGING waits for explicit answer (onIncomingAnswered).
+            val deferUntilAnswer =
+                state == SagaHandshakeState.Downgraded &&
+                    connection.state == Connection.STATE_RINGING
+            if (!deferUntilAnswer) {
+                connection.setActive()
+                Log.i(
+                    TAG,
+                    "CHECKPOINT Connection setActive key=[$telecomCallKey] handshake=[$state] telecomState=[${connection.state}]"
+                )
+            }
         }
     }
 

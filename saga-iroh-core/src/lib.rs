@@ -33,6 +33,7 @@ fn jstring_to_rust(env: &mut JNIEnv, input: &JString) -> Option<String> {
 }
 
 static BRIDGE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
 const BRIDGE_CLASS_NAME: &str = "org/saga/iroh/IrohNativeBridge";
 
@@ -68,6 +69,60 @@ fn notify_connected(env: &mut JNIEnv, session_id: &str) {
         error!("notifyConnected failed: {e}");
     }
     clear_pending_exception(env, "notifyConnected");
+}
+
+fn notify_incoming_call(session_id: &str, lookup_key: &str, remote_endpoint_id: &str) {
+    let Some(vm) = JAVA_VM.get() else {
+        error!("notifyIncomingCall: JavaVM not cached");
+        return;
+    };
+    let sid = session_id.to_string();
+    let lookup = lookup_key.to_string();
+    let remote = remote_endpoint_id.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifyIncomingCall attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            error!("notifyIncomingCall: IrohNativeBridge class not cached");
+            return;
+        };
+        let Ok(jsid) = env.new_string(&sid) else {
+            return;
+        };
+        let Ok(jlookup) = env.new_string(&lookup) else {
+            return;
+        };
+        let Ok(jremote) = env.new_string(&remote) else {
+            return;
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifyIncomingCall",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                JValue::from(&jsid),
+                JValue::from(&jlookup),
+                JValue::from(&jremote),
+            ],
+        ) {
+            error!("notifyIncomingCall failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifyIncomingCall");
+    });
+}
+
+#[cfg(feature = "iroh-transport")]
+pub(crate) fn bridge_notify_incoming_call(
+    session_id: &str,
+    lookup_key: &str,
+    remote_endpoint_id: &str,
+) {
+    notify_incoming_call(session_id, lookup_key, remote_endpoint_id);
 }
 
 fn notify_failed(env: &mut JNIEnv, session_id: &str, reason: &str) {
@@ -134,8 +189,9 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jint 
         "saga-iroh-core JNI_OnLoad (iroh-transport={})",
         cfg!(feature = "iroh-transport")
     );
-    match vm.attach_current_thread() {
-        Ok(_env) => {}
+    let _ = JAVA_VM.set(vm);
+    match JAVA_VM.get().unwrap().attach_current_thread() {
+        Ok(mut env) => ensure_bridge_class_cached(&mut env),
         Err(e) => error!("JNI_OnLoad attach_current_thread failed: {e}"),
     }
     JNI_VERSION_1_6

@@ -12,6 +12,7 @@
     <string name="iroh_dial_label">Iroh call (dial by public key)</string>
     <string name="iroh_peer_hint">Peer node ID</string>
     <string name="dial_call">Call</string>
+    <string name="dial_call_unencrypted">Call unencrypted</string>
     <string name="invalid_peer_id">Enter a valid peer node ID (8+ alphanumeric characters)</string>
     <string name="invalid_dial_target">Enter a valid phone number or Saga contact</string>
     <string name="dial_hint">Phone number, contact, or peer ID</string>
