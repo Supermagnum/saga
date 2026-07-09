@@ -11,6 +11,10 @@ object IrohNativeBridge {
     const val HANDSHAKE_ENCRYPTED = 1
     const val HANDSHAKE_FAILED = 2
 
+    const val RELAY_PENDING = 0
+    const val RELAY_READY = 1
+    const val RELAY_FAILED = 2
+
     @Volatile
     private var libraryLoaded = false
 
@@ -28,6 +32,15 @@ object IrohNativeBridge {
 
     fun setDevIdentity(peerLabel: String) {
         if (ensureLoaded()) nativeSetDevIdentity(peerLabel)
+    }
+
+    fun setRelayUrl(relayUrl: String) {
+        if (ensureLoaded()) nativeSetRelayUrl(relayUrl)
+    }
+
+    fun pollRelayReady(): Int {
+        if (!ensureLoaded()) return RELAY_READY
+        return nativePollRelayReady()
     }
 
     fun setForceHandshakeFail(force: Boolean) {
@@ -86,6 +99,8 @@ object IrohNativeBridge {
     private external fun nativeDisconnect(sessionId: String)
     private external fun nativeIsAvailable(): Boolean
     private external fun nativeSetDevIdentity(peerLabel: String)
+    private external fun nativeSetRelayUrl(relayUrl: String)
+    private external fun nativePollRelayReady(): Int
     private external fun nativeSetForceHandshakeFail(force: Boolean)
     private external fun nativePollHandshake(sessionId: String): Int
 }

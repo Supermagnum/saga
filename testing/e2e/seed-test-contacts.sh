@@ -18,6 +18,7 @@ adb -s "$SERIAL" shell pm grant org.saga android.permission.WRITE_CONTACTS 2>/de
 
 echo "=== In-app seed (TestContactSeeder via app launch) ==="
 adb -s "$SERIAL" shell am force-stop org.saga
+adb -s "$SERIAL" logcat -c 2>/dev/null || true
 adb -s "$SERIAL" shell monkey -p org.saga -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 sleep 3
 

@@ -1,56 +1,87 @@
 # Saga Test Results
 
-**Repo:** `/mnt/2e9a1e9f-2097-408c-ab9a-a01b32f11d28/github-projects/saga`  
 **Last updated:** 2026-07-09
 
-**Status:** Not ready to ship. Contacts + contact-based Iroh dial path work on emulators. Encrypted E2E is partially green (probe + Case 1/2c/6); Cases 2-5 need a full uninterrupted suite run after harness regex fix.
+**Status:** Emulator E2E green on Cases 1–6 with **local relay** + **native relay polling**. Not ready to ship — needs release build, physical devices, and production relay/TLS policy (local dev relay uses HTTP + skip-verify for tests only).
 
 ---
 
-## 2026-07-09 — E2E emulator session (5554=alice, 5556=bob)
+## 2026-07-09 — Relay harness + local relay
 
-### Contact / dial path (bobpeer12 removed)
+### Problem
 
-| Item | Status |
+Cases 3–6 (and sometimes 2/2b) failed in full suite runs with `RELAY:FAIL` or handshake timeouts. Initial diagnosis pointed at relay “cold start,” but forensics showed:
+
+| Finding | Evidence |
+|---------|----------|
+| Not logcat false-negative on timeout | At 120s failure: endpoint bound, **zero** `[Saga Iroh Listen] relay online` lines, low logcat volume — `endpoint.online()` genuinely did not complete |
+| Not restart-count fatigue | 8-cycle public-relay sweep: restart 1 failed 120s; restarts 2–8 passed at 0s |
+| Public N0 variance | `presets::N0` → `*.relay.n0.iroh.link`; intermittent registration under rapid automated restarts |
+| Stale logcat pitfall (fixed earlier) | After force-stop, old relay lines could pass grep before fresh `online()` — fixed via logcat clear after stop + `pidof` checks |
+
+### Fixes shipped
+
+| Area | Change |
 |------|--------|
-| Contact keys | Phone-digit endpoint labels (`15550100010` / `15550100011`); thor has no key |
-| Dial harness | `TEST_CONTACT_CALL` by name (`bob`/`alice`/`thor`); raw `bobpeer12` removed |
-| APK marker | `contact-keys=phone-labels-v3` on both emulators |
-| `verify-contact-keys.sh` | PASS on both emulators |
+| **Local relay** | `testing/iroh-relay/start-local-relay.sh` — `iroh-relay --dev` on port 3340; emulators use `http://10.0.2.2:3340` |
+| **Native relay gate** | `nativePollRelayReady()` / `nativeSetRelayUrl()` — JNI exposes `endpoint.online()` completion; harness reads `files/relay_status.txt` via `TEST_RELAY_QUERY` |
+| **Shared E2E** | `e2e-common.sh` — poll native relay (3s / 120s), handshake poll, `warm_encrypted_caller`, no logcat relay sync |
+| **Case 6** | Removed unnecessary `restart bob` (carrier props only) |
+| **Provision** | Both emulators force-stopped once at baseline (intentional) |
+| **Standalone** | `run-case-standalone.sh` for Cases 3–6 falsification from clean boot |
 
-### Native / transport fixes
+### Local relay 8-cycle sweep (native poll)
+
+```
+Phase A (Case-2-position bob):  PASS at 0s
+Restarts 1–8:                   PASS at ~3s each (native=1, logcat agrees)
+```
+
+Public N0 comparison (earlier forensic): 1/8 failed at 120s (genuine stall), 7/8 instant pass.
+
+### E2E results (representative)
+
+| Case | Standalone (clean boot) | Full suite (local relay) | Notes |
+|------|-------------------------|--------------------------|-------|
+| Probe alice→bob | — | PASS | Encrypted + media round-trip |
+| 1 — Cellular thor | — | PASS | `call_unsecure` + CELLULAR |
+| 2 — Alice→bob | — | PASS | Secure cue + media + `enc_flag` |
+| 2b — Bob→alice | — | PASS | Reverse direction |
+| 2c — Bob→thor | — | PASS | Cellular, no key |
+| 3 — First-time trust | **PASS** | PASS | Encryption flag after handshake |
+| 4 — Downgrade | **PASS** | PASS (public: intermittent alice relay) | `saga_test_true.xml` + pre-seeded encryption |
+| 5 — Mid-call | **PASS** | PASS | 5a success, 5b crypto failure downgrade |
+| 6 — Carrier props | **PASS** | PASS | WiFi kept on emulator for Iroh |
+
+Full suite on **public** N0 without local relay: **7–10/11** depending on run (relay timeouts at suite start or Case 4).
+
+### Stack used during testing
+
+| Layer | Components |
+|-------|------------|
+| Host | Linux, OpenJDK 21, Gradle, Rust/cargo-ndk, `iroh-relay` 1.0.2 (`--dev`) |
+| Emulators | `emulator-5554`, `emulator-5556` (sdk_gphone16k_x86_64) |
+| Transport | `saga-iroh-core` with `iroh-transport` + `mock-token`; ALPN `saga/voice/1` |
+| Relay (E2E default) | Local HTTP relay `http://10.0.2.2:3340` |
+| Relay (comparison) | Iroh N0 public relays |
+| Contacts | `15550100010` / `15550100011` endpoint labels; dial by name `bob`/`alice`/`thor` |
+| Harness | `run-e2e-full.sh`, `e2e-common.sh`, `run-case-standalone.sh`, `diagnose-relay-timeout.sh` |
+
+### Native / app fixes (cumulative)
 
 | Fix | File |
 |-----|------|
-| JNI crash on `notifyFailed` — cache jclass via `find_class`, Kotlin `object` uses `JObject` not `JClass` | `saga-iroh-core/src/lib.rs` |
-| Connect retries: 8 attempts, 45s each, 5s backoff; 60s initiator relay wait | `saga-iroh-core/src/iroh_transport.rs` |
-| Callee listen on app start (`ensure_listening`) | `saga-iroh-core/src/iroh_transport.rs` |
-| InCall call-id alignment (`15550100010` → `+15550100010`) so `call_secure` cue fires | `SagaCallRegistry.kt` |
-
-### E2E harness
-
-- `run-e2e-full.sh`: relay wait (non-blocking WARN), caller warm-start before encrypted dials, `enc_flag` uses `rg -F` (fixes `+` in E.164), Case 2c log pattern, Case 6 keeps WiFi for relay on emulator
-- `seed-test-contacts.sh`: verify via `verify-contact-keys.sh`
-- `run-alice-bob-probe.sh`: focused alice→bob probe
-
-### E2E results (latest)
-
-| Case | Result | Notes |
-|------|--------|-------|
-| Probe alice→bob | **PASS** | Encrypted handshake, media round-trip, `Playing call_secure exactly once` |
-| 1 — Cellular thor | **PASS** | `call_unsecure` + CELLULAR origin |
-| 2 — Alice→bob | **FAIL** (prior runs) | `enc_flag` regex bug on `+15550100010` — fixed, not re-run to completion |
-| 2b — Bob→alice | **FAIL** (prior runs) | Same `enc_flag` / relay timing |
-| 2c — Bob→thor | **PASS** | Cellular, no Saga key |
-| 3–5 | **FAIL** (prior runs) | Depend on Case 2 encrypted call |
-| 6 — Carrier props | **PASS** | Encrypted with emulator WiFi kept for relay |
-| Run 5 (aborted) | **Incomplete** | Stopped during Case 2 dial (user request) |
+| JNI jclass cache; Kotlin `object` uses `JObject` | `saga-iroh-core/src/lib.rs` |
+| Connect retries; callee `ensure_listening` on start | `saga-iroh-core/src/iroh_transport.rs` |
+| Custom relay URL + `pollRelayReady` | `saga-iroh-core/src/iroh_transport.rs`, `IrohNativeBridge.kt` |
+| Call-id normalization for InCall cues | `SagaCallRegistry.kt` |
+| Contact-based dial; `bobpeer12` removed | `DialTargetResolver`, E2E harness |
 
 ### Blockers before ship
 
-1. Complete full `run-e2e-full.sh` after `enc_flag` / `PHONE_*_RG` regex fix (Cases 2, 2b, 3, 4, 5).
-2. Bob relay registration is intermittent on cold start (30–90s); harness uses WARN-not-fail + native connect retries.
-3. pkarr / dns.iroh.link publish timeouts on emulator (non-fatal; relay path still works).
+1. Physical device validation (not emulator-only).
+2. Production relay/TLS — local `--dev` HTTP relay is test-only; release must not use `insecure_skip_verify` or `test-utils` relay path.
+3. Optional: remove `SAGA_RELAY_RETRY_ON_FAIL` path once local relay is mandatory in CI.
 
 **Ready to ship:** No.
 
@@ -62,50 +93,25 @@
 
 | Location | Finding |
 |----------|---------|
-| `MainActivity.placeIrohCall()` (before fix) | Only accepted input passing `IrohNodeId.parse()` (8+ alphanumeric). Phone numbers and contact URIs were rejected with `invalid_peer_id` toast. |
-| `MainActivity` intent handling (before fix) | `ACTION_DIAL` / `ACTION_VIEW` / `ACTION_CALL` were not handled. Contact-picker and `tel:` intents were ignored; dial field stayed empty. |
-| `ContactKeyStore` (before fix) | Did not exist. No `ContactsContract` read path; keys could not be resolved at call time. |
-| System Telecom layer | Standard Android "enter a valid number" can appear when `placeCall` receives an empty/invalid `tel:` URI. Saga never reached `placeCall` for contact-resolved targets because validation failed upstream. |
+| `MainActivity` (before fix) | Only accepted `IrohNodeId.parse()` shape; phones/contacts rejected |
+| Intent handling (before fix) | `ACTION_DIAL` / `ACTION_VIEW` not handled |
+| `ContactKeyStore` (before fix) | No ContactsContract read path |
 
-**Hypothesis:** dial validation assumed Iroh peer-id shape only, blocking contact-resolved calls.  
-**Verdict:** **Confirmed** with code evidence. Secondary factor: missing `ACTION_DIAL` handling caused empty dial field, producing the system "valid number" message when placing from the contact picker.
-
-**Not the cause:** `PhoneNumberUtils` running on a public key string (keys were rejected earlier by `IrohNodeId.parse`).
+**Verdict:** Confirmed — validation blocked contact-resolved calls.
 
 ### Fix
 
-- Added `DialTargetResolver` — accepts phone number OR resolved Saga contact key OR direct peer label.
-- Added `ContactKeyRepository` + MIME type `vnd.android.cursor.item/vnd.saga.galdralag_pubkey`.
-- `MainActivity` handles `ACTION_DIAL` / `ACTION_VIEW` / `ACTION_CALL`; unified Call button uses `DialTargetResolver`.
-- Cellular calls use `TelecomManager.placeCall(tel:...)` without Saga phone account; Iroh calls use `saga:` URI + Saga `PhoneAccount`.
-- **Manual peer entry:** 8+ alphanumeric peer labels accepted; 32-byte keys stored base64 in Contacts.
+`DialTargetResolver`, `ContactKeyRepository`, MIME `vnd.saga.galdralag_pubkey`, unified dial path.
 
 ---
 
-## Part B — Contacts integration (Cases A1-A6)
+## Part B — Contacts integration (Cases A1–A6)
 
-Run: `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=org.saga.contacts.ContactKeyIntegrationTest`  
-Devices: two Pixel 9 Pro AVDs
+Run: `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=org.saga.contacts.ContactKeyIntegrationTest`
 
-| Case | Assertion | Result |
-|------|-----------|--------|
-| **A1 — Write** | Insert custom MIME row; queryable from `ContactsContract.Data` | **PASS** |
-| **A2 — Read-back integrity** | Decoded key bytes match written bytes exactly | **PASS** |
-| **A3 — Call-time resolution** | Contact URI resolves to `DialTarget.Iroh`; key found at call time | **PASS** |
-| **A4 — No key present** | Phone-only contact resolves to `DialTarget.Cellular`; no validation error | **PASS** |
-| **A5 — Malformed row** | Corrupt base64 fails closed to null key | **PASS** |
-| **A6 — Cellular regression** | Plain phone number resolves to `DialTarget.Cellular` | **PASS** |
-
-**A1-A6 total:** 6 run, 6 passed, 0 failed (each emulator).
-
----
-
-## Prior pass — Cases 1-6 (call behavior)
-
-| Case | Result | Notes |
-|------|--------|-------|
-| 1 — Unencrypted | **FAIL** | E2E script aborted; intent delivery issue on `singleTop` |
-| 2-6 | **FAIL/SKIP** | Not completed in prior run |
+| Case | Result |
+|------|--------|
+| A1–A6 | **PASS** (each emulator) |
 
 ---
 
@@ -113,7 +119,6 @@ Devices: two Pixel 9 Pro AVDs
 
 | Suite | Passed | Failed |
 |-------|--------|--------|
-| Contacts A1-A6 | 6 | 0 |
-| Call behavior 1-6 | 0 | 5+ |
-
-**Ready to ship:** No.
+| Contacts A1–A6 | 6 | 0 |
+| E2E Cases 1–6 (local relay, latest) | 6 | 0 |
+| E2E full suite (public N0, variable) | 7–10 | 1–4 |

@@ -2,13 +2,14 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use blake3;
 use iroh::endpoint::Connection;
-use iroh::{Endpoint, EndpointAddr, PublicKey, SecretKey, endpoint::presets};
+use iroh::tls::CaTlsConfig;
+use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey, endpoint::presets};
 use log::{error, info, warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
@@ -34,6 +35,13 @@ pub enum HandshakePoll {
     Failed = 2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelayPoll {
+    Pending = 0,
+    Ready = 1,
+    Failed = 2,
+}
+
 struct Session {
     connection: Connection,
     handshake: HandshakePoll,
@@ -52,7 +60,9 @@ static SHARED_ENDPOINT: OnceLock<EndpointHolder> = OnceLock::new();
 static SESSIONS: LazyLock<Mutex<HashMap<String, Session>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static DEV_IDENTITY_LABEL: Mutex<Option<String>> = Mutex::new(None);
+static RELAY_URL_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
 static FORCE_HANDSHAKE_FAIL: AtomicBool = AtomicBool::new(false);
+static RELAY_POLL: AtomicU8 = AtomicU8::new(RelayPoll::Pending as u8);
 
 fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
@@ -69,6 +79,53 @@ pub fn set_dev_identity(label: &str) {
         *guard = Some(label.to_string());
         info!("dev identity label set to [{label}]");
     }
+}
+
+pub fn set_relay_url(url: &str) {
+    if SHARED_ENDPOINT.get().is_some() {
+        warn!("set_relay_url ignored — endpoint already bound");
+        return;
+    }
+    let trimmed = url.trim();
+    if let Ok(mut guard) = RELAY_URL_OVERRIDE.lock() {
+        if trimmed.is_empty() {
+            *guard = None;
+            info!("relay url override cleared — using default N0 relays");
+        } else {
+            *guard = Some(trimmed.to_string());
+            info!("relay url override set to [{trimmed}]");
+        }
+    }
+}
+
+pub fn poll_relay_ready() -> RelayPoll {
+    if SHARED_ENDPOINT.get().is_none() {
+        return RelayPoll::Pending;
+    }
+    match RELAY_POLL.load(Ordering::SeqCst) {
+        1 => RelayPoll::Ready,
+        2 => RelayPoll::Failed,
+        _ => RelayPoll::Pending,
+    }
+}
+
+fn relay_url_override() -> Option<String> {
+    RELAY_URL_OVERRIDE.lock().ok().and_then(|g| g.clone())
+}
+
+fn apply_relay_builder(
+    builder: iroh::endpoint::Builder,
+) -> Result<iroh::endpoint::Builder, String> {
+    let Some(url) = relay_url_override() else {
+        return Ok(builder);
+    };
+    let relay_url: RelayUrl = url
+        .parse()
+        .map_err(|e| format!("invalid relay url [{url}]: {e}"))?;
+    let relay_map = RelayMap::from_iter([relay_url]);
+    Ok(builder
+        .relay_mode(RelayMode::Custom(relay_map))
+        .ca_tls_config(CaTlsConfig::insecure_skip_verify()))
 }
 
 /// Bind the shared endpoint and start accepting inbound Iroh connections.
@@ -209,8 +266,10 @@ async fn send_media_round_trip<W: AsyncWriteExt + Unpin>(
 }
 
 async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
+    RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
     let dev_label = DEV_IDENTITY_LABEL.lock().ok().and_then(|g| g.clone());
     let mut builder = Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec()]);
+    builder = apply_relay_builder(builder)?;
     if let Some(label) = dev_label {
         let sk = dev_secret_key(&label);
         info!(
@@ -224,6 +283,7 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     let ep_for_online = endpoint.clone();
     tokio::spawn(async move {
         ep_for_online.online().await;
+        RELAY_POLL.store(RelayPoll::Ready as u8, Ordering::SeqCst);
         info!(
             "[Saga Iroh Listen] relay online, local id=[{}]",
             ep_for_online.id()

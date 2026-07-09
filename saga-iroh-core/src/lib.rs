@@ -261,6 +261,40 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeIsAvailable(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetRelayUrl(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    relay_url: JString,
+) {
+    let Some(url) = jstring_to_rust(&mut env, &relay_url) else {
+        return;
+    };
+    #[cfg(feature = "iroh-transport")]
+    iroh_transport::set_relay_url(&url);
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = url;
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePollRelayReady(
+    _env: JNIEnv,
+    _thiz: JObject,
+) -> jint {
+    #[cfg(feature = "iroh-transport")]
+    {
+        return match iroh_transport::poll_relay_ready() {
+            iroh_transport::RelayPoll::Pending => 0,
+            iroh_transport::RelayPoll::Ready => 1,
+            iroh_transport::RelayPoll::Failed => 2,
+        };
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    1
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetDevIdentity(
     mut env: JNIEnv,
     _thiz: JObject,
