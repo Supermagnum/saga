@@ -1,0 +1,20 @@
+[package]
+name = "mock-token"
+version = "0.1.0"
+edition = "2021"
+description = "Software mock Galdralag token for Saga E2E (ephemeral-session wire format)"
+
+[dependencies]
+blake3 = "1"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hkdf = "0.12"
+log = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread"] }
+
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util"] }
