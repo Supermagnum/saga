@@ -16,6 +16,7 @@ import org.saga.databinding.ActivityMainBinding
 import org.saga.dial.DialTarget
 import org.saga.dial.DialTargetResolver
 import org.saga.iroh.SagaDialer
+import org.saga.iroh.IrohRelayStatus
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallRehandshakeController
 
@@ -86,6 +87,11 @@ class MainActivity : AppCompatActivity() {
             "org.saga.TEST_IROH_CALL" -> {
                 Log.e(TAG, "TEST_IROH_CALL rejected — use TEST_CONTACT_CALL with contact_name (bob/alice/thor)")
                 Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()
+            }
+            "org.saga.TEST_RELAY_QUERY" -> {
+                val ready = IrohRelayStatus.pollReady()
+                IrohRelayStatus.writeStatus(applicationContext, ready)
+                Log.i(TAG, "E2E relay query ready=[$ready]")
             }
             "org.saga.TEST_MIDCALL_REHANDSHAKE" -> {
                 val lookupKey = intent.getStringExtra("lookup_key")

@@ -23,10 +23,10 @@ See [`../saga-iroh-core/README.md`](../saga-iroh-core/README.md). JNI class:
 ## Iroh dial
 
 1. Grant default dialer role.
-2. Enter peer node ID (8+ alphanumeric; `nokey` suffix = no Galdra key; `fail` = transport fail).
-3. Tap **Call via Iroh** — `saga:<nodeId>` via managed `SagaConnectionService`.
+2. Pick a contact or enter a dial target (phone number, contact name, or dev peer label).
+3. Calls resolve via `DialTargetResolver` — cellular (`tel:`) or Iroh (`saga:`) via `SagaConnectionService`.
 
-E2E: [`../testing/e2e/run-e2e-iroh.sh`](../testing/e2e/run-e2e-iroh.sh)
+E2E (two emulators, local relay recommended): [`../testing/e2e/README.md`](../testing/e2e/README.md)
 
 ## Section 13 icons
 
