@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Saga</string>
+    <string name="request_dialer_role">Set Saga as default phone app</string>
+    <string name="dialer_role_granted">Saga is the default dialer</string>
+    <string name="dialer_role_denied">Default dialer role not granted</string>
+    <string name="end_call">End call</string>
+    <string name="saga_downgrade_title">Call could not be secured</string>
+    <string name="saga_downgrade_message">Couldn\'t secure this call with %1$s — it\'s usually encrypted. This could mean a network problem, or someone interfering with the call.</string>
+    <string name="saga_continue_unencrypted">Continue unencrypted</string>
+    <string name="cancel_call">Cancel call</string>
+    <string name="iroh_dial_label">Iroh call (dial by public key)</string>
+    <string name="iroh_peer_hint">Peer node ID</string>
+    <string name="dial_call">Call</string>
+    <string name="invalid_peer_id">Enter a valid peer node ID (8+ alphanumeric characters)</string>
+    <string name="invalid_dial_target">Enter a valid phone number or Saga contact</string>
+    <string name="dial_hint">Phone number, contact, or peer ID</string>
+    <string name="pick_contact">Pick contact</string>
+    <string name="contacts_permission_denied">Contacts permission required to pick a contact</string>
+    <string name="need_dialer_role">Grant default dialer role before placing calls</string>
+    <string name="padlock_securing">Securing call</string>
+    <string name="padlock_encrypted">Encrypted call</string>
+    <string name="padlock_not_encrypted">Not encrypted</string>
+    <string name="padlock_downgraded">Encryption failed</string>
+</resources>

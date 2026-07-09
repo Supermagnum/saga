@@ -1,0 +1,6 @@
+.ignore/
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+saga-iroh-core/target/
