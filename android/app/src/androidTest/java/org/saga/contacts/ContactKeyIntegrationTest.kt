@@ -138,6 +138,26 @@ class ContactKeyIntegrationTest {
         val target = DialTargetResolver.fromInput(context, plainPhone)
         assertTrue(target is DialTarget.Cellular)
     }
+
+    @Test
+    fun a7_explicitUnencryptedPrefersCellularForKeyedContact() {
+        ContactKeyRepository.writePublicKey(context, rawContactId, testKeyBytes)
+        val target = DialTargetResolver.fromContactUri(
+            context,
+            contactUri!!,
+            preferCellular = true
+        )
+        assertTrue(target is DialTarget.Cellular)
+        val cellular = target as DialTarget.Cellular
+        assertTrue(cellular.number.contains("1555010"))
+    }
+
+    @Test
+    fun a8_explicitUnencryptedByPhoneSkipsKeyLookup() {
+        ContactKeyRepository.writePublicKey(context, rawContactId, testKeyBytes)
+        val target = DialTargetResolver.fromInput(context, plainPhone, preferCellular = true)
+        assertTrue(target is DialTarget.Cellular)
+    }
 }
 
 private fun DialTargetResolver.fromContactUri(context: android.content.Context, uri: Uri): DialTarget? {

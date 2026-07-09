@@ -63,7 +63,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         binding.requestDialerRole.setOnClickListener { requestDefaultDialerRole() }
         binding.pickContact.setOnClickListener { launchContactPicker() }
-        binding.dialIroh.setOnClickListener { placeFromInput() }
+        binding.dialIroh.setOnClickListener { placeFromInput(preferCellular = false) }
+        binding.dialUnencrypted.setOnClickListener { placeFromInput(preferCellular = true) }
         updateRoleStatus()
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
     }
@@ -77,12 +78,21 @@ class MainActivity : AppCompatActivity() {
     private fun handleIncomingIntent(intent: Intent?, autoPlace: Boolean) {
         if (intent == null) return
         when (intent.action) {
+            "org.saga.TEST_ANSWER_INCOMING" -> {
+                val lookupKey = intent.getStringExtra("lookup_key") ?: return
+                Log.i(TAG, "E2E answer incoming lookup=[$lookupKey]")
+                org.saga.iroh.IrohDialManager.get(this).onIncomingAnswered(lookupKey)
+            }
             "org.saga.TEST_CONTACT_CALL" -> {
                 val name = intent.getStringExtra("contact_name") ?: return
+                val preferCellular = intent.getBooleanExtra("force_unencrypted", false)
                 selectedContactUri = null
                 binding.peerIdInput.setText(name)
-                Log.i(TAG, "E2E contact dial request name=[$name]")
-                placeFromInput()
+                Log.i(
+                    TAG,
+                    "E2E contact dial request name=[$name] force_unencrypted=[$preferCellular]"
+                )
+                placeFromInput(preferCellular = preferCellular)
             }
             "org.saga.TEST_IROH_CALL" -> {
                 Log.e(TAG, "TEST_IROH_CALL rejected — use TEST_CONTACT_CALL with contact_name (bob/alice/thor)")
@@ -123,15 +133,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun placeFromInput() {
+    private fun placeFromInput(preferCellular: Boolean = false) {
         if (!isDialerRoleHeld()) {
             Toast.makeText(this, R.string.need_dialer_role, Toast.LENGTH_SHORT).show()
             requestDefaultDialerRole()
             return
         }
         val raw = binding.peerIdInput.text?.toString().orEmpty()
-        val target = selectedContactUri?.let { DialTargetResolver.fromContactUri(this, it) }
-            ?: DialTargetResolver.fromInput(this, raw)
+        val target = selectedContactUri?.let {
+            DialTargetResolver.fromContactUri(this, it, preferCellular = preferCellular)
+        } ?: DialTargetResolver.fromInput(this, raw, preferCellular)
         if (target == null) {
             Log.w(TAG, "Dial rejected — could not resolve input [$raw] uri=[$selectedContactUri]")
             Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()

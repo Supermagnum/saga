@@ -83,6 +83,15 @@ object IrohNativeBridge {
         listeners.remove(sessionId)?.onFailed(reason)
     }
 
+    @JvmStatic
+    fun notifyIncomingCall(sessionId: String, lookupKey: String, remoteEndpointId: String) {
+        Log.i(
+            TAG,
+            "notifyIncomingCall session=[$sessionId] lookup=[$lookupKey] remote=[$remoteEndpointId]"
+        )
+        IrohIncomingCallBridge.onIncomingFromNative(sessionId, lookupKey, remoteEndpointId)
+    }
+
     private fun ensureLoaded(): Boolean {
         if (libraryLoaded) return true
         return try {

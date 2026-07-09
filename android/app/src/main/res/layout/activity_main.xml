@@ -82,4 +82,14 @@
         app:layout_constraintStart_toEndOf="@id/dial_iroh"
         app:layout_constraintTop_toBottomOf="@id/peer_id_layout" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/dial_unencrypted"
+        style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/dial_call_unencrypted"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/dial_iroh" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

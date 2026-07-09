@@ -33,7 +33,10 @@ class SagaInCallService : InCallService() {
                 snapshot = snapshot
             )
         )
-        Log.i(TAG, "Call added origin=[$origin] peer=[$peerId]")
+        Log.i(
+            TAG,
+            "CHECKPOINT onCallAdded origin=[$origin] peer=[$peerId] telecomState=[${call.state}]"
+        )
         call.registerCallback(callCallback)
         startActivity(
             Intent(this, SagaInCallActivity::class.java).apply {
