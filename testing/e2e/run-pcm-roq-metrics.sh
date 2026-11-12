@@ -108,14 +108,18 @@ wait_for_incoming_ringing "$SERIAL_B" "bob-pcm" \
 
 adb -s "$SERIAL_B" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
-sleep 7
+# Speech scoring first (no click marker — marker corrupts corr/STOI).
+# Dedicated latency probe: after WAV EOF the inject path is silence; fire marker then.
+sleep 4
+pcm_broadcast "$SERIAL_A" org.saga.TEST_PCM_MARKER
+sleep 3
 capture_callee_screencap "$SERIAL_B" "$OUT_DIR/bob-active-call.png" || true
 adb -s "$SERIAL_A" shell screencap -p /sdcard/saga_alice_active.png >/dev/null 2>&1 || true
 adb -s "$SERIAL_A" pull /sdcard/saga_alice_active.png "$OUT_DIR/alice-active-call.png" >/dev/null 2>&1 || true
 
 finish_dump "$SERIAL_B"
-adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/alice_to_bob_logcat_a.txt" | tail -20 || true
-adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -20 || true
+adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY_MARKER' | tee "$OUT_DIR/alice_to_bob_logcat_a.txt" | tail -30 || true
+adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY_MARKER' | tee "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -30 || true
 # Receiver JB stats (bob dumps alice→bob).
 rg 'counters session=\[inbound' "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -3 || true
 stop_caller "$SERIAL_A" || true

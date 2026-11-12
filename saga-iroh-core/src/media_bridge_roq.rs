@@ -147,7 +147,7 @@ pub fn start_media(
                             let s = p.counters.snapshot();
                             info!(
                                 "[Saga Media] counters session=[{sid}] sent={} played={} plc={} \
-                                 late={} lost={} jb_med_ms={} jb_max_ms={} \
+                                 late={} lost={} jb_med_ms={} jb_max_ms={} jb_target_ms={} \
                                  tamper={} wrong_mode={} blocked={}",
                                 s.sent,
                                 s.played,
@@ -156,6 +156,7 @@ pub fn start_media(
                                 s.lost_packets,
                                 s.jb_depth_median_ms,
                                 s.jb_depth_max_ms,
+                                s.jb_target_ms,
                                 s.tamper_or_auth_fail,
                                 s.wrong_media_mode,
                                 s.datagram_blocked_drops
@@ -214,6 +215,16 @@ pub fn set_muted(session_id: &str, muted: bool) {
         if let Some(s) = map.get(session_id) {
             s.muted.store(muted, Ordering::Relaxed);
             info!("[Saga Media] muted={muted} session=[{session_id}]");
+        }
+    }
+}
+
+/// Mute/unmute every live RoQ media session (E2E / debug).
+pub fn set_muted_all(muted: bool) {
+    if let Ok(map) = MEDIA.lock() {
+        for (sid, s) in map.iter() {
+            s.muted.store(muted, Ordering::Relaxed);
+            info!("[Saga Media] muted={muted} session=[{sid}]");
         }
     }
 }

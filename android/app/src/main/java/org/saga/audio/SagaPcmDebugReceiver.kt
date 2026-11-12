@@ -17,6 +17,8 @@ object SagaPcmDebugReceiver {
     const val ACTION_INJECT = "org.saga.TEST_PCM_INJECT"
     const val ACTION_DUMP = "org.saga.TEST_PCM_DUMP"
     const val ACTION_DUMP_FINISH = "org.saga.TEST_PCM_DUMP_FINISH"
+    const val ACTION_MARKER = "org.saga.TEST_PCM_MARKER"
+    const val ACTION_MUTE = "org.saga.TEST_MEDIA_MUTE"
 
     fun register(context: Context) {
         val receiver = object : BroadcastReceiver() {
@@ -36,6 +38,16 @@ object SagaPcmDebugReceiver {
                         SagaPcmDebug.finishDump()
                         Log.i(TAG, "broadcast DUMP_FINISH")
                     }
+                    ACTION_MARKER -> {
+                        SagaPcmDebug.armClickMarker()
+                        Log.i(TAG, "broadcast MARKER")
+                    }
+                    ACTION_MUTE -> {
+                        val muted = intent.getBooleanExtra("muted", true)
+                        // Apply to all live engines + rust sessions known to controller.
+                        SagaCallMediaController.setMutedAllForTest(muted)
+                        Log.i(TAG, "broadcast MUTE muted=$muted")
+                    }
                 }
             }
         }
@@ -43,6 +55,8 @@ object SagaPcmDebugReceiver {
             addAction(ACTION_INJECT)
             addAction(ACTION_DUMP)
             addAction(ACTION_DUMP_FINISH)
+            addAction(ACTION_MARKER)
+            addAction(ACTION_MUTE)
         }
         ContextCompat.registerReceiver(
             context.applicationContext,
