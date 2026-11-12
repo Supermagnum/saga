@@ -35,8 +35,12 @@ install_both() {
       || adb -s "$s" shell pm grant org.saga android.permission.CALL_PHONE
     adb -s "$s" shell pm grant org.saga android.permission.READ_CONTACTS 2>/dev/null || true
     adb -s "$s" shell pm grant org.saga android.permission.WRITE_CONTACTS 2>/dev/null || true
+    # PhoneAccount is registered in Application.onCreate — launch once before enable.
+    adb -s "$s" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
+    sleep 2
     adb -s "$s" shell cmd telecom set-phone-account-enabled \
-      org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 2>/dev/null || true
+      org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 \
+      || echo "WARN: set-phone-account-enabled failed on $s (account may be unregistered)"
   done
 }
 

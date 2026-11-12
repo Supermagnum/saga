@@ -11,8 +11,17 @@ gradle wrapper --gradle-version 8.11.1   # once
 ./gradlew assembleDebug test
 ```
 
-`preBuild` runs `cargo ndk` in [`../saga-iroh-core`](../saga-iroh-core). If `cargo-ndk` is
-missing, the APK still builds and falls back to `StubIrohCallSession`.
+`preBuild` runs `cargo ndk` in [`../saga-iroh-core`](../saga-iroh-core).
+
+- **Release (`assembleRelease` / `bundleRelease` / …):** native build ALWAYS
+  required. Missing `libsaga_iroh_core.so` fails the build. Cannot be disabled
+  by flags.
+- **Debug + CI / `-Psaga.requireNative=true` / `SAGA_REQUIRE_NATIVE=1`:** same
+  fail-hard behaviour. Use `./gradlew verifyNativeLibsInApk` to assert the
+  debug APK packages the `.so`.
+- **Local debug only (no flags):** if `cargo-ndk` is missing, the APK may still
+  build and fall back to `StubIrohCallSession`, with a loud Gradle error-level
+  warning. Never use that path for release.
 
 ## Native Iroh core
 
