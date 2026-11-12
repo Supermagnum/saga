@@ -30,12 +30,16 @@ jobs:
           toolchain: "1.94.0"
           components: rustfmt, clippy
 
+      - name: Install cmake (libopus via audiopus_sys)
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             saga-session
             saga-iroh-core
+            saga-media
             testing/mock-token
           shared-key: saga-rust-host
 
@@ -48,6 +52,13 @@ jobs:
 
       - name: mock-token fmt / clippy / test
         working-directory: testing/mock-token
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      - name: saga-media fmt / clippy / test
+        working-directory: saga-media
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings

@@ -53,5 +53,5 @@ Body sketch:
 ## Saga pin
 
 ```toml
-iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "408d8ccccd3c6ee6a44d7da4a960d34e0c36e971" }
+iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "c9b02963a1c786f7ae2788ee4c39e44c9c76b01d" }
 ```
