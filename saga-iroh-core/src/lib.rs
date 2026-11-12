@@ -7,8 +7,8 @@ use std::thread;
 #[cfg(not(feature = "iroh-transport"))]
 use std::time::Duration;
 
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
-use jni::sys::{jint, JNI_VERSION_1_6};
+use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
+use jni::sys::{jboolean, jint, jlong, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
 use log::{error, info, warn};
 
@@ -17,6 +17,8 @@ use android_logger::Config;
 
 #[cfg(feature = "iroh-transport")]
 mod iroh_transport;
+
+mod media_bridge;
 
 fn init_logging() {
     #[cfg(target_os = "android")]
@@ -73,6 +75,7 @@ fn notify_connected(env: &mut JNIEnv, session_id: &str) {
     clear_pending_exception(env, "notifyConnected");
 }
 
+#[allow(dead_code)]
 fn notify_incoming_call(session_id: &str, lookup_key: &str, remote_endpoint_id: &str) {
     let Some(vm) = JAVA_VM.get() else {
         error!("notifyIncomingCall: JavaVM not cached");
@@ -261,6 +264,7 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetForceHandsha
     _thiz: JObject,
     force: jni::sys::jboolean,
 ) {
+    let _ = force;
     #[cfg(feature = "iroh-transport")]
     iroh_transport::set_force_handshake_fail(force == jni::sys::JNI_TRUE);
 }
@@ -271,6 +275,7 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetForceBinding
     _thiz: JObject,
     force: jni::sys::jboolean,
 ) {
+    let _ = force;
     #[cfg(feature = "iroh-transport")]
     iroh_transport::set_force_binding_perturb(force == jni::sys::JNI_TRUE);
 }
@@ -384,6 +389,122 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetDevIdentity(
         let _ = label;
         warn!("nativeSetDevIdentity ignored (iroh-transport feature disabled)");
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeStartMedia(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    mode: jint,
+) -> jboolean {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return jni::sys::JNI_FALSE;
+    };
+    if media_bridge::start_media(&session, mode as u8) {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeStopMedia(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return;
+    };
+    media_bridge::stop_media(&session);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePushCapturePcm(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    frame: JObject,
+) {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return;
+    };
+    let buf = JByteBuffer::from(frame);
+    let Ok(ptr) = env.get_direct_buffer_address(&buf) else {
+        return;
+    };
+    let Ok(cap) = env.get_direct_buffer_capacity(&buf) else {
+        return;
+    };
+    if cap == 0 {
+        return;
+    }
+    // SAFETY: direct ByteBuffer from Kotlin audio thread; capacity checked.
+    let slice = unsafe { std::slice::from_raw_parts(ptr, cap) };
+    media_bridge::push_capture(&session, slice);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePullPlaybackPcm(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    frame: JObject,
+) -> jint {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return 0;
+    };
+    let buf = JByteBuffer::from(frame);
+    let Ok(ptr) = env.get_direct_buffer_address(&buf) else {
+        return 0;
+    };
+    let Ok(cap) = env.get_direct_buffer_capacity(&buf) else {
+        return 0;
+    };
+    if cap == 0 {
+        return 0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts_mut(ptr, cap) };
+    media_bridge::pull_playback(&session, slice) as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetMediaMuted(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    muted: jboolean,
+) {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return;
+    };
+    media_bridge::set_muted(&session, muted == jni::sys::JNI_TRUE);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetMediaHeld(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    held: jboolean,
+) {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return;
+    };
+    media_bridge::set_held(&session, held == jni::sys::JNI_TRUE);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeRekeyMedia(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) -> jlong {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return -1;
+    };
+    media_bridge::rekey_media(&session)
 }
 
 #[no_mangle]

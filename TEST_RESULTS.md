@@ -1,8 +1,68 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 2 — pre-merge #23 follow-ups)
+**Last updated:** 2026-11-12 (Phase 2 Step 3 — Android audio I/O + Telecom)
 
-**Status:** Phase 2 Step 2 — `saga-media` Opus + SRTP (Encrypted) or plain RTP (not-encrypted Iroh). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Phase 2 Step 3 — AudioRecord/AudioTrack VOICE_COMMUNICATION + Telecom mute/route/hold; Encrypted→SRTP / not-encrypted→plain RTP after security resolve; §5b re-key swap measured. Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+
+---
+
+## 2026-11-12 — Phase 2 Step 3: Android audio I/O + Telecom
+
+### Pre-Step-3 checks (#23)
+
+| Item | Result |
+|------|--------|
+| LibriSpeech fixture | **Committed** at `saga-media/fixtures/speech_clip_48k.wav` + `ATTRIBUTION.md` (CC BY 4.0). Tests load the local WAV — no OpenSLR network fetch. |
+| Warm-cache GHA rust job | **~177 s** on attempt 2 of [run 43225104217](https://github.com/Supermagnum/saga/actions/runs/43225104217/job/131211748804) (`rust (fmt / clippy / test)` 13:22:56Z→13:25:53Z) |
+
+### Audio API choice
+
+**AudioRecord + AudioTrack** with `VOICE_COMMUNICATION` / `USAGE_VOICE_COMMUNICATION`, PCM via JNI direct `ByteBuffer`s.
+
+| Option | Why not / why |
+|--------|----------------|
+| **AudioRecord/AudioTrack (chosen)** | Session IDs for `AcousticEchoCanceler` / `NoiseSuppressor` / AGC; matches Telecom-managed call audio; no per-frame heap alloc; `THREAD_PRIORITY_URGENT_AUDIO` |
+| Oboe | Extra NDK surface; platform AEC attach is still AudioRecord-session oriented for voice-comm |
+| cpal | Reserved for Linux peer (spec §10); weak VOICE_COMMUNICATION / Telecom integration on Android |
+
+### Platform AEC/NS (emulator probe)
+
+Instrumented `VoiceEffectsProbeTest` on `sdk_gphone64_x86_64` (API 35):
+
+```
+aecAvailable=false aecAttached=false nsAvailable=false nsAttached=false agcAvailable=false agcAttached=false
+```
+
+Engine still starts on `VOICE_COMMUNICATION` and logs attach results at runtime. Physical devices typically report available=true.
+
+### Telecom
+
+- Mute: `InCallService.setMuted` + engine gates send (capture/playback streams stay up)
+- Route: `CallAudioState` / `setAudioRoute`; API 34+ `requestCallEndpointChange` when endpoints known
+- Hold: `Connection.onHold` / `onUnhold` + `Call.STATE_HOLDING` → pause Iroh media; cellular can hold/resume an Iroh call
+- Media starts only after security resolves (Encrypted→SRTP mode 1; NeverEncrypted / §5a Continue→plain RTP mode 2)
+
+### §5b re-key
+
+`MediaPipeline::rekey_srtp` keeps previous decrypt briefly. Host test `tests/rekey.rs`: **rekey_swap_us ≈ 6–12 µs** (≪ 100 ms budget).
+
+### §16 disguise
+
+`disguise_pcm_inplace` remains a no-op before Opus encode.
+
+### In-call UI screenshots (looked at)
+
+`docs/screenshots/step3/`: `incall_base.png`, `incall_muted.png` (Muted / UNMUTE), `incall_speaker.png` (Muted · Speaker / EARPIECE), `incall_held.png` (Muted · Speaker · On hold / RESUME).
+
+### E2E
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** `/tmp/e2e-step3-full2.log` |
+| Case 5a/5b mid-call rekey | **PASS** (rekey_swap_us≈1 µs on device bridge; host pipeline ≈6–12 µs) |
+| PhoneAccount onboarding | **PASS** `/tmp/e2e-onboarding-step3.log` |
+
+Root cause for Case 5 regression: JNI pull wrote PCM without advancing `ByteBuffer` position; `flip()` then `get()` threw `BufferUnderflowException` on `saga-playback`, killing the process before mid-call rehandshake.
 
 ---
 

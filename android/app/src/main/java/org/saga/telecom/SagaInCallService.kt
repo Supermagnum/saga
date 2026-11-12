@@ -1,8 +1,10 @@
 package org.saga.telecom
 
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import android.telecom.Call
+import android.telecom.CallEndpoint
 import android.telecom.InCallService
 import android.util.Log
 import org.saga.call.CallOrigin
@@ -12,6 +14,7 @@ import org.saga.call.SagaCallRegistry
 import org.saga.iroh.PendingDialLookup
 import org.saga.iroh.SagaDialer
 import org.saga.ui.SagaInCallActivity
+import org.saga.ui.SagaInCallServiceBinder
 
 /**
  * Default-dialer InCallService: draws the call screen for every call on device.
@@ -19,6 +22,32 @@ import org.saga.ui.SagaInCallActivity
 class SagaInCallService : InCallService() {
     companion object {
         private const val TAG = "[Saga InCallService]"
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        SagaInCallServiceBinder.service = this
+    }
+
+    override fun onDestroy() {
+        if (SagaInCallServiceBinder.service === this) {
+            SagaInCallServiceBinder.service = null
+            SagaInCallServiceBinder.availableEndpoints = emptyList()
+        }
+        super.onDestroy()
+    }
+
+    override fun onAvailableCallEndpointsChanged(availableEndpoints: MutableList<CallEndpoint>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            SagaInCallServiceBinder.availableEndpoints = availableEndpoints.toList()
+            Log.i(TAG, "CallEndpoints available=${availableEndpoints.map { it.endpointType }}")
+        }
+    }
+
+    override fun onCallEndpointChanged(callEndpoint: CallEndpoint) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Log.i(TAG, "CallEndpoint active type=${callEndpoint.endpointType}")
+        }
     }
 
     override fun onCallAdded(call: Call) {
@@ -86,6 +115,9 @@ class SagaInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
         val callId = SagaCallRegistry.telecomCallId(call)
+        val sessionId = org.saga.iroh.IrohDialManager.get(applicationContext)
+            .sessionIdForCall(callId)
+        org.saga.audio.SagaCallMediaController.stop(callId, sessionId)
         SagaCallRegistry.remove(callId)
         call.unregisterCallback(callCallback)
     }
@@ -98,6 +130,17 @@ class SagaInCallService : InCallService() {
                 val snapshot = CallSecurityStateResolver.resolve(CallOrigin.CELLULAR)
                 SagaCallRegistry.updateSnapshot(callId, snapshot)
                 CallSecurityPresenter.applyConnectSnapshot(applicationContext, snapshot)
+            }
+            // Cellular holding an Iroh call: STATE_HOLDING on the Iroh Call.
+            if (ctx.origin == CallOrigin.IROH) {
+                val sessionId = org.saga.iroh.IrohDialManager.get(applicationContext)
+                    .sessionIdForCall(callId)
+                when (state) {
+                    Call.STATE_HOLDING ->
+                        org.saga.audio.SagaCallMediaController.setHeld(callId, sessionId, true)
+                    Call.STATE_ACTIVE ->
+                        org.saga.audio.SagaCallMediaController.setHeld(callId, sessionId, false)
+                }
             }
         }
     }

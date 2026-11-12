@@ -28,6 +28,8 @@ enum Wire {
     Srtp {
         encrypt: Box<SrtpEncrypt>,
         decrypt: Box<SrtpDecrypt>,
+        /// Previous decrypt kept briefly across §5b re-key for in-flight packets.
+        decrypt_prev: Option<Box<SrtpDecrypt>>,
     },
     Plain,
 }
@@ -98,12 +100,49 @@ impl MediaPipeline {
             Wire::Srtp {
                 encrypt: Box::new(encrypt),
                 decrypt: Box::new(decrypt),
+                decrypt_prev: None,
             },
             send,
             recv,
             counters,
             true,
         )
+    }
+
+    /// §5b re-key: install new SRTP contexts; keep previous receive context briefly.
+    /// Returns elapsed microseconds for the swap (audible-gap budget ~100 ms).
+    pub fn rekey_srtp(&mut self, output: &HandshakeOutput, role: CallRole) -> Result<u128> {
+        if !self.started_encrypted {
+            return Err(MediaError::Failed(
+                "rekey only valid on encrypted media".into(),
+            ));
+        }
+        let t0 = std::time::Instant::now();
+        let keys = SrtpKeyPair::derive(output);
+        let (out_m, in_m) = keys.for_role(role);
+        let encrypt = Box::new(SrtpEncrypt::new(out_m)?);
+        let decrypt = Box::new(SrtpDecrypt::new(in_m)?);
+        match &mut self.wire {
+            Wire::Srtp {
+                encrypt: e,
+                decrypt: d,
+                decrypt_prev,
+            } => {
+                *decrypt_prev = Some(std::mem::replace(d, decrypt));
+                *e = encrypt;
+            }
+            Wire::Plain => {
+                return Err(MediaError::NoSilentDowngrade);
+            }
+        }
+        Ok(t0.elapsed().as_micros())
+    }
+
+    /// Drop the previous decrypt context after the in-flight window.
+    pub fn clear_prev_decrypt(&mut self) {
+        if let Wire::Srtp { decrypt_prev, .. } = &mut self.wire {
+            *decrypt_prev = None;
+        }
     }
 
     /// Unsecured Iroh: plain RTP inside RoQ (after [`media_permit`] allows it).
@@ -337,13 +376,32 @@ impl MediaPipeline {
             return;
         }
         match &mut self.wire {
-            Wire::Srtp { decrypt, .. } => match decrypt.unprotect(body) {
+            Wire::Srtp {
+                decrypt,
+                decrypt_prev,
+                ..
+            } => match decrypt.unprotect(body) {
                 Ok(plain) => self.push_rtp_plain(&plain),
                 Err(MediaError::Srtp(webrtc_srtp::Error::SrtpSsrcDuplicated(_, _)))
                 | Err(MediaError::Srtp(webrtc_srtp::Error::ErrDuplicated)) => {
                     self.counters.replay.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(_) => {
+                    // §5b: try previous receive context for in-flight packets.
+                    if let Some(prev) = decrypt_prev.as_mut() {
+                        match prev.unprotect(body) {
+                            Ok(plain) => {
+                                self.push_rtp_plain(&plain);
+                                return;
+                            }
+                            Err(MediaError::Srtp(webrtc_srtp::Error::SrtpSsrcDuplicated(_, _)))
+                            | Err(MediaError::Srtp(webrtc_srtp::Error::ErrDuplicated)) => {
+                                self.counters.replay.fetch_add(1, Ordering::Relaxed);
+                                return;
+                            }
+                            Err(_) => {}
+                        }
+                    }
                     self.counters
                         .tamper_or_auth_fail
                         .fetch_add(1, Ordering::Relaxed);
