@@ -62,13 +62,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
-          targets: aarch64-linux-android,x86_64-linux-android
+          # CI packages x86_64 only (emulator). Release/F-Droid still build arm64+x86_64.
+          targets: x86_64-linux-android
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: saga-iroh-core
-          shared-key: saga-rust-ndk
+          shared-key: saga-rust-ndk-x86_64-ci
           cache-targets: true
 
       - name: Setup JDK 17
@@ -117,7 +118,10 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           unzip -l "$APK" | tee /tmp/saga-apk-list.txt
-          for abi in arm64-v8a x86_64; do
-            grep -q "lib/${abi}/libsaga_iroh_core.so" /tmp/saga-apk-list.txt
-          done
-          echo "OK: libsaga_iroh_core.so present for arm64-v8a and x86_64"
+          # CI builds x86_64 only (cargo profile=ci, no LTO). Release keeps both ABIs.
+          grep -q "lib/x86_64/libsaga_iroh_core.so" /tmp/saga-apk-list.txt
+          if grep -q "lib/arm64-v8a/libsaga_iroh_core.so" /tmp/saga-apk-list.txt; then
+            echo "UNEXPECTED: arm64-v8a .so present in CI debug APK (should be x86_64-only)"
+            exit 1
+          fi
+          echo "OK: libsaga_iroh_core.so present for x86_64 (CI)"

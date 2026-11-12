@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Full E2E suite (Cases 1-6 + Phase 3). Requires two emulators.
+# "Phase 3" here is a static audio-cue source grep — not product Phase 3 (Nitrokey).
 # Dials seeded contacts by display name (bob, alice, thor) only.
 # Dev identity XML files are named by contact (saga_dev_identity_bob.xml etc.).
 set -uo pipefail

@@ -46,3 +46,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Fast native builds for CI and local debug APKs (no fat LTO).
+# Release / F-Droid keep [profile.release] above.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16

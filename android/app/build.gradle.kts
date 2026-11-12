@@ -39,6 +39,29 @@ fun sagaRequireNative(): Boolean {
     return false
 }
 
+/**
+ * ABIs to build/package.
+ * CI: x86_64 only (emulator coverage, faster). Release / local debug: both.
+ * Override with -Psaga.abis=arm64-v8a,x86_64 or SAGA_NDK_ABIS.
+ */
+fun sagaNdkAbis(): List<String> {
+    val fromProp = project.findProperty("saga.abis")?.toString()?.trim().orEmpty()
+    val fromEnv = System.getenv("SAGA_NDK_ABIS")?.trim().orEmpty()
+    val raw = when {
+        fromProp.isNotEmpty() -> fromProp
+        fromEnv.isNotEmpty() -> fromEnv
+        sagaIsReleaseRequested() -> "arm64-v8a,x86_64"
+        System.getenv("CI") == "true" -> "x86_64"
+        else -> "arm64-v8a,x86_64"
+    }
+    return raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+}
+
+/** Cargo profile: release (fat LTO) for release packaging; ci (no LTO) for debug/CI. */
+fun sagaCargoProfile(): String {
+    return if (sagaIsReleaseRequested()) "release" else "ci"
+}
+
 android {
     namespace = "org.saga"
     compileSdk = 35
@@ -53,7 +76,8 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters.clear()
+            abiFilters += sagaNdkAbis()
         }
     }
 
@@ -87,18 +111,22 @@ tasks.register<Exec>("cargoNdkBuild") {
     group = "build"
     description = "Build saga-iroh-core native library for Android ABIs"
     workingDir = sagaIrohCoreDir
-    commandLine(
-        "cargo", "ndk",
-        "-o", "target/ndk-libs",
-        "-t", "arm64-v8a",
-        "-t", "x86_64",
-        "build", "--release", "--features", "iroh-transport,mock-token"
-    )
+    val abis = sagaNdkAbis()
+    val profile = sagaCargoProfile()
+    val cmd = mutableListOf("cargo", "ndk", "-o", "target/ndk-libs")
+    abis.forEach { abi ->
+        cmd += "-t"
+        cmd += abi
+    }
+    cmd += listOf("build", "--profile", profile, "--features", "iroh-transport,mock-token")
+    commandLine(cmd)
     val requireNative = sagaRequireNative()
     isIgnoreExitValue = !requireNative
+    doFirst {
+        logger.lifecycle("cargo-ndk profile=[$profile] abis=${abis.joinToString(",")}")
+    }
     doLast {
         val exit = executionResult.get().exitValue
-        val abis = listOf("arm64-v8a", "x86_64")
         val missing = abis.filter { abi ->
             !sagaIrohNdkLibs.resolve("$abi/libsaga_iroh_core.so").isFile
         }
@@ -139,8 +167,9 @@ tasks.register("verifyNativeLibsInApk") {
         if (!apk.isFile) {
             throw GradleException("Debug APK not found at ${apk.absolutePath}")
         }
+        val abis = sagaNdkAbis()
         ZipFile(apk).use { zip ->
-            for (abi in listOf("arm64-v8a", "x86_64")) {
+            for (abi in abis) {
                 val entry = "lib/$abi/libsaga_iroh_core.so"
                 if (zip.getEntry(entry) == null) {
                     throw GradleException(
@@ -149,7 +178,9 @@ tasks.register("verifyNativeLibsInApk") {
                 }
             }
         }
-        logger.lifecycle("OK: libsaga_iroh_core.so present for arm64-v8a and x86_64 in ${apk.name}")
+        logger.lifecycle(
+            "OK: libsaga_iroh_core.so present for ${abis.joinToString(" and ")} in ${apk.name}"
+        )
     }
 }
 
