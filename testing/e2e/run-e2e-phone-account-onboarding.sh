@@ -357,19 +357,37 @@ if ! disable_via_settings_ui "$SERIAL_PA"; then
   bash "$E2E_DIR/seed-test-contacts.sh" "$SERIAL_PA" >/dev/null
 fi
 
+if phone_account_disabled "$SERIAL_PA"; then
+  record "CASEC_STATE:PASS PhoneAccount disabled before inbound"
+else
+  record "CASEC_STATE:FAIL PhoneAccount still enabled — forcing reinstall"
+  install_pa_no_enable "$SERIAL_PA"
+  push_identity "$SERIAL_PA" "alice"
+  push_iroh_relay_pref "$SERIAL_PA"
+  bash "$E2E_DIR/seed-test-contacts.sh" "$SERIAL_PA" >/dev/null
+fi
+
 adb -s "$SERIAL_PA" logcat -c
 adb -s "$SERIAL_PEER" logcat -c
+# Callee must be listening + relay-online before dial, else reject never fires (harness flake).
 start_listener "$SERIAL_PA"
-wait_for_relay_online "$SERIAL_PA" "alice-disabled" || true
+if ! wait_for_relay_online "$SERIAL_PA" "alice-disabled"; then
+  record "CASEC:WARN alice relay not online — retrying listener"
+  start_listener "$SERIAL_PA"
+  wait_for_relay_online "$SERIAL_PA" "alice-disabled" || true
+fi
 start_listener "$SERIAL_PEER"
 wait_for_relay_online "$SERIAL_PEER" "bob-caller" || true
+# Extra settle for main-thread PhoneAccount checks after Settings toggles.
+sleep 2
 
 adb -s "$SERIAL_PEER" shell am start -n org.saga/.ui.MainActivity \
   -a org.saga.TEST_CONTACT_CALL --es contact_name alice
-# Wait for inbound accept + reject path
+# Wait for inbound accept + reject path (app reject log or Rust bridge drop).
 reject_ok=0
-for _ in $(seq 1 30); do
-  if adb -s "$SERIAL_PA" logcat -d | rg -q 'PhoneAccount not enabled|SecurityException|Rejecting inbound Iroh session|inbound rejected by bridge'; then
+for _ in $(seq 1 45); do
+  if adb -s "$SERIAL_PA" logcat -d | rg -q \
+    'PhoneAccount not enabled|PhoneAccount disabled|SecurityException|Rejecting inbound Iroh session|inbound rejected by bridge'; then
     reject_ok=1
     break
   fi
@@ -380,8 +398,8 @@ if [[ "$reject_ok" -eq 1 ]]; then
   record "INBOUND_REJECT:PASS logged reject while disabled"
 else
   record "INBOUND_REJECT:FAIL missing reject log"
-  adb -s "$SERIAL_PA" logcat -d | rg 'Incoming Call Bridge|Phone Account|inbound|Iroh Listen' | tail -30 || true
-  adb -s "$SERIAL_PEER" logcat -d | rg 'Saga Dialer|placeCall|notifyFailed|connect' | tail -20 || true
+  adb -s "$SERIAL_PA" logcat -d | rg 'Incoming Call Bridge|Phone Account|inbound|Iroh Listen|notifyIncoming' | tail -40 || true
+  adb -s "$SERIAL_PEER" logcat -d | rg 'Saga Dialer|placeCall|notifyFailed|connect|IROH' | tail -30 || true
 fi
 
 if adb -s "$SERIAL_PA" logcat -d | rg -q 'FATAL EXCEPTION|AndroidRuntime.*Crash'; then

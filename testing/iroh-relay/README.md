@@ -16,7 +16,12 @@ A local relay removes that variance and is the **default** for `run-e2e-full.sh`
 
 ```bash
 # Start (installs iroh-relay 1.0.2 via cargo if missing)
+# Binds 0.0.0.0:3340 and advertises http://<LAN-IP>:3340
 bash testing/iroh-relay/start-local-relay.sh
+
+# Print the advertise URL (also written to /tmp/saga-iroh-relay-url.txt)
+bash testing/iroh-relay/lan-relay-url.sh
+# or: cargo run --manifest-path tools/saga-peer/Cargo.toml -- relay-host
 
 # Stop
 bash testing/iroh-relay/stop-local-relay.sh
@@ -24,13 +29,17 @@ bash testing/iroh-relay/stop-local-relay.sh
 
 | Endpoint | URL |
 |----------|-----|
-| Host | `http://127.0.0.1:3340` |
-| Android emulator | `http://10.0.2.2:3340` |
+| Host + emulator + saga-peer | `http://<LAN-IP>:3340` (shared; from `lan-relay-url.sh`) |
 
-The app reads the emulator URL from `shared_prefs/saga_iroh_relay.xml` (pushed by E2E as `saga_iroh_relay_local.xml`).
+Do **not** put `127.0.0.1` or `10.0.2.2` in EndpointAddr advertisements — the peer
+publishes its home relay URL into the address, and every side must resolve it.
+
+E2E generates `shared_prefs/saga_iroh_relay.xml` with the LAN URL via
+`push_iroh_relay_pref` (see `testing/e2e/e2e-common.sh`).
 
 Logs: `/tmp/saga-iroh-relay.log`  
-PID file: `/tmp/saga-iroh-relay.pid`
+PID file: `/tmp/saga-iroh-relay.pid`  
+Advertise URL: `/tmp/saga-iroh-relay-url.txt`
 
 ## Public relay comparison
 

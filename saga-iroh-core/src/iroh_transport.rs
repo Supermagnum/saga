@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use iroh::endpoint::Connection;
@@ -12,20 +12,17 @@ use iroh::tls::CaTlsConfig;
 #[cfg(feature = "mock-token")]
 use iroh::SecretKey;
 use iroh::{endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
-// Linked for Phase 2 media (Step 2+). Keep the crate in the release tree via git rev.
-#[allow(unused_imports)]
 use iroh_roq::ALPN as ROQ_ALPN;
 use log::{error, info, warn};
-#[cfg(feature = "mock-token")]
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 
 #[cfg(feature = "mock-token")]
 use mock_token::{
-    decrypt_frame, encrypt_frame, run_initiator_with_options, run_responder_with_options,
-    HandshakeOutcome, MockIdentity, SYNTHETIC_PLAINTEXT,
+    run_initiator_with_options, run_responder_with_options, HandshakeOutcome, MockIdentity,
 };
+use saga_media::CallRole;
+use saga_session::HandshakeOutput;
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 
@@ -53,10 +50,11 @@ pub enum RelayPoll {
 struct Session {
     connection: Connection,
     handshake: HandshakePoll,
-    /// Retained for Phase 2 media key derivation; read via [`session_key_hex`].
-    #[allow(dead_code)]
-    session_key: Option<[u8; 32]>,
-    media_round_trip_ok: bool,
+    /// Full handshake output for SRTP key derivation (saga-media).
+    handshake_output: Option<Arc<HandshakeOutput>>,
+    role: CallRole,
+    /// RoQ connection established after voice handshake (media path).
+    roq: Option<Connection>,
 }
 
 struct EndpointHolder {
@@ -69,13 +67,17 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static SHARED_ENDPOINT: OnceLock<EndpointHolder> = OnceLock::new();
 static SESSIONS: LazyLock<Mutex<HashMap<String, Session>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Responder waits here for the initiator's RoQ connect after voice handshake.
+static PENDING_ROQ: LazyLock<Mutex<HashMap<PublicKey, oneshot::Sender<Connection>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 static DEV_IDENTITY_LABEL: Mutex<Option<String>> = Mutex::new(None);
 static RELAY_URL_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
 static FORCE_HANDSHAKE_FAIL: AtomicBool = AtomicBool::new(false);
 static FORCE_BINDING_PERTURB: AtomicBool = AtomicBool::new(false);
 static RELAY_POLL: AtomicU8 = AtomicU8::new(RelayPoll::Pending as u8);
 
-fn runtime() -> &'static Runtime {
+pub(crate) fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -281,8 +283,9 @@ async fn handle_inbound_connection(conn: Connection) {
             Session {
                 connection: conn,
                 handshake: HandshakePoll::Pending,
-                session_key: None,
-                media_round_trip_ok: false,
+                handshake_output: None,
+                role: CallRole::Callee,
+                roq: None,
             },
         );
     } else {
@@ -293,8 +296,10 @@ async fn handle_inbound_connection(conn: Connection) {
     #[cfg(feature = "iroh-transport")]
     crate::bridge_notify_incoming_call(&session_id, &lookup_key, &remote_id_str);
 
-    // Brief window for main-thread bridge to reject (disabled account / SecurityException).
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    // Window for main-thread bridge to reject (disabled account / SecurityException).
+    // Emulator main-thread lag after Settings UI / force-stop made 250ms flaky for
+    // onboarding Case C (INBOUND_REJECT missing reject log).
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
     let conn = {
         let Ok(mut sessions) = SESSIONS.lock() else {
@@ -312,7 +317,7 @@ async fn handle_inbound_connection(conn: Connection) {
     };
 
     #[cfg(feature = "mock-token")]
-    let (handshake, session_key, media_round_trip_ok) = match conn.accept_bi().await {
+    let (handshake, handshake_output, roq) = match conn.accept_bi().await {
         Ok((mut send, mut recv)) => {
             let identity = MockIdentity::from_label(&local_identity_label());
             let Ok(ep) = bind_shared_endpoint() else {
@@ -320,6 +325,12 @@ async fn handle_inbound_connection(conn: Connection) {
                 conn.close(0u32.into(), b"saga no local eid");
                 return;
             };
+            // Register before handshake so initiator RoQ connect is not dropped.
+            let remote = conn.remote_id();
+            let (tx, rx) = oneshot::channel();
+            if let Ok(mut pending) = PENDING_ROQ.lock() {
+                pending.insert(remote, tx);
+            }
             let local_eid = *ep.id().as_bytes();
             let remote_eid = *conn.remote_id().as_bytes();
             let outcome = run_responder_with_options(
@@ -334,7 +345,6 @@ async fn handle_inbound_connection(conn: Connection) {
             .await;
             match outcome {
                 HandshakeOutcome::Encrypted { output } => {
-                    let key = *output.saga_session_key;
                     #[cfg(debug_assertions)]
                     {
                         let (a, b) = output.session_key_debug_prefix();
@@ -342,15 +352,27 @@ async fn handle_inbound_connection(conn: Connection) {
                             "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
                         );
                     }
-                    let media_ok = read_media_round_trip(&mut recv, &key, "responder")
-                        .await
-                        .unwrap_or(false);
-                    info!("[Saga Media Round-Trip] responder decrypted_ok={media_ok}");
-                    (HandshakePoll::Encrypted, Some(key), media_ok)
+                    let roq = match tokio::time::timeout(Duration::from_secs(15), rx).await {
+                        Ok(Ok(c)) => {
+                            info!("[Saga Media] responder RoQ accepted from {remote}");
+                            Some(c)
+                        }
+                        _ => {
+                            warn!("[Saga Media] responder RoQ accept timed out");
+                            if let Ok(mut pending) = PENDING_ROQ.lock() {
+                                pending.remove(&remote);
+                            }
+                            None
+                        }
+                    };
+                    (HandshakePoll::Encrypted, Some(Arc::new(output)), roq)
                 }
                 HandshakeOutcome::Failed { reason } => {
                     warn!("inbound mock-token handshake failed: {reason}");
-                    (HandshakePoll::Failed, None, false)
+                    if let Ok(mut pending) = PENDING_ROQ.lock() {
+                        pending.remove(&remote);
+                    }
+                    (HandshakePoll::Failed, None, None)
                 }
             }
         }
@@ -361,9 +383,8 @@ async fn handle_inbound_connection(conn: Connection) {
         }
     };
 
-    // Release builds have no SessionToken backend yet → not encrypted (expected).
     #[cfg(not(feature = "mock-token"))]
-    let (handshake, session_key, media_round_trip_ok) = (HandshakePoll::Failed, None, false);
+    let (handshake, handshake_output, roq) = (HandshakePoll::Failed, None, None);
 
     if let Ok(mut sessions) = SESSIONS.lock() {
         sessions.insert(
@@ -371,62 +392,19 @@ async fn handle_inbound_connection(conn: Connection) {
             Session {
                 connection: conn,
                 handshake,
-                session_key,
-                media_round_trip_ok,
+                handshake_output,
+                role: CallRole::Callee,
+                roq,
             },
         );
         info!("inbound session registered lookup=[{lookup_key}] handshake={handshake:?}");
     }
 }
 
-#[cfg(feature = "mock-token")]
-async fn read_media_round_trip<R: AsyncReadExt + Unpin>(
-    reader: &mut R,
-    key: &[u8; 32],
-    role: &str,
-) -> Result<bool, String> {
-    let mut len_buf = [0u8; 4];
-    reader
-        .read_exact(&mut len_buf)
-        .await
-        .map_err(|e| format!("read media len: {e}"))?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut frame = vec![0u8; len];
-    reader
-        .read_exact(&mut frame)
-        .await
-        .map_err(|e| format!("read media frame: {e}"))?;
-    let plain = decrypt_frame(key, &frame)?;
-    let ok = plain == SYNTHETIC_PLAINTEXT;
-    info!("[Saga Media Round-Trip] {role} decrypted_ok={ok} plaintext_match={ok}");
-    Ok(ok)
-}
-
-#[cfg(feature = "mock-token")]
-async fn send_media_round_trip<W: AsyncWriteExt + Unpin>(
-    writer: &mut W,
-    key: &[u8; 32],
-) -> Result<bool, String> {
-    let frame = encrypt_frame(key, SYNTHETIC_PLAINTEXT);
-    let len = (frame.len() as u32).to_be_bytes();
-    writer
-        .write_all(&len)
-        .await
-        .map_err(|e| format!("write media len: {e}"))?;
-    writer
-        .write_all(&frame)
-        .await
-        .map_err(|e| format!("write media frame: {e}"))?;
-    writer
-        .flush()
-        .await
-        .map_err(|e| format!("flush media: {e}"))?;
-    Ok(true)
-}
-
 async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
-    let mut builder = Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec()]);
+    let mut builder =
+        Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()]);
     builder = apply_relay_builder(builder)?;
     #[cfg(feature = "mock-token")]
     {
@@ -463,7 +441,20 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                         Some(connecting) => {
                             tokio::spawn(async move {
                                 match connecting.await {
-                                    Ok(conn) => handle_inbound_connection(conn).await,
+                                    Ok(conn) => {
+                                        if conn.alpn() == ROQ_ALPN {
+                                            let remote = conn.remote_id();
+                                            if let Ok(mut pending) = PENDING_ROQ.lock() {
+                                                if let Some(tx) = pending.remove(&remote) {
+                                                    let _ = tx.send(conn);
+                                                    return;
+                                                }
+                                            }
+                                            warn!("unsolicited RoQ from {remote}");
+                                        } else {
+                                            handle_inbound_connection(conn).await;
+                                        }
+                                    }
                                     Err(e) => warn!("iroh inbound handshake failed: {e}"),
                                 }
                             });
@@ -541,13 +532,12 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         connection.ok_or_else(|| format!("iroh connect failed after retries: {last_err}"))?;
 
     #[cfg(feature = "mock-token")]
-    let (handshake, session_key, media_round_trip_ok) = {
+    let (handshake, handshake_output, roq) = {
         let (mut send, mut recv) = connection
             .open_bi()
             .await
             .map_err(|e| format!("iroh open_bi failed: {e}"))?;
         let identity = MockIdentity::from_label(&local_identity_label());
-        // peer_id may be a hex EndpointId; map back to phone-digit label for LT keys.
         let peer_label = dev_label_for_endpoint(&remote).unwrap_or_else(|| peer_id.to_string());
         let local_eid = *endpoint.id().as_bytes();
         let remote_eid = *connection.remote_id().as_bytes();
@@ -564,37 +554,54 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         .await;
         match outcome {
             HandshakeOutcome::Encrypted { output } => {
-                let key = *output.saga_session_key;
                 #[cfg(debug_assertions)]
                 {
                     let (a, b) = output.session_key_debug_prefix();
                     info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
                 }
-                let media_ok = send_media_round_trip(&mut send, &key)
-                    .await
-                    .unwrap_or(false);
                 let _ = send.finish();
-                (HandshakePoll::Encrypted, Some(key), media_ok)
+                let remote_pk = connection.remote_id();
+                let mut roq = None;
+                for attempt in 1..=8 {
+                    match endpoint
+                        .connect(EndpointAddr::from(remote_pk), ROQ_ALPN)
+                        .await
+                    {
+                        Ok(c) => {
+                            info!(
+                                "[Saga Media] initiator RoQ connected to {remote_pk} attempt={attempt}"
+                            );
+                            roq = Some(c);
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("[Saga Media] initiator RoQ connect attempt {attempt}/8: {e}");
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                        }
+                    }
+                }
+                (HandshakePoll::Encrypted, Some(Arc::new(output)), roq)
             }
             HandshakeOutcome::Failed { reason } => {
                 warn!("mock-token handshake failed: {reason}");
-                (HandshakePoll::Failed, None, false)
+                let _ = send.finish();
+                (HandshakePoll::Failed, None, None)
             }
         }
     };
 
-    // No production SessionToken yet: Iroh connects but handshake fails → not encrypted.
     #[cfg(not(feature = "mock-token"))]
-    let (handshake, session_key, media_round_trip_ok) = {
+    let (handshake, handshake_output, roq) = {
         let (mut send, _recv) = connection
             .open_bi()
             .await
             .map_err(|e| format!("iroh open_bi failed: {e}"))?;
+        // iroh SendStream provides write_all without AsyncWriteExt in scope.
         send.write_all(b"saga-connect-probe")
             .await
             .map_err(|e| format!("iroh probe write: {e}"))?;
         let _ = send.finish();
-        (HandshakePoll::Failed, None, false)
+        (HandshakePoll::Failed, None, None)
     };
 
     info!(
@@ -610,8 +617,9 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             Session {
                 connection,
                 handshake,
-                session_key,
-                media_round_trip_ok,
+                handshake_output,
+                role: CallRole::Caller,
+                roq,
             },
         );
 
@@ -631,7 +639,11 @@ pub fn connect(peer_id: &str, session_id: &str) -> Result<(), String> {
 }
 
 pub fn disconnect(session_id: &str) {
+    crate::media_bridge::stop_media(session_id);
     if let Some(session) = SESSIONS.lock().ok().and_then(|mut m| m.remove(session_id)) {
+        if let Some(roq) = session.roq {
+            roq.close(0u32.into(), b"saga disconnect");
+        }
         session.connection.close(0u32.into(), b"saga disconnect");
     }
 }
@@ -644,23 +656,51 @@ pub fn poll_handshake(session_id: &str) -> HandshakePoll {
         .unwrap_or(HandshakePoll::Pending)
 }
 
-/// Hex session key for debug / Phase 2 media binding. Not yet exposed over JNI.
+/// Hex session key for debug. Not yet exposed over JNI.
 #[allow(dead_code)]
 pub fn session_key_hex(session_id: &str) -> Option<String> {
     SESSIONS.lock().ok().and_then(|m| {
         m.get(session_id).and_then(|s| {
-            s.session_key
-                .map(|key| key.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            s.handshake_output.as_ref().map(|o| {
+                o.saga_session_key
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            })
         })
     })
 }
 
+/// True when RoQ is ready or media is running (replaces synthetic media probe).
 pub fn media_round_trip_ok(session_id: &str) -> bool {
+    if crate::media_bridge::media_running(session_id) {
+        return true;
+    }
     SESSIONS
         .lock()
         .ok()
-        .and_then(|m| m.get(session_id).map(|s| s.media_round_trip_ok))
+        .and_then(|m| m.get(session_id).map(|s| s.roq.is_some()))
         .unwrap_or(false)
+}
+
+/// Take RoQ connection for media start (once). Handshake output stays on the session.
+pub fn take_media_setup(
+    session_id: &str,
+) -> Option<(CallRole, Option<Arc<HandshakeOutput>>, Connection)> {
+    let Ok(mut map) = SESSIONS.lock() else {
+        return None;
+    };
+    let s = map.get_mut(session_id)?;
+    let roq = s.roq.take()?;
+    let hs = s.handshake_output.clone();
+    Some((s.role, hs, roq))
+}
+
+pub fn handshake_output(session_id: &str) -> Option<Arc<HandshakeOutput>> {
+    SESSIONS
+        .lock()
+        .ok()
+        .and_then(|m| m.get(session_id).and_then(|s| s.handshake_output.clone()))
 }
 
 pub fn local_endpoint_id_hex() -> Result<String, String> {

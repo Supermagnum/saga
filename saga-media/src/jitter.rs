@@ -1,4 +1,4 @@
-//! Adaptive jitter buffer: target ~40–60 ms, cap ~200 ms.
+//! Adaptive jitter buffer: target ~40–60 ms, cap 300 ms.
 
 use std::collections::BTreeMap;
 
@@ -6,13 +6,30 @@ use crate::codec::FRAME_MS;
 
 const TARGET_MS_LOW: u32 = 40;
 const TARGET_MS_HIGH: u32 = 60;
-const CAP_MS: u32 = 200;
+/// Playout cap in ms (15 × 20 ms frames).
+///
+/// Kept at 300 ms (not 1 s): the reorder/loss wait is already ~200 ms
+/// (10 ticks); +100 ms headroom covers a short burst after Wait without
+/// soaking emulator inject artefacts into real call latency. Capture is
+/// paced at 20 ms, so a 1 s cap is no longer needed for test dumps.
+pub const CAP_MS: u32 = 300;
 
 /// Packet held in the jitter buffer.
 #[derive(Debug, Clone)]
 pub struct BufferedPacket {
     pub seq: u16,
     pub payload: Vec<u8>,
+}
+
+/// Result of a playout tick against the jitter buffer.
+#[derive(Debug)]
+pub enum PopOutcome {
+    /// Next packet ready to decode.
+    Packet(BufferedPacket),
+    /// Wait (silence): next missing but not yet declared lost.
+    Wait,
+    /// Gap declared lost; caller should conceal. Sequence already advanced.
+    Lost,
 }
 
 #[derive(Debug)]
@@ -25,6 +42,8 @@ pub struct JitterBuffer {
     /// Current delay target in frames (adaptive).
     target_frames: u32,
     max_packets: usize,
+    /// Consecutive ticks with later packets buffered but `next` missing.
+    wait_ticks: u32,
 }
 
 impl Default for JitterBuffer {
@@ -43,6 +62,7 @@ impl JitterBuffer {
             playout_started: false,
             target_frames: target_frames.max(1),
             max_packets,
+            wait_ticks: 0,
         }
     }
 
@@ -58,8 +78,24 @@ impl JitterBuffer {
         self.max_packets
     }
 
-    /// Insert a packet. Drops if buffer would exceed cap (keeps nearer-to-playout).
-    pub fn push(&mut self, seq: u16, payload: Vec<u8>) {
+    /// True once a real packet has been popped (playout clock engaged).
+    pub fn playout_started(&self) -> bool {
+        self.playout_started
+    }
+
+    /// True when no RTP has been inserted yet (still waiting for first packet).
+    pub fn awaiting_first_packet(&self) -> bool {
+        self.next_seq.is_none()
+    }
+
+    /// Current buffered packet count (depth).
+    pub fn depth(&self) -> usize {
+        self.packets.len()
+    }
+
+    /// Insert a packet. Returns whether it was accepted (false = late / already played).
+    /// Drops farthest-ahead if buffer would exceed cap.
+    pub fn push(&mut self, seq: u16, payload: Vec<u8>) -> bool {
         match self.next_seq {
             None => self.next_seq = Some(seq),
             Some(next) => {
@@ -68,19 +104,27 @@ impl JitterBuffer {
                     // Still priming: accept an earlier seq as the new start.
                     self.next_seq = Some(seq);
                 } else if self.already_played(seq, next) {
-                    return;
+                    return false;
                 }
             }
         }
         self.packets.insert(seq, payload);
+        // Over cap: drop nearest-to-playout and jump the playout cursor past it.
+        // Dropping farthest (old behavior) punched holes in the future sequence
+        // under RoQ catch-up bursts; jumping forward sheds latency instead.
         while self.packets.len() > self.max_packets {
-            // Drop farthest-from-playout (highest seq ahead of next).
-            if let Some((&k, _)) = self.packets.iter().next_back() {
-                self.packets.remove(&k);
-            } else {
+            let Some((&k, _)) = self.packets.iter().next() else {
                 break;
+            };
+            self.packets.remove(&k);
+            if let Some(next) = self.next_seq {
+                let ahead = k.wrapping_sub(next);
+                if ahead < 0x8000 {
+                    self.next_seq = Some(k.wrapping_add(1));
+                }
             }
         }
+        true
     }
 
     fn already_played(&self, seq: u16, next: u16) -> bool {
@@ -88,25 +132,54 @@ impl JitterBuffer {
         delta > 0 && delta < 0x8000
     }
 
-    /// Pop next packet if buffered enough (≥ target) or packet is exactly next.
-    /// Returns `None` if we should wait or run PLC.
-    pub fn pop_ready(&mut self) -> Option<BufferedPacket> {
-        let next = self.next_seq?;
+    /// Pop next packet, or indicate wait / loss.
+    pub fn pop_ready(&mut self) -> PopOutcome {
+        let Some(next) = self.next_seq else {
+            return PopOutcome::Wait;
+        };
         if let Some(payload) = self.packets.remove(&next) {
             self.playout_started = true;
             self.next_seq = Some(next.wrapping_add(1));
+            self.wait_ticks = 0;
             self.adapt_after_hit();
-            return Some(BufferedPacket { seq: next, payload });
+            return PopOutcome::Packet(BufferedPacket { seq: next, payload });
         }
-        // Not ready: only skip ahead (PLC) once we have later packets and
-        // buffer depth suggests the next is lost.
-        if self.packets.len() as u32 >= self.target_frames {
-            // Gap — advance and let caller PLC.
-            self.next_seq = Some(next.wrapping_add(1));
-            self.adapt_after_miss();
-            return None;
+        if self.packets.is_empty() {
+            self.wait_ticks = 0;
+            return PopOutcome::Wait;
         }
-        None
+        // Later packets exist but `next` is missing: wait ~200 ms (10 ticks)
+        // for reorder/slow-recv, then declare loss. Do NOT loss on "ahead>=N"
+        // alone — that skipped still-arriving seqs under paced inject and left
+        // played≈20 / plc climbing on emulator RoQ.
+        self.wait_ticks = self.wait_ticks.saturating_add(1);
+        if self.wait_ticks < 10 {
+            return PopOutcome::Wait;
+        }
+        let oldest = self.packets.keys().next().copied();
+        // If the hole is permanent and the buffer already holds a much later
+        // seq, jump forward so we do not PLC one-by-one across a large gap.
+        if let Some(oldest) = oldest {
+            let ahead = oldest.wrapping_sub(next);
+            if (2u16..0x8000).contains(&ahead) {
+                self.next_seq = Some(oldest);
+                self.wait_ticks = 0;
+                self.adapt_after_miss();
+                return PopOutcome::Lost;
+            }
+        }
+        self.next_seq = Some(next.wrapping_add(1));
+        self.wait_ticks = 0;
+        self.adapt_after_miss();
+        PopOutcome::Lost
+    }
+
+    /// Compatibility: packet or none (treats Wait/Lost as none).
+    pub fn pop_packet(&mut self) -> Option<BufferedPacket> {
+        match self.pop_ready() {
+            PopOutcome::Packet(p) => Some(p),
+            _ => None,
+        }
     }
 
     /// Force PLC advance when playout clock ticks and nothing is ready.
@@ -146,9 +219,13 @@ mod tests {
         for i in 2..10 {
             jb.push(i, vec![i as u8]);
         }
-        let a = jb.pop_ready().unwrap();
+        let PopOutcome::Packet(a) = jb.pop_ready() else {
+            panic!("expected packet");
+        };
         assert_eq!(a.seq, 0);
-        let b = jb.pop_ready().unwrap();
+        let PopOutcome::Packet(b) = jb.pop_ready() else {
+            panic!("expected packet");
+        };
         assert_eq!(b.seq, 1);
     }
 
@@ -159,5 +236,63 @@ mod tests {
             jb.push(i, vec![0]);
         }
         assert!(jb.len() <= jb.max_packets());
+    }
+
+    #[test]
+    fn over_cap_jumps_forward_not_drop_farthest() {
+        let mut jb = JitterBuffer::new();
+        let cap = jb.max_packets() as u16;
+        // Fill beyond cap with a contiguous burst.
+        for i in 0..(cap + 5) {
+            assert!(jb.push(i, vec![i as u8]));
+        }
+        assert!(jb.len() <= jb.max_packets());
+        // Playout must land on a kept (later) seq — not a hole from
+        // dropping the tail while next still points at the head.
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected packet after over-cap jump");
+        };
+        assert!(
+            p.seq >= 5,
+            "expected jump-forward past shed head, got seq={}",
+            p.seq
+        );
+    }
+
+    #[test]
+    fn does_not_prematurely_loss_when_ahead_buffered() {
+        let mut jb = JitterBuffer::new();
+        jb.push(10, vec![10]);
+        // Pop first so next=11, then buffer later packets while 11 is in flight.
+        assert!(matches!(jb.pop_ready(), PopOutcome::Packet(_)));
+        jb.push(12, vec![12]);
+        jb.push(13, vec![13]);
+        // Former bug: ahead>=8 && depth fired immediately — here ahead is small,
+        // but even with depth we must Wait for the reorder window.
+        for _ in 0..9 {
+            assert!(matches!(jb.pop_ready(), PopOutcome::Wait));
+        }
+        // Deliver the missing packet before the 10th wait tick.
+        jb.push(11, vec![11]);
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected packet 11 after late arrival");
+        };
+        assert_eq!(p.seq, 11);
+    }
+
+    #[test]
+    fn jumps_forward_after_reorder_window_on_large_gap() {
+        let mut jb = JitterBuffer::new();
+        jb.push(0, vec![0]);
+        assert!(matches!(jb.pop_ready(), PopOutcome::Packet(_)));
+        jb.push(50, vec![50]);
+        for _ in 0..9 {
+            assert!(matches!(jb.pop_ready(), PopOutcome::Wait));
+        }
+        assert!(matches!(jb.pop_ready(), PopOutcome::Lost));
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected jump to seq 50");
+        };
+        assert_eq!(p.seq, 50);
     }
 }

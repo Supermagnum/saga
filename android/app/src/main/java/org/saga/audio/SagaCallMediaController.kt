@@ -50,10 +50,18 @@ object SagaCallMediaController {
         val engine = SagaVoiceAudioEngine(
             context = context.applicationContext,
             onCaptureFrame = { buf ->
+                // Debug inject replaces mic PCM when armed (RoQ metrics).
+                if (SagaPcmDebug.injectActive()) {
+                    SagaPcmDebug.fillInjectFrame(buf)
+                }
                 IrohNativeBridge.pushCapturePcm(rustSessionId, buf)
             },
             fillPlaybackFrame = { buf ->
-                IrohNativeBridge.pullPlaybackPcm(rustSessionId, buf)
+                val n = IrohNativeBridge.pullPlaybackPcm(rustSessionId, buf)
+                if (n > 0) {
+                    SagaPcmDebug.dumpPlaybackFrame(buf, n)
+                }
+                n
             }
         )
         engines[telecomCallId] = engine
