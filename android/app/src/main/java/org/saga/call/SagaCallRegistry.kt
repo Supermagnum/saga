@@ -57,8 +57,11 @@ object SagaCallRegistry {
         if (handle.scheme == SagaCallUri.SCHEME) {
             return handle.schemeSpecificPart ?: handle.toString()
         }
-        // tel:iroh is a non-routable placeholder — never treat it as the peer id.
-        if (handle.schemeSpecificPart.equals(SagaCallUri.IROH_TELECOM_SSP, ignoreCase = true)) {
+        // Non-routable Iroh placeholder (tel:, or legacy tel:iroh) — never treat as peer id.
+        val ssp = handle.schemeSpecificPart.orEmpty()
+        if (ssp == SagaCallUri.IROH_TELECOM_SSP ||
+            ssp.equals(SagaCallUri.LEGACY_UNSAFE_IROH_SSP, ignoreCase = true)
+        ) {
             return "Unknown"
         }
         if (call.details.accountHandle?.id == SagaPhoneAccountRegistrar.ACCOUNT_ID) {

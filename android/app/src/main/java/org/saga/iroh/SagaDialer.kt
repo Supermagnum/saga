@@ -1,8 +1,10 @@
 package org.saga.iroh
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.telecom.TelecomManager
 import android.util.Log
 import org.saga.dial.DialTarget
@@ -15,6 +17,11 @@ object SagaDialer {
     const val EXTRA_LOOKUP_KEY = "org.saga.EXTRA_LOOKUP_KEY"
     const val EXTRA_REMOTE_ENDPOINT_ID = "org.saga.EXTRA_REMOTE_ENDPOINT_ID"
     const val EXTRA_CONTACT_NAME = "org.saga.EXTRA_CONTACT_NAME"
+
+    /** Wall-clock millis when a debug forced SIM-path placeCall was issued (0 = none). */
+    @Volatile
+    var debugForceSimPlaceCallElapsedRealtimeMs: Long = 0L
+        private set
 
     fun parseIrohUri(uri: Uri?): IrohNodeId? = SagaCallUri.parsePeer(uri)
 
@@ -80,7 +87,43 @@ object SagaDialer {
         }
         PendingDialLookup.put(peerId.raw, lookupKey, contactName)
         Log.i(TAG, "Placing Iroh call to contact [$contactName] via Saga PhoneAccount")
-        placeIrohViaTelecom(context, peerId, lookupKey, contactName)
+        placeIrohViaTelecom(context, peerId, lookupKey, contactName, forceSimPath = false)
+    }
+
+    /**
+     * DEBUG-ONLY: bypass the enabled-account pre-check and still placeCall with the Saga handle
+     * so Telecom can substitute the SIM account (reproduces the #2 security bug path).
+     * Used to measure whether letter-to-digit conversion reaches the modem before InCall abort.
+     */
+    fun placeIrohCallForceSimPathForDebug(
+        context: Context,
+        peerId: IrohNodeId,
+        lookupKey: String,
+        contactName: String,
+        sspOverride: String? = null
+    ) {
+        val debuggable =
+            (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable) {
+            Log.e(TAG, "forceSimPath refused — not a debuggable build")
+            return
+        }
+        val ssp = sspOverride ?: SagaCallUri.IROH_TELECOM_SSP
+        val digits = SagaCallUri.dialableDigitsAfterNormalize(ssp)
+        Log.e(
+            TAG,
+            "DEBUG_FORCE_SIM_PATH ssp=[$ssp] afterKeypad+strip=[$digits] " +
+                "accountEnabled=[${SagaPhoneAccountRegistrar.isAccountEnabled(context)}]"
+        )
+        PendingDialLookup.put(peerId.raw, lookupKey, contactName)
+        placeIrohViaTelecom(
+            context,
+            peerId,
+            lookupKey,
+            contactName,
+            forceSimPath = true,
+            sspOverride = ssp
+        )
     }
 
     fun placeCellularCall(context: Context, number: String) {
@@ -93,7 +136,9 @@ object SagaDialer {
         context: Context,
         peerId: IrohNodeId,
         lookupKey: String,
-        contactName: String
+        contactName: String,
+        forceSimPath: Boolean,
+        sspOverride: String? = null
     ) {
         val telecom = context.getSystemService(TelecomManager::class.java) ?: run {
             Log.e(TAG, "IROH_BLOCKED TelecomManager unavailable")
@@ -101,9 +146,11 @@ object SagaDialer {
             return
         }
         val handle = SagaPhoneAccountRegistrar.phoneAccountHandle(context)
-        // tel:iroh — managed ConnectionService requires tel:; SSP is not E.164 / not carrier-routable.
-        // Peer id is only in extras. SIM cannot usefully dial "iroh" if handle is ignored.
-        val uri = SagaCallUri.telecomPlaceUri(peerId)
+        // tel:, — managed ConnectionService requires tel:; SSP must leave no dialable digits
+        // after convertKeypadLettersToDigits + stripSeparators (see SagaCallUri).
+        // Do NOT use letter SSPs like "iroh" (becomes 4764 / ATD4764 on SIM path).
+        val ssp = sspOverride ?: SagaCallUri.IROH_TELECOM_SSP
+        val uri = SagaCallUri.telecomUriForSsp(ssp)
         val peerExtras = Bundle().apply {
             putString(EXTRA_PEER_ID, peerId.raw)
             putString(EXTRA_LOOKUP_KEY, lookupKey)
@@ -114,18 +161,25 @@ object SagaDialer {
             putBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, peerExtras)
         }
         try {
+            if (forceSimPath) {
+                debugForceSimPlaceCallElapsedRealtimeMs = SystemClock.elapsedRealtime()
+                Log.e(
+                    TAG,
+                    "DEBUG_FORCE_SIM_PATH placeCallAtElapsed=${debugForceSimPlaceCallElapsedRealtimeMs} uri=[$uri]"
+                )
+            }
             telecom.placeCall(uri, extras)
-            Log.i(TAG, "placeCall issued uri=[$uri] handle=[$handle]")
+            Log.i(TAG, "placeCall issued uri=[$uri] handle=[$handle] forceSim=[$forceSimPath]")
         } catch (e: SecurityException) {
             Log.e(TAG, "IROH_BLOCKED placeCall SecurityException: ${e.message}")
             PendingDialLookup.clear(peerId.raw)
             PendingDialLookup.markIrohDialConsumed()
-            launchOnboarding(context)
+            if (!forceSimPath) launchOnboarding(context)
         } catch (e: IllegalStateException) {
             Log.e(TAG, "IROH_BLOCKED placeCall IllegalStateException: ${e.message}")
             PendingDialLookup.clear(peerId.raw)
             PendingDialLookup.markIrohDialConsumed()
-            launchOnboarding(context)
+            if (!forceSimPath) launchOnboarding(context)
         } catch (e: Exception) {
             Log.e(TAG, "IROH_BLOCKED placeCall failed: ${e.message}")
             PendingDialLookup.clear(peerId.raw)

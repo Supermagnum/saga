@@ -339,11 +339,12 @@ else
   adb -s "$SERIAL_PA" logcat -d | rg 'Saga Dialer|placeCall|IROH_|PhoneAccount|saga:' | tail -30 || true
 fi
 
-# Confirm non-E.164 tel:iroh was used (managed accounts; saga: does not reach ConnectionService)
-if adb -s "$SERIAL_PA" logcat -d | rg -q 'placeCall issued uri=\[tel:iroh\]'; then
-  record "URI:PASS managed tel:iroh placeCall (non-E.164) accepted"
+# Confirm non-digit tel:, (PAUSE) was used (managed accounts; saga: does not reach ConnectionService).
+# Uri.toString() may log as tel:, or tel:%2C depending on API.
+if adb -s "$SERIAL_PA" logcat -d | rg -q 'placeCall issued uri=\[tel:(,|%2C)\]'; then
+  record "URI:PASS managed tel:, placeCall (no dialable digits after keypad+strip) accepted"
 else
-  record "URI:WARN tel:iroh placeCall log not found (check dumps)"
+  record "URI:WARN tel:, placeCall log not found (check dumps)"
 fi
 
 echo "=== Case C: incoming while disabled — clean reject ==="

@@ -1,8 +1,8 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (PhoneAccount security / onboarding — issue #2)
+**Last updated:** 2026-11-12 (PhoneAccount SSP forensics + API 29/35 onboarding E2E — PR #15)
 
-**Status:** Emulator E2E Cases 1–6 **PASS**. PhoneAccount onboarding security fix (#2) **PASS** on fresh AVD without adb enable. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+**Status:** Emulator E2E Cases 1–6 **PASS**. PhoneAccount onboarding security fix (#2) **PASS** on API 35 and API 29 (local one-off). Modem forensics: legacy `tel:iroh` → `ATD4764`; production SSP is `tel:,` (PAUSE; no dialable digits, no ATD). Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
 
 ---
 
@@ -15,22 +15,34 @@ Treated as a security bug: disabled Saga `PhoneAccount` must never let an Iroh d
 | Area | Change |
 |------|--------|
 | Gate | `SagaDialer` refuses `placeCall` unless account registered **and** enabled; launches onboarding |
-| URI | Managed account uses `tel:iroh` (non-E.164). Evaluated: `saga:` placeCall does **not** invoke ConnectionService on API 35; `tel:` + explicit handle does. Removed `+15550100999` placeholder |
-| SIM abort | `SagaInCallService` disconnects any non-Saga account call that follows a recent Iroh dial (`IROH_ABORT_SIM_SUBSTITUTION`) |
+| URI | Managed account uses `tel:,` (PAUSE). After `convertKeypadLettersToDigits` + `stripSeparators` there are **no ASCII digits 0-9**. Legacy `tel:iroh` → `4764` / modem `ATD4764` — must not be used. `tel:@` rejects even enabled Saga dials (`ErrorDialogActivity`). `tel:+` triggers modem USSD `AT+CUSD`. Evaluated: `saga:` placeCall does **not** invoke ConnectionService on API 35; `tel:` + explicit handle does. Removed `+15550100999` placeholder |
+| SIM abort | `SagaInCallService` disconnects any non-Saga account call that follows a recent Iroh dial (`IROH_ABORT_SIM_SUBSTITUTION`) — **backstop only**; too late to stop modem dial when digits exist (see forensics) |
 | Incoming | Early Rust session insert; Kotlin `disconnect` on disabled / `SecurityException`; caller does not hang Encrypted |
 | UI | `PhoneAccountOnboardingActivity` + persistent MainActivity banner; re-check on resume |
 
-### E2E (`run-e2e-phone-account-onboarding.sh`, `Saga_PA_Test` / peer bob)
+### Modem / RIL forensics (API 35 `Saga_PA_Test`, forced SIM path)
 
-| Check | Result |
-|-------|--------|
-| Dial while disabled | `IROH_BLOCKED_PHONE_ACCOUNT_DISABLED`; no SIM / no peer ring |
-| Enable via Settings UI | `ACTION_CHANGE_PHONE_ACCOUNTS` → All calling accounts → Saga switch (not telecom shell) |
-| Dial after enable | Ring + connect; `tel:iroh` placeCall |
-| Incoming while disabled | Reject logged; no crash; no ring; caller not Encrypted |
-| Cases 1–6 | **PASS** (full suite after this change) |
+Debug-only: account left disabled; `TEST_FORCE_IROH_SIM_PATH` bypasses the pre-dial enable gate so Telecom substitutes the SIM account. Script: `testing/e2e/run-modem-ssp-forensics.sh` (`SSP=...`).
 
-Screenshots: `/tmp/saga-phone-account-screens/onboarding.png`, `banner.png`, `bob-ringing-after-enable.png` (reviewed).
+| SSP | Digits after keypad+strip | Telecom handle | Modem / RIL (exact string) | InCall abort |
+|-----|---------------------------|----------------|----------------------------|--------------|
+| `iroh` (legacy, before) | `4764` | `tel:4764` (dumpsys `tel:**64`) | `RILJ > DIAL`; **`AT> ATD4764;`**; `+CLCC: …,4764,129` ACTIVE | `placeCallDeltaMs=39` (re-run 71); handle already `tel:4764` |
+| `@` (rejected) | *(empty)* | `tel:%40` → Telecom `ErrorDialogActivity` — also breaks **enabled** Saga dials | No `ATD*` | No abort |
+| `+` (rejected) | none (keeps `+`) | `tel:%2B` → SIM START_CONNECTION | **`AT> AT+CUSD=1,"+"`** (USSD) | abort ~75 ms |
+| `,` (production, after) | none (keeps PAUSE `,`) | `tel:%2C` → SIM START_CONNECTION then LOCAL disconnect | **No `ATD*`, no `CUSD`**; radio only `AT> AT+CLCC` (hangup poll). Telephony briefly DIALING→DISCONNECTED without `RILJ > DIAL` | `placeCallDeltaMs=68`; handle `tel:%2C` |
+
+**Timing (`iroh` → modem):** placeCall `04:02:35.649` → abort `04:02:35.689` (+39 ms) → `RILJ > DIAL` / `AT> ATD4764;` at `04:02:35.799`–`.802` (~110 ms after placeCall, **~70 ms after abort**). The backstop disconnect does **not** prevent a carrier dial attempt when the SSP yields digits; the pre-dial enable check is the primary guard, and the SSP must leave no dialable digits if substitution ever occurs.
+
+### Onboarding E2E (local one-off, not CI)
+
+Harness: `testing/e2e/run-e2e-phone-account-onboarding.sh` (blocked dial, Settings-UI enable, incoming-while-disabled). Peer: `Saga_Bob` (`emulator-5556`).
+
+| AVD | Serial | API | Result |
+|-----|--------|-----|--------|
+| `Saga_PA_Test` | `emulator-5558` | 35 | **PASS** — BLOCK / SETTINGS_UI enable / CASEB ring+connect / URI `tel:,` / inbound reject while disabled |
+| `Saga_PA_API29` | `emulator-5554` | 29 | **PASS** — same checks (All calling accounts → Saga switch; `tel:,` placeCall) |
+
+Logs: `/tmp/e2e-pa-api35.log`, `/tmp/e2e-pa-api29.log`. Screenshots: `/tmp/saga-phone-account-screens/onboarding.png`, `banner.png`, `bob-ringing-after-enable.png`.
 
 ---
 
