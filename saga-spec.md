@@ -88,6 +88,33 @@ Saga is the default dialer. Two call origins share one `InCallService` UI:
 └─────────────────────┘                            └─────────────────────┘
 ```
 
+### Media pipeline (Iroh)
+
+```
+Capture (AudioRecord VOICE_COMMUNICATION, 48 kHz mono PCM16)
+   → disguise_pcm_inplace (no-op until Phase 5)
+   → Opus encode (20 ms / 960 samples, VBR ~24–32 kbps, in-band FEC)
+   → RTP + SRTP AEAD_AES_256_GCM  —or—  plain RTP (not-encrypted Iroh)
+   → iroh-roq datagram (non-blocking; drop + count on full)
+        ⋮  QUIC / relay
+   → RoQ receive → adaptive jitter buffer (target ~40–60 ms, cap 300 ms)
+   → Opus decode / PLC / FEC
+   → Playback (AudioTrack USAGE_VOICE_COMMUNICATION)
+```
+
+**Adaptive jitter buffer:** playout delay is separate from loss detection.
+The target starts low (~50 ms), tracks a high percentile of inter-arrival
+deviation plus a small margin, grows on late arrivals / underruns, and
+shrinks slowly when stable (shed excess depth one frame at a time). A
+packet is lost only when its playout deadline passes while a hole remains
+(then PLC/FEC). Empty underruns wait without advancing so a late packet is
+not marked already-played. Hard cap **300 ms**.
+
+**Latency:** mouth-to-ear on emulators is measured with a capture-side click
+marker (`LATENCY_MARKER` logs). Cross-correlation `lag_ms` from speech
+scoring is **not** a latency measurement — it is the delay alignment used
+for corr/SI-SNR/STOI. Emulator timings are **not** representative of phones.
+
 Cellular fallback: user places a normal `tel:` call; Saga renders it but
 does not encrypt it. Universal `call_unsecure.wav` at connect; no open
 padlock even if a Galdralag key exists for the contact (§13). Iroh

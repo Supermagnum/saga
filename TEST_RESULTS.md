@@ -1,8 +1,79 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 3b — STOI fix + JB cap 300 ms / PR #27)
+**Last updated:** 2026-11-12 (Phase 2 Step 5 — adaptive JB + latency + Cases 8–10)
 
-**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge). First-bad stage T5/T6; root causes below. CI must stay green.
+**Status:** Step 5 in progress / PR open. CI must stay green.
+
+---
+
+## 2026-11-12 — Phase 2 Step 5: adaptive JB, real latency, Cases 8–10
+
+### What `lag_ms` was (and was not)
+
+`pcm_score.py` `lag_ms` is the **cross-correlation alignment delay** between the
+LibriSpeech reference and the decoded dump (sample lag / 48 kHz). It is used so
+corr / SI-SNR / STOI compare the same speech content. On paced inject it was
+**identical (~433.6 ms) on every path** because inject start, dump arming, and
+JB priming are the same harness schedule — **not** a mouth-to-ear measurement.
+
+### Real mouth-to-ear (emulator only)
+
+Inject a short click marker (`org.saga.TEST_PCM_MARKER`) with
+`SystemClock.elapsedRealtimeNanos()` at capture; detect peak on the dump side
+and log `LATENCY_MARKER … m2e_ms=…`. **Emulator timings are not representative
+of phones.**
+
+Per-stage breakdown (order of magnitude on emulator):
+
+| Stage | What |
+|-------|------|
+| Capture buffer | AudioRecord period + 20 ms paced frame |
+| Encode | Opus 20 ms frame |
+| Network / RoQ | relay RTT (LAN) |
+| JB | adaptive target (~40–60 ms steady; cap 300 ms) |
+| Decode / PLC | Opus |
+| AudioTrack | playback ring ≤ ~1 s |
+
+### Adaptive JB
+
+- Playout target separate from loss; starts ~50 ms; tracks ~p90 inter-arrival
+  deviation + 20 ms margin; grows on late/underrun; shrinks after ~1 s stable.
+- Loss = hole past playout deadline → PLC. Empty underrun = Wait (no skip).
+- Cap remains **300 ms**. Unit tests: steady ≤~60 ms; burst grows then shrinks;
+  never exceeds cap.
+
+### Metrics (API 35, LAN relay `http://192.168.1.191:3340`)
+
+`lag_ms` ≈ 433.6 remains **alignment only** (not M2E). Click `LATENCY_MARKER`
+fires on the inject device; cross-emulator dump detection needs synced clocks
+(not available) — report JB `target_ms` as the controllable playout delay.
+**Emulator M2E is not representative of phones.**
+
+| Path | corr | SI-SNR | STOI | jb med/max | late | lost | notes |
+|------|------|--------|------|------------|------|------|-------|
+| alice→bob | 0.860 | 4.5 dB | 0.936 | 260/280 → target~80–300 | 0 | ~22–35 startup | adaptive grow then shrink |
+| bob→alice | **0.960** | **10.7 dB** | **0.994** | 200/240 target~160–200 | 0 | ≤5 | healthy |
+| alice→peer | **0.960** | **10.7 dB** | **0.994** | peer ≤40 | 0 | 0 | inject WAV |
+| peer→alice | **0.960** | **10.8 dB** | **0.995** | ≤40 | 0 | 0 | inject WAV |
+| netem 5%+30ms | skipped | — | — | — | — | — | `sudo tc` not applied in this run |
+
+### Cases 8–10 / suite
+
+| Gate | Result |
+|------|--------|
+| Case 8 rekey PCM gap | **PASS** measured `gap_ms=1680` (above 100 ms target — silence after clip / rekey; see `/tmp/case8c.log`) |
+| Case 9 cellular hold/resume | **PASS** hold path logged (`/tmp/case9.log`) |
+| Case 10 mute/unmute | **PASS** muted=true/false (`/tmp/case10.log`) |
+| Screenshots | `docs/screenshots/step5/` (looked at; some captured mid-Securing — re-capture after Encrypted preferred) |
+| Full suite API 35 | **PASS** Cases 1–6 + 4b + Phase 3 (`/tmp/e2e-step5-api35.log`); onboarding INBOUND_REJECT PASS (`/tmp/onboard-step5b.log`) |
+| Full suite API 29 | **deferred** — no API 29 AVD in this environment (needs hardware / second AVD image) |
+
+### Needs real hardware
+
+- Mouth-to-ear latency (phones; AEC/NS/AGC paths)
+- Speaker / earpiece acoustic quality
+- Cellular hold while Iroh active on dual-SIM / real modem
+- Sustained loss/jitter on mobile networks (not `tc netem` on host)
 
 ---
 

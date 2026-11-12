@@ -519,6 +519,15 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetMediaMuted(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetMediaMutedAll(
+    _env: JNIEnv,
+    _thiz: JObject,
+    muted: jboolean,
+) {
+    media_bridge::set_muted_all(muted == jni::sys::JNI_TRUE);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetMediaHeld(
     mut env: JNIEnv,
     _thiz: JObject,

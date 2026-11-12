@@ -139,11 +139,21 @@ async fn empty_buffer_underrun_does_not_skip_late_packets() {
 
     pair.caller.send_pcm_frame(&mut frame).unwrap();
     pair.callee.recv_one_datagram().await.unwrap();
-    let n = pair.callee.playout_frame(&mut out).unwrap();
-    assert_eq!(n, FRAME_SAMPLES);
-    assert!(out.iter().any(|s| *s != 0), "first packet must play");
+    // Adaptive JB holds ~target (40–60 ms) before first decode.
+    tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+    let mut saw = false;
+    for _ in 0..4 {
+        let n = pair.callee.playout_frame(&mut out).unwrap();
+        assert_eq!(n, FRAME_SAMPLES);
+        if out.iter().any(|s| *s != 0) {
+            saw = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(saw, "first packet must play after priming");
 
-    // Simulate 10 late ticks with empty JB (no advance).
+    // Simulate 10 late ticks with empty JB (no advance past deadline for next).
     for _ in 0..10 {
         out.fill(99);
         pair.callee.playout_frame(&mut out).unwrap();
@@ -156,6 +166,8 @@ async fn empty_buffer_underrun_does_not_skip_late_packets() {
     let mut frame2 = tone_pcm(1, 880.0);
     pair.caller.send_pcm_frame(&mut frame2).unwrap();
     pair.callee.recv_one_datagram().await.unwrap();
+    // Second packet's deadline is one frame after the first play.
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     pair.callee.playout_frame(&mut out).unwrap();
     assert!(
         out.iter().any(|s| *s != 0),

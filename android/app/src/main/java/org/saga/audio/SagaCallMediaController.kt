@@ -81,6 +81,15 @@ object SagaCallMediaController {
         }
     }
 
+    /** Debug/E2E: mute every live engine + every RoQ media session. */
+    fun setMutedAllForTest(muted: Boolean) {
+        for ((_, engine) in engines) {
+            engine.setMuted(muted)
+        }
+        IrohNativeBridge.setMediaMutedAll(muted)
+        Log.i(TAG, "setMutedAllForTest muted=$muted engines=${engines.size}")
+    }
+
     fun setHeld(telecomCallId: String, rustSessionId: String?, held: Boolean) {
         engines[telecomCallId]?.setHeld(held)
         if (!rustSessionId.isNullOrBlank()) {
