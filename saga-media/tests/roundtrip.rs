@@ -1,11 +1,8 @@
 //! Clean round-trip SNR / correlation thresholds.
 //!
 //! Thresholds (justify in TEST_RESULTS): Opus VoIP @ 32 kbps on a 1 kHz tone
-//! tops out around SI-SNR ≈ 15–16 dB (ρ ≈ 0.987 ⇒ 10·log10(1/(1−ρ²)) ≈ 16 dB)
-//! — measured in `codec_loopback` without RoQ/SRTP. Plan's "≥ 20 dB" is not
-//! reachable under SI-SNR with this codec profile; CI gates SI-SNR ≥ 15 dB
-//! (tone) / ≥ 7 dB (speech; espeak fixture, ρ≈0.92 ⇒ ~8 dB) with Pearson
-//! ρ ≥ 0.85 after lag alignment.
+//! tops out around SI-SNR ≈ 15–16 dB. Speech gate re-baselined on LibriSpeech
+//! `5694-64038-0005` (CC BY 4.0).
 
 mod common;
 
@@ -14,7 +11,8 @@ use saga_media::{signal_correlation, signal_snr_db, FRAME_SAMPLES};
 
 const CORR_MIN: f64 = 0.85;
 const SNR_MIN_TONE_DB: f64 = 15.0;
-const SNR_MIN_SPEECH_DB: f64 = 7.0;
+/// Re-baselined on LibriSpeech 5694-64038-0005: measured SI-SNR ≈ 11.1 dB.
+const SNR_MIN_SPEECH_DB: f64 = 10.0;
 /// Skip encoder/JB warmup and trailing edge when scoring.
 const EDGE_FRAMES: usize = 5;
 

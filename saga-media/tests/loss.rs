@@ -43,10 +43,10 @@ async fn run_loss(loss_rate: f64, corr_min: f64) {
                 frame.clone()
             };
             let p2 = pair.caller.protect_pcm_for_test(&mut frame2).unwrap();
-            pair.callee.inject_srtp_for_test(&p2);
-            pair.callee.inject_srtp_for_test(&protected);
+            pair.callee.inject_framed_for_test(&p2);
+            pair.callee.inject_framed_for_test(&protected);
         } else {
-            pair.callee.inject_srtp_for_test(&protected);
+            pair.callee.inject_framed_for_test(&protected);
         }
         // Simulate jitter delay without sleeping much.
         let mut out = vec![0i16; FRAME_SAMPLES];

@@ -1,12 +1,72 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 2 — host media pipeline)
+**Last updated:** 2026-11-12 (Phase 2 Step 2 — pre-merge #23 follow-ups)
 
-**Status:** Phase 2 Step 2 — `saga-media` Opus + SRTP AEAD_AES_256_GCM over RoQ (encrypted path only). Unsecured Iroh media deferred (stop-and-ask). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Phase 2 Step 2 — `saga-media` Opus + SRTP (Encrypted) or plain RTP (not-encrypted Iroh). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
 
 ---
 
-## 2026-11-12 — Phase 2 Step 2: saga-media host pipeline
+## 2026-11-12 — Phase 2 Step 2 follow-ups (LibriSpeech, STOI, CI, unsecured)
+
+### Speech fixture (LibriSpeech CC BY 4.0)
+
+| Field | Value |
+|-------|--------|
+| File | `saga-media/fixtures/speech_clip_48k.wav` |
+| Utterance | `5694-64038-0005` (`dev-clean-2`, OpenSLR 31) |
+| Transcript | HE WALKED UP AND SAYS HELLO BOYS WHAT IS IT BOSS |
+| Attribution | `fixtures/ATTRIBUTION.md` + NOTICE |
+
+espeak fixture **not kept** — LibriSpeech is the CI gate; espeak only useful as a zero-download smoke generator when OpenSLR is unreachable (do not commit).
+
+### Re-baselined speech CI gates
+
+| Test | corr | SI-SNR | Gate |
+|------|------|--------|------|
+| Tone full pipeline | 0.987 | 15.7 dB | corr ≥ 0.85, SI-SNR ≥ 15 dB |
+| LibriSpeech speech | **0.961** | **11.1 dB** | corr ≥ 0.85, SI-SNR ≥ 10 dB |
+
+### STOI (local, not CI) — pystoi MIT
+
+Speech-mode STOI at 16 kHz on the LibriSpeech clip after Opus/SRTP/JB path:
+
+| Condition | STOI |
+|-----------|------|
+| clean | **0.9312** |
+| 5% loss | **0.8847** |
+| 15% loss | **0.8436** |
+
+**Exact command (reuse in Phase 5):**
+
+```bash
+cd saga-media
+cargo test --test stoi_export -- --ignored --nocapture
+python3 scripts/stoi_eval.py \
+  --ref fixtures/speech_clip_48k.wav \
+  --deg target/stoi/deg-clean.wav \
+  --deg target/stoi/deg-5pct.wav \
+  --deg target/stoi/deg-15pct.wav \
+  --labels clean,5pct,15pct
+```
+
+Deps: `pip install pystoi soundfile numpy`. ViSQOL not used (binary unavailable); STOI chosen instead.
+
+### CI speed (saga-media)
+
+| | Wall |
+|--|------|
+| Cold (`cargo clean` then `cargo test -j 2`) | **354 s** (local; dominated by libopus cmake + dep compile) |
+| Warm (target populated, `[profile.test] opt-level = 2`) | **~6.8 s** |
+
+CI: Swatinem rust-cache `shared-key: saga-rust-host-v2` + dedicated `actions/cache` on `saga-media/target` keyed by `Cargo.lock`.
+
+### Unsecured Iroh media decision
+
+Plain RTP inside RoQ after not-encrypted resolution (QUIC still encrypts transport; no token/SRTP). Spec §5/§6 updated. Host tests in `tests/unsecured.rs` (policy, §5a decline, no silent downgrade, plain↔SRTP tag reject).
+
+---
+
+## 2026-11-12 — Phase 2 Step 2: saga-media host pipeline (initial)
 
 ### Crate / stack
 
@@ -18,38 +78,15 @@
 | RoQ | fork `c9b02963…` — `try_send_payload` (non-blocking; never `send_rtp_wait` on media path), `read_bytes`, `max_datagram_size` |
 | Keys | HKDF-SHA256 over `saga_session_key`; info = direction label + `transcript_hash`; labels `saga-srtp-caller-to-callee-v1` / `saga-srtp-callee-to-caller-v1` |
 
-Unsecured Iroh media: **not implemented** (encrypted-only until product answers stop-and-ask).
-
-### Clean path (CI gates)
-
-| Test | corr | SI-SNR | Gate |
-|------|------|--------|------|
-| 1 kHz tone (Opus-only loopback) | 0.987 | 15.7 dB | ceiling of codec |
-| 1 kHz tone full pipeline | 0.987 | 15.7 dB | corr ≥ 0.85, SI-SNR ≥ 15 dB |
-| Speech (espeak-ng fixture) | 0.920 | 8.1 dB | corr ≥ 0.85, SI-SNR ≥ 7 dB |
-| Relay (`clear_ip_transports` + local test relay) | 0.987 | — | corr ≥ 0.85 |
-
-**Why not SI-SNR ≥ 20 dB:** scale-invariant SNR on Opus VoIP @ 32 kbps for a pure tone saturates near 10·log10(1/(1−ρ²)) with ρ≈0.987 → **~16 dB**. Measured Opus-only loopback matches the full RoQ/SRTP path (no pipeline tax). Plan's 20 dB assumed; CI uses achievable SI-SNR with corr as the primary gate.
-
 ### Loss / security / limits
 
 | Test | Result |
 |------|--------|
 | 5% loss + jitter/reorder | corr ≈ 0.99; JB bounded |
 | 15% loss + jitter/reorder | corr ≈ 0.77 (≥ 0.30); no panic |
-| Tamper (flip ciphertext byte) | dropped; `tamper_or_auth_fail`++ |
-| Replay | dropped; `replay`++ |
-| Wrong receiver key | all 5 rejected |
-| Tiny `max_datagram_size` | `MediaError::DatagramTooLarge`; `media_failed` |
-| Forced blocked drops | `datagram_blocked_drops` counter (unit path; QUIC `Ok(false)` from `try_send_payload`) |
-
-### ViSQOL (local only)
-
-**Skipped.** `visqol` binary not installed on this host (`which visqol` empty; no `/usr/local/bin/visqol`). Install attempt: not available via apt package name `visqol` without building from https://github.com/google/visqol. CI does not run ViSQOL. Re-run locally after install for clean / 5% / 15% MOS and paste here.
-
-### Fixture note
-
-CI speech clip is **espeak-ng** TTS (see `saga-media/fixtures/ATTRIBUTION.md`). LibriSpeech CC BY 4.0 remains the preferred substitute for listening / ViSQOL (NOTICE updated).
+| Tamper / replay / wrong-key | counters; all wrong-key rejected |
+| Tiny `max_datagram_size` | `DatagramTooLarge`; `media_failed` |
+| Forced blocked drops | `datagram_blocked_drops` |
 
 ---
 

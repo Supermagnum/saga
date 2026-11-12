@@ -55,6 +55,10 @@ impl SrtpDecrypt {
     }
 }
 
-/// Conservative max ciphertext size for one Opus frame + RTP + SRTP tag.
-/// Opus @ 32 kbps / 20 ms ≈ 80 bytes; RTP header 12; AEAD tag 16; margin.
-pub const MAX_MEDIA_DATAGRAM_BYTES: usize = 12 + 200 + 16 + 8;
+/// Conservative max ciphertext size for one Opus frame + RTP + SRTP tag + mode tag.
+/// Opus @ 32 kbps / 20 ms ≈ 80 bytes; RTP header 12; AEAD tag 16; Saga media tag 1; margin.
+pub const MAX_MEDIA_DATAGRAM_BYTES: usize = 1 + 12 + 200 + 16 + 8;
+
+/// First byte of every Saga media datagram (after RoQ flow-id).
+pub const MEDIA_TAG_SRTP: u8 = 1;
+pub const MEDIA_TAG_PLAIN: u8 = 2;
