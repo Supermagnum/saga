@@ -77,7 +77,7 @@ object IrohIncomingCallBridge {
 
         val peerId = IrohNodeId.parse(lookupKey) ?: IrohNodeId(lookupKey)
         val displayName = resolveDisplayName(context, lookupKey)
-        // tel:iroh — never a contact E.164 that SIM telephony could dial.
+        // tel:, — PAUSE; no 0-9 after keypad+strip (legacy tel:iroh → 4764 / ATD4764).
         val address = SagaCallUri.telecomPlaceUri(peerId)
 
         val callExtras = Bundle().apply {

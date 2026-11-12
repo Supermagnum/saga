@@ -135,6 +135,24 @@ class MainActivity : AppCompatActivity() {
                 )
                 placeFromInput(preferCellular = preferCellular)
             }
+            "org.saga.TEST_FORCE_IROH_SIM_PATH" -> {
+                // DEBUG-ONLY: bypass enabled-account gate to measure SIM substitution / modem dial.
+                val name = intent.getStringExtra("contact_name") ?: "bob"
+                val ssp = intent.getStringExtra("ssp")
+                val target = DialTargetResolver.fromInput(this, name, preferCellular = false)
+                if (target !is DialTarget.Iroh) {
+                    Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH requires Iroh contact, got [$target]")
+                    return
+                }
+                Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH contact=[$name] ssp=[$ssp]")
+                SagaDialer.placeIrohCallForceSimPathForDebug(
+                    this,
+                    target.peerId,
+                    target.lookupKey,
+                    target.contactName ?: target.lookupKey,
+                    sspOverride = ssp
+                )
+            }
             "org.saga.TEST_IROH_CALL" -> {
                 Log.e(TAG, "TEST_IROH_CALL rejected — use TEST_CONTACT_CALL with contact_name (bob/alice/thor)")
                 Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()

@@ -1,6 +1,7 @@
 package org.saga.telecom
 
 import android.content.Intent
+import android.os.SystemClock
 import android.telecom.Call
 import android.telecom.InCallService
 import android.util.Log
@@ -9,6 +10,7 @@ import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
 import org.saga.call.SagaCallRegistry
 import org.saga.iroh.PendingDialLookup
+import org.saga.iroh.SagaDialer
 import org.saga.ui.SagaInCallActivity
 
 /**
@@ -24,11 +26,21 @@ class SagaInCallService : InCallService() {
         val accountId = call.details.accountHandle?.id
         val isSagaAccount = accountId == SagaPhoneAccountRegistrar.ACCOUNT_ID
 
-        // Security: if Telecom substituted a SIM account after an Iroh dial, abort immediately.
+        // BACKSTOP ONLY: if Telecom substituted a SIM account after an Iroh dial, abort.
+        // Primary guard is SagaDialer refusing placeCall when the PhoneAccount is disabled.
+        // API 35 emulator forensics (DEBUG_FORCE_SIM_PATH + legacy ssp "iroh"):
+        //   placeCall → abort ~39ms later (handle already tel:4764), then RIL DIAL / AT> ATD4764;
+        //   still ran ~110ms after placeCall (~70ms after abort). This backstop does NOT prevent
+        //   a carrier dial attempt; keep the pre-dial enable check and non-digit SSP as primary.
+        // See TEST_RESULTS.md (PhoneAccount tel SSP / SIM abort timing).
         if (!isSagaAccount && PendingDialLookup.hasRecentIrohDial()) {
+            val now = SystemClock.elapsedRealtime()
+            val placeAt = SagaDialer.debugForceSimPlaceCallElapsedRealtimeMs
+            val delta = if (placeAt > 0L) now - placeAt else -1L
             Log.e(
                 TAG,
-                "IROH_ABORT_SIM_SUBSTITUTION account=[$accountId] handle=[${call.details.handle}]"
+                "IROH_ABORT_SIM_SUBSTITUTION account=[$accountId] handle=[${call.details.handle}] " +
+                    "abortAtElapsed=$now placeCallDeltaMs=$delta"
             )
             PendingDialLookup.clearAll()
             PendingDialLookup.markIrohDialConsumed()

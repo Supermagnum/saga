@@ -63,6 +63,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <intent-filter>
+                <action android:name="org.saga.TEST_FORCE_IROH_SIM_PATH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="org.saga.TEST_MIDCALL_REHANDSHAKE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
