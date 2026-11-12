@@ -15,6 +15,8 @@ pub struct MediaCounters {
     pub sent: AtomicU64,
     /// PLC concealment frames synthesized.
     pub plc_frames: AtomicU64,
+    /// Packets dropped because Saga media tag did not match this pipeline mode.
+    pub wrong_media_mode: AtomicU64,
 }
 
 impl MediaCounters {
@@ -26,6 +28,7 @@ impl MediaCounters {
             played: self.played.load(Ordering::Relaxed),
             sent: self.sent.load(Ordering::Relaxed),
             plc_frames: self.plc_frames.load(Ordering::Relaxed),
+            wrong_media_mode: self.wrong_media_mode.load(Ordering::Relaxed),
         }
     }
 }
@@ -38,4 +41,5 @@ pub struct MediaCountersSnapshot {
     pub played: u64,
     pub sent: u64,
     pub plc_frames: u64,
+    pub wrong_media_mode: u64,
 }

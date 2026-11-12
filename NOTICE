@@ -34,11 +34,14 @@ opus / libopus (via Rust `opus` 0.3.1 + audiopus_sys; built from source)
   Licence: BSD-3-Clause (libopus)
   Note: F-Droid-safe (cmake/cc from source; no prebuilt blobs).
 
-LibriSpeech (optional local ViSQOL / listening; not bundled in CI fixture)
-  https://www.openslr.org/12/
+LibriSpeech (CI speech fixture + local STOI / listening)
+  https://www.openslr.org/12/ (parent corpus); subset https://www.openslr.org/31/
+  Fixture: saga-media/fixtures/speech_clip_48k.wav
+    utterance 5694-64038-0005 from LibriSpeech/dev-clean-2 (OpenSLR 31)
   Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
-  Cite: Panayotov et al., ICASSP 2015.
-  CI uses an espeak-ng-synthesized clip (see saga-media/fixtures/ATTRIBUTION.md).
+  Cite: V. Panayotov, G. Chen, D. Povey, S. Khudanpur,
+    "Librispeech: an ASR corpus based on public domain audio books", ICASSP 2015.
+  See also saga-media/fixtures/ATTRIBUTION.md.
 
 RustCrypto and related cryptographic crates used via Galdralag / Saga
   (including but not limited to sha2, hmac, hkdf, aes-gcm, chacha20poly1305,

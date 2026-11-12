@@ -41,7 +41,17 @@ jobs:
             saga-iroh-core
             saga-media
             testing/mock-token
-          shared-key: saga-rust-host
+          shared-key: saga-rust-host-v2
+          cache-targets: true
+
+      # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
+      - name: Cache saga-media target (libopus)
+        uses: actions/cache@v4
+        with:
+          path: saga-media/target
+          key: saga-media-target-${{ runner.os }}-${{ hashFiles('saga-media/Cargo.lock') }}-test-opt2
+          restore-keys: |
+            saga-media-target-${{ runner.os }}-
 
       - name: saga-session fmt / clippy / test
         working-directory: saga-session

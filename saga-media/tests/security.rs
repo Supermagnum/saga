@@ -11,9 +11,10 @@ async fn tamper_increments_auth_fail() {
     let mut frame = tone_pcm(1, 440.0);
     let protected = pair.caller.protect_pcm_for_test(&mut frame).unwrap();
     let mut bytes = protected.to_vec();
-    let idx = bytes.len() / 2;
+    // Flip a ciphertext byte after the media tag.
+    let idx = 1 + (bytes.len() - 1) / 2;
     bytes[idx] ^= 0xff;
-    pair.callee.inject_srtp_for_test(&bytes);
+    pair.callee.inject_framed_for_test(&bytes);
     let snap = pair.counters_b.snapshot();
     assert!(
         snap.tamper_or_auth_fail >= 1,
@@ -26,8 +27,8 @@ async fn replay_increments_replay_counter() {
     let mut pair = linked_pipelines().await;
     let mut frame = tone_pcm(1, 440.0);
     let protected = pair.caller.protect_pcm_for_test(&mut frame).unwrap();
-    pair.callee.inject_srtp_for_test(&protected);
-    pair.callee.inject_srtp_for_test(&protected);
+    pair.callee.inject_framed_for_test(&protected);
+    pair.callee.inject_framed_for_test(&protected);
     let snap = pair.counters_b.snapshot();
     assert!(snap.replay >= 1, "expected replay, got {snap:?}");
 }
@@ -42,8 +43,8 @@ async fn wrong_key_rejects_all() {
     let mut fails = 0u64;
     for _ in 0..5 {
         let mut f = tone_pcm(1, 880.0);
-        let p = pair.caller.protect_pcm_for_test(&mut f).unwrap();
-        if dec.unprotect(&p).is_err() {
+        let body = pair.caller.srtp_body_for_test(&mut f).unwrap();
+        if dec.unprotect(&body).is_err() {
             fails += 1;
         }
     }
