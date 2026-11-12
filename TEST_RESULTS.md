@@ -1,8 +1,36 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 1 — CI speed + PhoneAccount UX gap)
+**Last updated:** 2026-11-12 (PhoneAccount security / onboarding — issue #2)
 
-**Status:** Emulator E2E Cases 1–6 **PASS** on this branch (local relay, fresh `Saga_Alice`/`Saga_Bob` AVDs). Phase 1 adds gating GitHub Actions CI. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices. **PhoneAccount stays disabled without adb** — [#2](https://github.com/Supermagnum/saga/issues/2); fix before Phase 2.
+**Status:** Emulator E2E Cases 1–6 **PASS**. PhoneAccount onboarding security fix (#2) **PASS** on fresh AVD without adb enable. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+
+---
+
+## 2026-11-12 — PhoneAccount security fix (#2)
+
+Treated as a security bug: disabled Saga `PhoneAccount` must never let an Iroh dial fall through to SIM telephony.
+
+### Fix summary
+
+| Area | Change |
+|------|--------|
+| Gate | `SagaDialer` refuses `placeCall` unless account registered **and** enabled; launches onboarding |
+| URI | Managed account uses `tel:iroh` (non-E.164). Evaluated: `saga:` placeCall does **not** invoke ConnectionService on API 35; `tel:` + explicit handle does. Removed `+15550100999` placeholder |
+| SIM abort | `SagaInCallService` disconnects any non-Saga account call that follows a recent Iroh dial (`IROH_ABORT_SIM_SUBSTITUTION`) |
+| Incoming | Early Rust session insert; Kotlin `disconnect` on disabled / `SecurityException`; caller does not hang Encrypted |
+| UI | `PhoneAccountOnboardingActivity` + persistent MainActivity banner; re-check on resume |
+
+### E2E (`run-e2e-phone-account-onboarding.sh`, `Saga_PA_Test` / peer bob)
+
+| Check | Result |
+|-------|--------|
+| Dial while disabled | `IROH_BLOCKED_PHONE_ACCOUNT_DISABLED`; no SIM / no peer ring |
+| Enable via Settings UI | `ACTION_CHANGE_PHONE_ACCOUNTS` → All calling accounts → Saga switch (not telecom shell) |
+| Dial after enable | Ring + connect; `tel:iroh` placeCall |
+| Incoming while disabled | Reject logged; no crash; no ring; caller not Encrypted |
+| Cases 1–6 | **PASS** (full suite after this change) |
+
+Screenshots: `/tmp/saga-phone-account-screens/onboarding.png`, `banner.png`, `bob-ringing-after-enable.png` (reviewed).
 
 ---
 
