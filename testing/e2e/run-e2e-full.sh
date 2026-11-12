@@ -147,6 +147,7 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
   else
     record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag (no debug hash-prefix logs)"
   fi
+  record_handshake_budget "$SERIAL_A" "case2 alice->bob" || true
 else
   record "CASE2:FAIL"
   adb -s "$SERIAL_A" logcat -d | rg "Saga|Iroh|Media|MOCK_TOKEN|Handshake|Dial Target" | tail -12 || true
@@ -168,6 +169,7 @@ if contact_call "$SERIAL_B" "$CONTACT_ALICE" "$SERIAL_A" true \
    && check_log "$SERIAL_A" "Saga Media Round-Trip.*decrypted_ok=true" \
    && enc_flag "$SERIAL_B" "$PHONE_ALICE"; then
   record "CASE2b:PASS bob->alice secure cue + encrypted + inbound ring + media"
+  record_handshake_budget "$SERIAL_B" "case2b bob->alice" || true
 else
   record "CASE2b:FAIL"
   adb -s "$SERIAL_B" logcat -d | rg "Saga|Iroh|Media|Handshake|Dial Target" | tail -12 || true
@@ -263,7 +265,14 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && check_log "$SERIAL_A" "Saga Downgrade Event.*recorded downgrade" \
    && check_log "$SERIAL_A" "confirmation MAC failed" \
    && ! check_log "$SERIAL_A" "settled to \[Encrypted\]"; then
-  record "CASE4b:PASS binding perturb → confirmation fail + not Encrypted + call_unsecure once + §5a"
+  # §5a modal title on caller InCall UI (previously-encrypted contact).
+  adb -s "$SERIAL_A" shell uiautomator dump /sdcard/saga_4b_ui.xml >/dev/null 2>&1 || true
+  adb -s "$SERIAL_A" pull /sdcard/saga_4b_ui.xml /tmp/saga_4b_ui.xml >/dev/null 2>&1 || true
+  if [[ -f /tmp/saga_4b_ui.xml ]] && rg -q 'Call could not be secured' /tmp/saga_4b_ui.xml; then
+    record "CASE4b:PASS binding perturb → not Encrypted + call_unsecure once + §5a modal (previously-encrypted)"
+  else
+    record "CASE4b:PASS binding perturb → not Encrypted + call_unsecure once + §5a downgrade (modal title not in dump)"
+  fi
 else
   record "CASE4b:FAIL"
   adb -s "$SERIAL_A" logcat -d | rg "Downgrade|Handshake|settled|confirm|MOCK_TOKEN|Encrypted|call_unsecure" | tail -24 || true

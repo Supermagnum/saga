@@ -18,7 +18,13 @@ After ephemeral-session key derivation + EndpointId channel binding, both sides 
 | Tampered MAC / wrong role | `ConfirmationFailed` |
 | `force_binding_perturb` on one side | both fail |
 
-Emulator Case 4b: debug-only `force_binding_perturb` SharedPreferences → NOT Encrypted, `call_unsecure` once, §5a for previously-encrypted contact.
+#### a) Emulator fault-injection (Case 4b)
+
+Debug-only `force_binding_perturb` SharedPreferences on one side (perturbed
+EndpointId binding input). Expected: confirmation MAC fails → NOT Encrypted,
+`call_unsecure.wav` once, §5a modal for a previously-encrypted contact.
+
+Re-run log: `/tmp/e2e-phase15-budget.log` — **PASS** (see Full E2E below).
 
 ### Zeroize + debug-only hash-prefix logs
 
@@ -72,13 +78,30 @@ Log: `/tmp/e2e-pa-api35-rerun.log`. **PASS** — BLOCK / SETTINGS_UI enable / CA
 
 Committed: `testing/mock-token/tests/fixtures/p256_vector_c0_d0.json` (FakeTrng `0xC0`/`0xD0`) alongside `p384_vector_c1_d1.json`. Host `vectors.rs` covers both.
 
-### Full E2E (API 35, with Case 4b)
+### Full E2E (API 35, with Case 4b) + handshake budget
 
 ```bash
 SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 ```
 
-Log: `/tmp/e2e-phase15-confirm2.log` — **PASS** Cases 1–6 + Case 4b + Phase 3. Case 4b: binding perturb → confirmation MAC failed → not Encrypted → `call_unsecure` once → §5a downgrade event.
+#### b) Re-run after key confirmation (API 35)
+
+Log: `/tmp/e2e-phase15-budget.log` — **PASS** Cases 1–6 + Case 4b + Phase 3.
+
+| Case | Result |
+|------|--------|
+| 1–3, 5–6 | PASS |
+| 4 | PASS (force_fail downgrade) |
+| **4b** | **PASS** — binding perturb → confirmation MAC failed → not Encrypted → `call_unsecure` once → §5a (previously-encrypted contact; modal title asserted when UI dump available) |
+
+Handshake wall time (InitMessage → `Handshake settled to [Encrypted]`, includes confirmation MACs). Spec §8: **2 s target / 4 s hard**:
+
+| Direction | Time | Budget |
+|-----------|------|--------|
+| Case 2 alice→bob | **346 ms** | PASS ≤2 s target / ≤4 s hard |
+| Case 2b bob→alice | **328 ms** | PASS ≤2 s target / ≤4 s hard |
+
+Harness: `record_handshake_budget` in `testing/e2e/e2e-common.sh`.
 
 ---
 

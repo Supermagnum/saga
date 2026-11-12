@@ -128,6 +128,53 @@ wait_for_fresh_relay_online() {
   wait_for_relay_online "$serial" "$role"
 }
 
+# Wall-clock ms from first mock-token InitMessage to Handshake settled Encrypted
+# (includes confirmation MACs). Prints ms or empty. Spec §8: 2 s target / 4 s hard.
+measure_handshake_ms() {
+  local serial="$1"
+  local tmp
+  tmp="$(mktemp)"
+  adb -s "$serial" logcat -d 2>/dev/null >"$tmp" || true
+  python3 - "$tmp" <<'PY'
+import re, sys
+from datetime import datetime
+path = sys.argv[1]
+start = end = None
+pat = re.compile(r"^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})")
+with open(path, encoding="utf-8", errors="ignore") as f:
+    for line in f:
+        m = pat.match(line)
+        if not m:
+            continue
+        ts = datetime.strptime(m.group(1), "%m-%d %H:%M:%S.%f")
+        if start is None and "sending InitMessage" in line:
+            start = ts
+        if "Handshake settled to [Encrypted]" in line:
+            end = ts
+if start and end and end >= start:
+    print(int((end - start).total_seconds() * 1000))
+PY
+  rm -f "$tmp"
+}
+
+record_handshake_budget() {
+  local serial="$1" label="$2"
+  local ms
+  ms="$(measure_handshake_ms "$serial" || true)"
+  if [[ -z "$ms" ]]; then
+    record "HANDSHAKE_TIME:FAIL $label (could not parse InitMessage→Encrypted)"
+    return 1
+  fi
+  if (( ms <= 2000 )); then
+    record "HANDSHAKE_TIME:PASS $label ${ms}ms (≤2s target, ≤4s hard)"
+  elif (( ms <= 4000 )); then
+    record "HANDSHAKE_TIME:PASS $label ${ms}ms (within 4s hard; over 2s soft target)"
+  else
+    record "HANDSHAKE_TIME:FAIL $label ${ms}ms (over 4s hard budget)"
+    return 1
+  fi
+}
+
 wait_for_handshake_log() {
   local serial="$1" pattern="$2" label="${3:-handshake}"
   local max_secs="${4:-$HANDSHAKE_POLL_MAX_SECS}"
