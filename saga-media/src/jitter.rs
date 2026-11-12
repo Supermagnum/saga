@@ -141,7 +141,7 @@ impl JitterBuffer {
         // Allow ~200 ms reorder/slow-recv before declaring loss. Too-short
         // windows skipped still-arriving seqs on loaded emulators.
         let lost = self.wait_ticks >= 10
-            || (ahead >= 8 && ahead < 0x8000 && self.packets.len() as u32 >= self.target_frames);
+            || ((8u16..0x8000).contains(&ahead) && self.packets.len() as u32 >= self.target_frames);
         if lost {
             self.next_seq = Some(next.wrapping_add(1));
             self.wait_ticks = 0;
