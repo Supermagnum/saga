@@ -1,9 +1,10 @@
-//! Length-prefixed InitMessage / ResponseMessage over an async byte stream.
+//! Length-prefixed InitMessage / ResponseMessage + confirmation MACs over a stream.
 
 use ephemeral_session::{InitMessage, LongTermCert, ResponseMessage, MAX_HANDSHAKE_BYTES};
 use log::{info, warn};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::confirm::{initiator_mac, responder_mac, verify_mac, ConfirmationKey, CONFIRM_MAC_LEN};
 use crate::identity::MockIdentity;
 use crate::mock_session::MockSessionToken;
 use crate::token::{
@@ -34,6 +35,15 @@ impl HandshakeOutcome {
             HandshakeOutcome::Failed { .. } => None,
         }
     }
+}
+
+/// XOR the first byte of `eid` for debug fault-injection of channel binding.
+pub fn perturb_endpoint_id(eid: &[u8]) -> Vec<u8> {
+    let mut out = eid.to_vec();
+    if let Some(b) = out.first_mut() {
+        *b ^= 0x5a;
+    }
+    out
 }
 
 async fn write_framed<W: AsyncWrite + Unpin>(
@@ -73,6 +83,64 @@ async fn read_framed<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, To
     Ok(buf)
 }
 
+async fn write_confirm_mac<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    mac: &[u8; CONFIRM_MAC_LEN],
+) -> Result<(), TokenError> {
+    writer
+        .write_all(mac)
+        .await
+        .map_err(|e| TokenError::Protocol(format!("write confirm mac: {e}")))
+}
+
+async fn read_confirm_mac<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<[u8; CONFIRM_MAC_LEN], TokenError> {
+    let mut buf = [0u8; CONFIRM_MAC_LEN];
+    match tokio::time::timeout(HANDSHAKE_HARD_TIMEOUT, reader.read_exact(&mut buf)).await {
+        Ok(Ok(_)) => Ok(buf),
+        Ok(Err(_)) => Err(TokenError::ConfirmationFailed),
+        Err(_) => Err(TokenError::Timeout),
+    }
+}
+
+async fn exchange_confirm_as_initiator<R, W>(
+    output: &HandshakeOutput,
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(), TokenError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let key = ConfirmationKey::from_bytes(*output.confirmation_key);
+    let my_mac = initiator_mac(&key, &output.transcript_hash);
+    let expect_peer = responder_mac(&key, &output.transcript_hash);
+    write_confirm_mac(writer, &my_mac).await?;
+    let _ = writer.flush().await;
+    let peer = read_confirm_mac(reader).await?;
+    verify_mac(&expect_peer, &peer)
+}
+
+async fn exchange_confirm_as_responder<R, W>(
+    output: &HandshakeOutput,
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(), TokenError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let key = ConfirmationKey::from_bytes(*output.confirmation_key);
+    let expect_peer = initiator_mac(&key, &output.transcript_hash);
+    let my_mac = responder_mac(&key, &output.transcript_hash);
+    // Recv then send before verify so a mismatched key still unblocks the initiator.
+    let peer = read_confirm_mac(reader).await?;
+    write_confirm_mac(writer, &my_mac).await?;
+    let _ = writer.flush().await;
+    verify_mac(&expect_peer, &peer)
+}
+
 /// Initiator side of ephemeral-session over a byte stream.
 pub async fn run_initiator<R, W>(
     identity: &MockIdentity,
@@ -87,11 +155,46 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    run_initiator_with_options(
+        identity,
+        peer_label,
+        local_endpoint_id,
+        remote_endpoint_id,
+        force_fail,
+        false,
+        reader,
+        writer,
+    )
+    .await
+}
+
+/// Like [`run_initiator`], with optional EndpointId binding perturbation (debug fault inject).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_initiator_with_options<R, W>(
+    identity: &MockIdentity,
+    peer_label: &str,
+    local_endpoint_id: &[u8],
+    remote_endpoint_id: &[u8],
+    force_fail: bool,
+    perturb_binding: bool,
+    reader: &mut R,
+    writer: &mut W,
+) -> HandshakeOutcome
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     if force_fail {
         return HandshakeOutcome::Failed {
             reason: "mock-token force_fail".into(),
         };
     }
+
+    let bind_local = if perturb_binding {
+        perturb_endpoint_id(local_endpoint_id)
+    } else {
+        local_endpoint_id.to_vec()
+    };
 
     let token = MockSessionToken::new(identity.clone());
     let peer = MockIdentity::from_label_curve(peer_label, identity.curve);
@@ -144,34 +247,43 @@ where
         }
     };
 
-    match token
+    let mut output = match token
         .initiator_finish(
             pending,
             response,
             peer.long_term_cert(),
-            local_endpoint_id,
+            &bind_local,
             remote_endpoint_id,
             HANDSHAKE_HARD_TIMEOUT,
         )
         .await
     {
-        Ok(output) => {
-            #[cfg(debug_assertions)]
-            {
-                let (a, b) = output.session_key_debug_prefix();
-                info!(
-                    "[{MOCK_TOKEN_MARKER}] initiator handshake complete session_key_hash_prefix={a:02x}{b:02x}"
-                );
-            }
-            HandshakeOutcome::Encrypted { output }
-        }
+        Ok(o) => o,
         Err(e) => {
             warn!("[{MOCK_TOKEN_MARKER}] initiator finish failed: {e}");
-            HandshakeOutcome::Failed {
+            return HandshakeOutcome::Failed {
                 reason: e.to_string(),
-            }
+            };
         }
+    };
+
+    if let Err(e) = exchange_confirm_as_initiator(&output, reader, writer).await {
+        warn!("[{MOCK_TOKEN_MARKER}] initiator confirmation failed: {e}");
+        return HandshakeOutcome::Failed {
+            reason: e.to_string(),
+        };
     }
+
+    #[cfg(debug_assertions)]
+    {
+        let (a, b) = output.session_key_debug_prefix();
+        info!(
+            "[{MOCK_TOKEN_MARKER}] initiator handshake complete session_key_hash_prefix={a:02x}{b:02x}"
+        );
+    }
+    // Drop confirmation key material from retained output after successful verify.
+    output.confirmation_key.zeroize();
+    HandshakeOutcome::Encrypted { output }
 }
 
 /// Responder side of ephemeral-session over a byte stream.
@@ -187,11 +299,43 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    run_responder_with_options(
+        identity,
+        local_endpoint_id,
+        remote_endpoint_id,
+        force_fail,
+        false,
+        reader,
+        writer,
+    )
+    .await
+}
+
+/// Like [`run_responder`], with optional EndpointId binding perturbation.
+pub async fn run_responder_with_options<R, W>(
+    identity: &MockIdentity,
+    local_endpoint_id: &[u8],
+    remote_endpoint_id: &[u8],
+    force_fail: bool,
+    perturb_binding: bool,
+    reader: &mut R,
+    writer: &mut W,
+) -> HandshakeOutcome
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     if force_fail {
         return HandshakeOutcome::Failed {
             reason: "mock-token force_fail".into(),
         };
     }
+
+    let bind_local = if perturb_binding {
+        perturb_endpoint_id(local_endpoint_id)
+    } else {
+        local_endpoint_id.to_vec()
+    };
 
     let token = MockSessionToken::new(identity.clone());
     let init_bytes = match read_framed(reader).await {
@@ -220,11 +364,11 @@ where
         }
     };
 
-    let (resp, output) = match token
+    let (resp, mut output) = match token
         .responder_reply(
             init,
             peer_cert,
-            local_endpoint_id,
+            &bind_local,
             remote_endpoint_id,
             HANDSHAKE_HARD_TIMEOUT,
         )
@@ -254,6 +398,13 @@ where
     }
     let _ = writer.flush().await;
 
+    if let Err(e) = exchange_confirm_as_responder(&output, reader, writer).await {
+        warn!("[{MOCK_TOKEN_MARKER}] responder confirmation failed: {e}");
+        return HandshakeOutcome::Failed {
+            reason: e.to_string(),
+        };
+    }
+
     #[cfg(debug_assertions)]
     {
         let (a, b) = output.session_key_debug_prefix();
@@ -262,6 +413,7 @@ where
             identity.label
         );
     }
+    output.confirmation_key.zeroize();
     HandshakeOutcome::Encrypted { output }
 }
 
@@ -273,6 +425,11 @@ fn resolve_peer_cert_from_init(init: &InitMessage) -> Result<LongTermCert, Token
         "15550100012",
         "alicepeer1",
         "bobpeer12",
+        "vector-alice",
+        "vector-bob",
+        "neg-alice",
+        "neg-bob",
+        "neg-impostor",
     ] {
         let id = MockIdentity::from_label_curve(label, init.curve);
         if id.fingerprint_hex().as_slice() == wire_fp {
@@ -281,3 +438,5 @@ fn resolve_peer_cert_from_init(init: &InitMessage) -> Result<LongTermCert, Token
     }
     Err(TokenError::UnknownSigner)
 }
+
+use zeroize::Zeroize;

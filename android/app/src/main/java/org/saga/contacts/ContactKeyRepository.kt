@@ -15,8 +15,10 @@ import android.util.Log
  * the ephemeral-session wire fingerprint (`InitMessage::encode_fingerprint_hex`).
  * Iroh EndpointIds are not stored here.
  *
- * Dev reset: debug builds reseed via [TestContactSeeder] (delete + insert). There
- * is no Room schema; legacy phone-label rows are replaced on next debug launch.
+ * Dev reset (no Room migration): debug builds always delete+reinsert bob/alice/thor
+ * via [TestContactSeeder] on launch, replacing legacy phone-label DATA1 rows with
+ * 64-hex fingerprints. Production builds do not seed; wipe app data or clear
+ * Contacts rows manually if upgrading a debug install that still has label rows.
  */
 object ContactKeyRepository {
     private const val TAG = "[Saga Contact Key Repository]"

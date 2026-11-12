@@ -200,6 +200,7 @@ class IrohDialManager private constructor(context: Context) {
                 }
             }
             IrohNativeBridge.setForceHandshakeFail(SagaTestFlags.isForceHandshakeFail(appContext))
+            IrohNativeBridge.setForceBindingPerturb(SagaTestFlags.isForceBindingPerturb(appContext))
         }
     }
 
@@ -242,11 +243,13 @@ class IrohDialManager private constructor(context: Context) {
         connection?.onHandshakeState(state)
         val snapshot = snapshotForHandshake(lookupKey, state)
         SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        // Play connect cue for Encrypted / NeverEncrypted / Downgraded (§5a).
+        // Downgrade modal still shows; Continue uses playOnce so the wav is not doubled.
         SagaCallEventHub.emit(
             SagaCallEventHub.SecurityUpdate(
                 telecomCallKey,
                 snapshot,
-                playConnectCue = state != SagaHandshakeState.Downgraded
+                playConnectCue = state != SagaHandshakeState.Securing
             )
         )
         if (state != SagaHandshakeState.Securing) {

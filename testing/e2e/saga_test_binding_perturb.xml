@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="force_fail" value="false" />
+    <boolean name="force_binding_perturb" value="true" />
+</map>

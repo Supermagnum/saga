@@ -18,8 +18,8 @@ use tokio::sync::oneshot;
 
 #[cfg(feature = "mock-token")]
 use mock_token::{
-    decrypt_frame, encrypt_frame, run_initiator, run_responder, HandshakeOutcome, MockIdentity,
-    SYNTHETIC_PLAINTEXT,
+    decrypt_frame, encrypt_frame, run_initiator_with_options, run_responder_with_options,
+    HandshakeOutcome, MockIdentity, SYNTHETIC_PLAINTEXT,
 };
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
@@ -65,6 +65,7 @@ static SESSIONS: LazyLock<Mutex<HashMap<String, Session>>> =
 static DEV_IDENTITY_LABEL: Mutex<Option<String>> = Mutex::new(None);
 static RELAY_URL_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
 static FORCE_HANDSHAKE_FAIL: AtomicBool = AtomicBool::new(false);
+static FORCE_BINDING_PERTURB: AtomicBool = AtomicBool::new(false);
 static RELAY_POLL: AtomicU8 = AtomicU8::new(RelayPoll::Pending as u8);
 
 fn runtime() -> &'static Runtime {
@@ -146,8 +147,16 @@ pub fn set_force_handshake_fail(force: bool) {
     FORCE_HANDSHAKE_FAIL.store(force, Ordering::SeqCst);
 }
 
+pub fn set_force_binding_perturb(force: bool) {
+    FORCE_BINDING_PERTURB.store(force, Ordering::SeqCst);
+}
+
 fn force_handshake_fail() -> bool {
     FORCE_HANDSHAKE_FAIL.load(Ordering::SeqCst)
+}
+
+fn force_binding_perturb() -> bool {
+    FORCE_BINDING_PERTURB.load(Ordering::SeqCst)
 }
 
 fn local_identity_label() -> String {
@@ -277,11 +286,12 @@ async fn handle_inbound_connection(conn: Connection) {
             };
             let local_eid = *ep.id().as_bytes();
             let remote_eid = *conn.remote_id().as_bytes();
-            let outcome = run_responder(
+            let outcome = run_responder_with_options(
                 &identity,
                 &local_eid,
                 &remote_eid,
                 force_handshake_fail(),
+                force_binding_perturb(),
                 &mut recv,
                 &mut send,
             )
@@ -289,9 +299,13 @@ async fn handle_inbound_connection(conn: Connection) {
             match outcome {
                 HandshakeOutcome::Encrypted { output } => {
                     let key = *output.saga_session_key;
-                    // mock-token builds only: short hash prefix for E2E key equality checks.
-                    let (a, b) = output.session_key_debug_prefix();
-                    info!("[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}");
+                    #[cfg(debug_assertions)]
+                    {
+                        let (a, b) = output.session_key_debug_prefix();
+                        info!(
+                            "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
+                        );
+                    }
                     let media_ok = read_media_round_trip(&mut recv, &key, "responder")
                         .await
                         .unwrap_or(false);
@@ -497,12 +511,13 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         let peer_label = dev_label_for_endpoint(&remote).unwrap_or_else(|| peer_id.to_string());
         let local_eid = *endpoint.id().as_bytes();
         let remote_eid = *connection.remote_id().as_bytes();
-        let outcome = run_initiator(
+        let outcome = run_initiator_with_options(
             &identity,
             &peer_label,
             &local_eid,
             &remote_eid,
             force_handshake_fail(),
+            force_binding_perturb(),
             &mut recv,
             &mut send,
         )
@@ -510,9 +525,11 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         match outcome {
             HandshakeOutcome::Encrypted { output } => {
                 let key = *output.saga_session_key;
-                // mock-token builds only: short hash prefix for E2E key equality checks.
-                let (a, b) = output.session_key_debug_prefix();
-                info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
+                #[cfg(debug_assertions)]
+                {
+                    let (a, b) = output.session_key_debug_prefix();
+                    info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
+                }
                 let media_ok = send_media_round_trip(&mut send, &key)
                     .await
                     .unwrap_or(false);

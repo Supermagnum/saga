@@ -13,6 +13,7 @@ use galdr_core::fake_hal::FakeTrng;
 use zeroize::Zeroizing;
 
 use crate::channel_bind::{bind_iroh_endpoints, transcript_hash};
+use crate::confirm::derive_confirmation_key;
 use crate::identity::{MockIdentity, LOCAL_SLOT};
 use crate::token::{HandshakeOutput, InitiatorPending, SessionToken, TokenError};
 
@@ -65,11 +66,16 @@ impl MockSessionToken {
         let profile_prk = Zeroizing::new(*keys.profile_prk());
         let saga_session_key =
             bind_iroh_endpoints(&profile_prk, local_endpoint_id, remote_endpoint_id);
+        let confirmation_key = Zeroizing::new(
+            *derive_confirmation_key(&profile_prk, local_endpoint_id, remote_endpoint_id)
+                .as_bytes(),
+        );
         HandshakeOutput {
             shared_secret,
             transcript_hash,
             profile_prk,
             saga_session_key,
+            confirmation_key,
         }
     }
 }

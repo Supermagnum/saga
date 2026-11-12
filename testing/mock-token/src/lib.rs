@@ -3,6 +3,7 @@
 //! Pinned firmware rev: see [`token::EPHEMERAL_SESSION_GIT_REV`].
 
 mod channel_bind;
+mod confirm;
 mod handshake_io;
 mod identity;
 mod media;
@@ -10,7 +11,14 @@ mod mock_session;
 mod token;
 
 pub use channel_bind::{bind_iroh_endpoints, transcript_hash};
-pub use handshake_io::{run_initiator, run_responder, HandshakeOutcome};
+pub use confirm::{
+    derive_confirmation_key, initiator_mac, responder_mac, verify_mac, ConfirmationKey,
+    CONFIRM_MAC_LEN,
+};
+pub use handshake_io::{
+    perturb_endpoint_id, run_initiator, run_initiator_with_options, run_responder,
+    run_responder_with_options, HandshakeOutcome,
+};
 pub use identity::MockIdentity;
 pub use media::{decrypt_frame, encrypt_frame, SYNTHETIC_PLAINTEXT};
 pub use mock_session::MockSessionToken;

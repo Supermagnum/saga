@@ -266,6 +266,16 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetForceHandsha
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetForceBindingPerturb(
+    _env: JNIEnv,
+    _thiz: JObject,
+    force: jni::sys::jboolean,
+) {
+    #[cfg(feature = "iroh-transport")]
+    iroh_transport::set_force_binding_perturb(force == jni::sys::JNI_TRUE);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePollHandshake(
     mut env: JNIEnv,
     _thiz: JObject,

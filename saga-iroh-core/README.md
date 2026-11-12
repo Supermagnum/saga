@@ -31,7 +31,7 @@ CI sets `CI=true` so Gradle builds **x86_64 only** with `[profile.ci]`; release 
 |---------|-------------|
 | *(default)* | Native thread stub (short sleep, no QUIC) |
 | `iroh-transport` | Real `iroh::Endpoint` with ALPN `saga/voice/1`, accept loop, session map |
-| `mock-token` | Real `ephemeral-session` handshake (Brainpool + ECDSA) + media round-trip probe (E2E) |
+| `mock-token` | Real `ephemeral-session` handshake (Brainpool + ECDSA), Saga confirmation MAC (§12), media round-trip probe (E2E). Needs `galdr-core`/`galdr-vault` for FakeTrng + vault LT keys — not types-only; see root `NOTICE`. |
 
 ### ephemeral-session pin
 

@@ -712,9 +712,11 @@ dependencies = [
  "heapless",
  "hex",
  "hkdf 0.12.4",
+ "hmac 0.12.1",
  "log",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "tokio",
  "zeroize",
 ]

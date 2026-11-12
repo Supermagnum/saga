@@ -47,6 +47,10 @@ object IrohNativeBridge {
         if (ensureLoaded()) nativeSetForceHandshakeFail(force)
     }
 
+    fun setForceBindingPerturb(force: Boolean) {
+        if (ensureLoaded()) nativeSetForceBindingPerturb(force)
+    }
+
     fun pollHandshake(sessionId: String): Int {
         if (!ensureLoaded()) return HANDSHAKE_ENCRYPTED
         return nativePollHandshake(sessionId)
@@ -111,5 +115,6 @@ object IrohNativeBridge {
     private external fun nativeSetRelayUrl(relayUrl: String)
     private external fun nativePollRelayReady(): Int
     private external fun nativeSetForceHandshakeFail(force: Boolean)
+    private external fun nativeSetForceBindingPerturb(force: Boolean)
     private external fun nativePollHandshake(sessionId: String): Int
 }
