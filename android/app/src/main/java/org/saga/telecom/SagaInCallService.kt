@@ -8,6 +8,7 @@ import org.saga.call.CallOrigin
 import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
 import org.saga.call.SagaCallRegistry
+import org.saga.iroh.PendingDialLookup
 import org.saga.ui.SagaInCallActivity
 
 /**
@@ -20,9 +21,28 @@ class SagaInCallService : InCallService() {
 
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
+        val accountId = call.details.accountHandle?.id
+        val isSagaAccount = accountId == SagaPhoneAccountRegistrar.ACCOUNT_ID
+
+        // Security: if Telecom substituted a SIM account after an Iroh dial, abort immediately.
+        if (!isSagaAccount && PendingDialLookup.hasRecentIrohDial()) {
+            Log.e(
+                TAG,
+                "IROH_ABORT_SIM_SUBSTITUTION account=[$accountId] handle=[${call.details.handle}]"
+            )
+            PendingDialLookup.clearAll()
+            PendingDialLookup.markIrohDialConsumed()
+            try {
+                call.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to disconnect substituted SIM call: ${e.message}")
+            }
+            return
+        }
+
         val origin = SagaCallRegistry.originForTelecomCall(call)
         val peerId = SagaCallRegistry.peerIdFromCall(call)
-        val displayName = peerId
+        val displayName = SagaCallRegistry.displayNameFromCall(call)
         val callId = SagaCallRegistry.telecomCallId(call)
         val snapshot = SagaCallRegistry.initialSnapshot(origin, peerId)
         SagaCallRegistry.put(
@@ -37,6 +57,9 @@ class SagaInCallService : InCallService() {
             TAG,
             "CHECKPOINT onCallAdded origin=[$origin] peer=[$peerId] telecomState=[${call.state}]"
         )
+        if (isSagaAccount) {
+            PendingDialLookup.markIrohDialConsumed()
+        }
         call.registerCallback(callCallback)
         startActivity(
             Intent(this, SagaInCallActivity::class.java).apply {

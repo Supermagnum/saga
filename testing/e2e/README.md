@@ -68,6 +68,7 @@ Shared helpers: [`e2e-common.sh`](e2e-common.sh) (sourced by full suite, standal
 | Script | Purpose |
 |--------|---------|
 | [`run-e2e-full.sh`](run-e2e-full.sh) | Build, install, seed, Cases 1–6 + Phase 3 |
+| [`run-e2e-phone-account-onboarding.sh`](run-e2e-phone-account-onboarding.sh) | Issue #2: disabled PhoneAccount blocks Iroh (no SIM), Settings UI enable, inbound reject |
 | [`run-case-standalone.sh`](run-case-standalone.sh) | Single case (3–6) from clean boot |
 | [`run-alice-bob-probe.sh`](run-alice-bob-probe.sh) | Focused alice→bob encrypted probe |
 | [`diagnose-relay-timeout.sh`](diagnose-relay-timeout.sh) | Case-2-position wait + 8-cycle restart sweep with native/logcat forensics |

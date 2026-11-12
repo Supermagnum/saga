@@ -229,8 +229,42 @@ async fn handle_inbound_connection(conn: Connection) {
         "[Saga Iroh Listen] inbound accepted remote=[{remote_id_str}] lookup=[{lookup_key}] session=[{session_id}]"
     );
 
+    // Insert before JNI notify so Kotlin can disconnect() if PhoneAccount is disabled.
+    if let Ok(mut sessions) = SESSIONS.lock() {
+        sessions.insert(
+            session_id.clone(),
+            Session {
+                connection: conn,
+                handshake: HandshakePoll::Pending,
+                session_key: None,
+                media_round_trip_ok: false,
+            },
+        );
+    } else {
+        warn!("session map poisoned — dropping inbound [{session_id}]");
+        return;
+    }
+
     #[cfg(feature = "iroh-transport")]
     crate::bridge_notify_incoming_call(&session_id, &lookup_key, &remote_id_str);
+
+    // Brief window for main-thread bridge to reject (disabled account / SecurityException).
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    let conn = {
+        let Ok(mut sessions) = SESSIONS.lock() else {
+            return;
+        };
+        match sessions.remove(&session_id) {
+            Some(session) => session.connection,
+            None => {
+                info!(
+                    "[Saga Iroh Listen] inbound rejected by bridge session=[{session_id}] — not reachable"
+                );
+                return;
+            }
+        }
+    };
 
     #[cfg(feature = "mock-token")]
     let (handshake, session_key, media_round_trip_ok) = match conn.accept_bi().await {
@@ -253,8 +287,9 @@ async fn handle_inbound_connection(conn: Connection) {
             }
         }
         Err(e) => {
-            warn!("inbound accept_bi failed: {e}");
-            (HandshakePoll::Failed, None, false)
+            warn!("inbound accept_bi failed (caller sees not reachable): {e}");
+            conn.close(0u32.into(), b"saga inbound reject");
+            return;
         }
     };
 
