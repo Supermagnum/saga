@@ -39,7 +39,12 @@ Test vector source: `testing/mock-token/tests/fixtures/p384_vector_c1_d1.json` (
 SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 ```
 
-Cases 1–6 + Phase 3 **PASS** (`/tmp/e2e-phase15-full.log`). Case 2 media round-trip OK; session_key_hash_prefix equality asserted after this change set.
+Cases 1–6 + Phase 3 **PASS** (`/tmp/e2e-phase15-full.log`). Case 2 media round-trip OK; session_key_hash_prefix matched on both peers (e.g. `6c8e`).
+
+### CI
+
+PR: https://github.com/Supermagnum/saga/pull/16  
+Green run: https://github.com/Supermagnum/saga/actions/runs/43155401742 — rust ~2m8s, android ~1m51s (wall ~2m).
 
 ### Needs real hardware / blocked on xous-core#937
 
