@@ -252,9 +252,10 @@ rekeying?** Two realistic triggers, with different correct responses:
 
 | Stage | Primitive | Notes |
 |---|---|---|
-| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
-| Transcript / KDF | HKDF-SHA256 from ECDH shared secret + transcript binding as defined by `ephemeral-session` | Not Noise; not the draft §12 table |
-| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) | Master key + salt from HKDF over the ephemeral-session shared secret; transcript hash in `info`; separate keys per direction; `zeroize` on drop. QUIC encrypts the hop; SRTP is the end-to-end layer |
+| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). Default profile **P384r1** (CESS preference). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
+| Transcript / KDF | HKDF-SHA256 from ECDH shared secret + ordered-EPK salt as defined by `ephemeral-session` | Not Noise; not the draft §12 table. Output retained for Phase 2: `shared_secret` + `transcript_hash` + `profile_prk` (`HandshakeOutput`) |
+| Saga channel binding | HKDF-Expand(`profile_prk`, info = `saga-iroh-channel-v1` \|\| min(EndpointId)\|\|max(EndpointId)) | **No wire change.** ephemeral-session does not bind Iroh EndpointIds; Saga derives `saga_session_key` so handshake material cannot be reused on a swapped QUIC identity pair (confused-deputy / endpoint-swap). Prevents applying a valid LT-authenticated transcript to the wrong Iroh path when LT keys are shared or confused across devices |
+| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) — Phase 2 | Master key + salt from HKDF over Phase 1.5 `HandshakeOutput` (bound session key + transcript); separate keys per direction; `Zeroize`/`ZeroizeOnDrop`. QUIC encrypts the hop; SRTP is the end-to-end layer |
 | Media framing | RTP over `iroh-roq` + SRTP | Replay via SRTP sliding window (RFC 3711); no custom nonce/replay code |
 
 Cipher profile selection reuses the token's existing named-profile concept
@@ -279,8 +280,9 @@ the same crates for the overlapping needs, rather than picking equivalents:
 
 | Crate / component | Used for in Saga | Matches firmware's use |
 |---|---|---|
-| Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Same crate / same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
-| `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation | Same crates as firmware |
+| Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Git-pinned crate rev (never a branch tip); same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
+| Saga `SessionToken` trait | Produce signed ephemeral offer / verify peer / derive shared secret | Fallible, async-safe, timeout-aware; mock implements now; Galdralag USB CCID and Nitrokey later. No USB backend in Phase 1.5 |
+| `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation + Saga EndpointId channel binding | Same crates as firmware |
 | `aes-gcm` (via `webrtc-srtp` AES-256-GCM profile) | SRTP media AEAD | Firmware already lists `aes-gcm`; media uses it through `webrtc-srtp`, not a hand-rolled AEAD |
 | `chacha20poly1305` | Reserved for §14 group-call frame encryption (SFrame-style), not two-party SRTP | Same crate as firmware |
 | `blake3` | Where firmware/CESS uses BLAKE3 (e.g. outer-envelope labels); not a substitute for Brainpool ECDSA | Same crate |
@@ -520,8 +522,10 @@ cue code in `org.saga.security.connect`).
 
 **Canonical:** Galdralag `ephemeral-session` over Iroh after QUIC
 establishment — `InitMessage` / `ResponseMessage` as specified in
-Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4). Only the transport
-is Saga-specific.
+Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4), framed as
+`u16 BE length || serialised message` on the Saga bi-stream. Only the
+transport framing and the post-handshake EndpointId channel binding (§6)
+are Saga-specific; message bytes are crate-identical to firmware.
 
 The historical draft table below is **retired** (kept only so old notes
 remain searchable). Do not implement it:
@@ -659,25 +663,28 @@ hardware token or real audio device is involved.
 
 ### 15.1 Mock token — scope and enforcement
 
-The mock token implements the same `ephemeral-session` wire format the real
-Galdralag firmware defines (§7.4) — same `InitMessage`/`ResponseMessage`
-bytes, same Brainpool + ECDSA primitives — but backed by an in-memory
-software keypair instead of hardware-backed TRNG and secure storage.
-(Phase 1.5 replaces any temporary homemade mock layout.) It exists to
-exercise the handshake, managed `ConnectionService` / `InCallService`
-lifecycle, and encrypted media pipeline on two emulators without physical
-tokens.
+The mock token **is** a `SessionToken` backend: it calls
+`InitiatorSession` / `ResponderSession` from the git-pinned
+`ephemeral-session` crate and emits byte-identical `InitMessage` /
+`ResponseMessage` serialisations. Long-term keys are software Brainpool
+ECDSA (default P384r1); ephemeral ECDH runs in-process via `FakeTrng`,
+mirroring on-device steps. There is no dual path and no leftover
+X25519/Ed25519 hello/confirm layout.
+
+Contact MIME rows store the 64-char lowercase hex fingerprint
+(`InitMessage::encode_fingerprint_hex`). Iroh EndpointIds remain separate
+(`saga-dev-v1:{phone-digit-label}`).
 
 Scope is enforced at build time, not by convention:
 
-- Lives in a separate crate path in the repo (e.g. `testing/mock-token`),
-  not alongside the real token-integration code.
-- Gated behind a Cargo feature (e.g. `mock-token`) that is **not** enabled
-  in release build profiles — a mock token must be structurally unable to
-  ship in a production build, not merely undocumented for one.
-- Mock-issued keys/identities are marked as such wherever they surface
-  (logs, test fixtures) so a mock-derived session can never be confused
-  with a real hardware-backed one.
+- Lives in `testing/mock-token`, not alongside future USB token backends.
+- Gated behind Cargo feature `mock-token` (not for production-shaped
+  release hygiene — Phase 6).
+- Logs use marker `MOCK_TOKEN`; debug builds may log only a short hash
+  prefix of the session key, never raw secrets.
+- Host tests: committed vector
+  `testing/mock-token/tests/fixtures/p384_vector_c1_d1.json` plus negative
+  cases (tampered sig, wrong LT key, wrong curve, truncated, replay).
 
 ### 15.2 Two-emulator setup
 

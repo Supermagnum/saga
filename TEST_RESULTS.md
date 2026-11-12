@@ -1,8 +1,57 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Full E2E Cases 1–6 with `tel:,` on API 35 — PR #15)
+**Last updated:** 2026-11-12 (Phase 1.5 ephemeral-session mock)
 
-**Status:** Emulator E2E Cases 1–6 **PASS** with production `tel:,` SSP (API 35 Alice/Bob). PhoneAccount onboarding security fix (#2) **PASS** on API 35 and API 29 (local one-off). Modem forensics: legacy `tel:iroh` → `ATD4764`; production SSP is `tel:,` (PAUSE; no dialable digits, no ATD). Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+**Status:** Phase 1.5 — mock-token speaks real `ephemeral-session` (Brainpool + ECDSA) via git-pinned firmware rev. Host test vectors + negatives **PASS**. Emulator E2E re-run tracked below. Not ready to ship — needs real audio (Phase 2), release hygiene, physical Galdralag (blocked on xous-core#937).
+
+---
+
+## 2026-11-12 — Phase 1.5 ephemeral-session in mock-token
+
+### Pin
+
+| Field | Value |
+|-------|--------|
+| Repo | `https://github.com/Supermagnum/Galdralag-firmware` |
+| Rev | `b781bf6fa5ccf8700a5fb061583c31cfa00241a1` |
+| Date | 2026-10-22 |
+| Crates | `ephemeral-session`, `galdr-core` (`test-hal`), `galdr-vault` |
+| Licence | GPL-3.0 (compatible with Saga AGPL-3.0) |
+| Host build | `cargo test` in `testing/mock-token` — OK |
+| Android ABIs | `cargo ndk -t arm64-v8a -t x86_64` smoke of the same crates — OK |
+
+Default curve: **BrainpoolP384r1**. Both P256r1 and P384r1 covered by host tests.
+
+Channel binding: Saga HKDF over `profile_prk` + sorted Iroh EndpointIds (`saga-iroh-channel-v1`); no wire change. See saga-spec.md §6.
+
+### Host verified
+
+```bash
+cd testing/mock-token && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd saga-iroh-core && cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings && cargo test --features iroh-transport,mock-token
+```
+
+Test vector source: `testing/mock-token/tests/fixtures/p384_vector_c1_d1.json` (FakeTrng `0xC1`/`0xD1`, labels `vector-alice`/`vector-bob`). Firmware citation: `ephemeral-session/tests/session_protocol.rs` and `examples/export_session_kdf_vectors.rs` on the same rev.
+
+### Emulator verified (API 35)
+
+```bash
+SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
+```
+
+Cases 1–6 + Phase 3 **PASS** (`/tmp/e2e-phase15-full.log`). Case 2 media round-trip OK; session_key_hash_prefix equality asserted after this change set.
+
+### Needs real hardware / blocked on xous-core#937
+
+- a real Galdralag handshake over USB CCID on Android
+- byte-identity of real-token output vs the software mock
+- the §8 handshake latency benchmark (T_generate + T_sign + T_verify + T_ecdh)
+- PIN/unplug/timeout behaviour with a real token
+
+### Known gaps before Phase 2
+
+- No Opus / iroh-roq / SRTP media path yet (consumes `HandshakeOutput`)
+- Release still carries `test-utils` / `mock-token` / `TEST_*` (Phase 6 hygiene)
 
 ---
 
@@ -140,9 +189,9 @@ First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled 
 - Production relay TLS (still `test-utils` / insecure path in debug)
 - OEM Telecom/telephony handling of `tel:,` (PAUSE SSP): vendor stacks may reject it or behave differently than the emulator RIL; re-verify on a physical device that no `ATD` / USSD is emitted on a real modem if SIM substitution ever occurs
 
-### Known gaps before Phase 2
+### Known gaps before Phase 2 (historical note from PR #15 era)
 
-- Phase 1.5: replace homemade mock-token wire with real `ephemeral-session` Brainpool bytes
+- ~~Phase 1.5: replace homemade mock-token wire~~ — done (see Phase 1.5 section above)
 - No Opus / iroh-roq / SRTP media path yet
 - Release still carries `test-utils` / `mock-token` / `TEST_*` (Phase 6 hygiene)
 
