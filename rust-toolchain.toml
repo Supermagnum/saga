@@ -1,0 +1,5 @@
+# Pinned for CI and F-Droid reproducibility. Keep in sync with .github/workflows/ci.yml.
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-linux-android", "x86_64-linux-android"]
