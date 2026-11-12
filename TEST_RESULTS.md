@@ -1,8 +1,59 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 3 — Android audio I/O + Telecom)
+**Last updated:** 2026-11-12 (Phase 2 Step 3b — Android RoQ / PR #27 verification)
 
-**Status:** Phase 2 Step 3 — AudioRecord/AudioTrack VOICE_COMMUNICATION + Telecom mute/route/hold; Encrypted→SRTP / not-encrypted→plain RTP after security resolve; §5b re-key swap measured. Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Step 3b Android capture/playback uses shared `saga-media` over iroh-roq (real network media; loopback removed). E2E Cases 1–6 + 4b PASS on API 35 after media-regex + Case 2 cue/media poll fixes. PCM inject/dump tooling added for speech metrics. Emulator↔emulator RoQ speech fidelity still open (inject OK, decoded dump noise). Emulator↔saga-peer WAV blocked on relay URL advertisement (`127.0.0.1` inside emulator). Do not merge until open items below are decided.
+
+---
+
+## 2026-11-12 — Phase 2 Step 3b: Android RoQ verification (#27)
+
+### What is real network audio vs not
+
+| Path | Real network RoQ? | Result |
+|------|-------------------|--------|
+| Host `saga-peer` A↔B WAV (`host_roundtrip`) | Yes (in-process iroh, no loopback) | **corr=0.961 SI-SNR=11.1 dB** (encrypted + plain) |
+| Emulator↔emulator PCM inject/dump | Yes (two API 35 emulators + local relay) | Inject pre-network **corr=1.000**; decoded dump **corr≈0.07–0.11**, high-ZCR noise (not speech) |
+| Emulator↔saga-peer WAV (laptop `15550100020`) | Intended real network | **Blocked**: host peer advertises relay `http://127.0.0.1:3340/`; emulator tries that address and gets connection refused (needs `10.0.2.2` or LAN IP both can use) |
+| Local AudioRecord mic (no inject) | N/A | Not used for scored metrics |
+| CI `LIVE_AUDIO` | Off | Host WAV only |
+
+### Emulator↔emulator PCM metrics (API 35, real RoQ)
+
+Harness: `testing/e2e/run-pcm-roq-metrics.sh` + `pcm_score.py` (broadcast `TEST_PCM_*`, app-files staging).
+
+| Direction | corr | SI-SNR | STOI | Notes |
+|-----------|------|--------|------|-------|
+| alice→bob (decode on bob) | 0.105 | −19.5 dB | 0.14 | Energy present; spectral centroid ~11 kHz (noise-like) |
+| bob→alice | (short/failed media wait on reverse) | — | — | One run: dump near-silence |
+| inject_verify (alice capture, pre-network) | **1.000** | — | — | Proves inject→JNI capture path |
+
+Host baseline for same fixture over RoQ: corr **0.961**, SI-SNR **11.1 dB**.
+
+### E2E (API 35, `/tmp/e2e-full-3b-rerun.log`)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 cue grep | **PASS** (`E2E_FULL_EXIT=0`) |
+| Case 2 / 2b media | **PASS** (escaped `\[Saga Media\]` regex + polled cue/media waits; handshake ~350–393 ms) |
+| PhoneAccount onboarding | **Partial**: Case A/B PASS; `INBOUND_REJECT:FAIL` missing reject log (flake); `ONBOARDING_EXIT=1` |
+
+### In-call screenshots
+
+Looked at `docs/screenshots/step3/` (`incall_base`, muted, speaker, held). Fresh mid-call captures during PCM runs often showed MainActivity or “Securing… / Audio idle” because test intents / task focus cover `SagaInCallActivity`. Broadcast PCM path avoids focus steal for audio; reliable Encrypted+live-audio UI capture still needs a dedicated foregrounding helper.
+
+### Tooling added (this verification)
+
+- `SagaPcmDebug` + `SagaPcmDebugReceiver` (inject WAV / dump playback without loopback)
+- `testing/e2e/run-pcm-roq-metrics.sh`, `pcm_score.py`, `run-peer-wav-roundtrip.sh`
+- Case 2/2b: wait for secure cue + media start (both sides)
+
+### Remaining open decisions
+
+1. **Emulator RoQ speech fidelity** — why decoded PCM is noise while host A↔B is clean (SRTP/role, datagram path, or emulator network). Inject path is ruled out.
+2. **Emulator↔host peer relay URL** — advertise a relay URL reachable from both host and emulator (not `127.0.0.1` inside the guest).
+3. **Onboarding `INBOUND_REJECT` flake** — whether to harden reject logging or treat as known flake.
+4. **Merge #27?** — hold until (1) and preferably (2) have an explicit accept/defer.
 
 ---
 

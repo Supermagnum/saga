@@ -77,6 +77,13 @@ cargo run --manifest-path tools/saga-peer/Cargo.toml -- \
   --wav-out /tmp/peer-out.wav --loop-wav
 ```
 
+Automated harness: `testing/e2e/run-peer-wav-roundtrip.sh` (emulator inject/dump +
+peer `--wav-in/--wav-out`). **Emulator caveat:** the host peer publishes its home
+relay as `http://127.0.0.1:3340/`. Inside the Android emulator that address is the
+guest loopback, so dial fails with connection refused. Use a LAN IP (or other
+shared hostname) for `--relay` on both sides when scoring emulator↔peer, or keep
+peer WAV scoring on host A↔B until relay advertisement is fixed.
+
 ## Troubleshooting
 
 | Symptom | Check |
