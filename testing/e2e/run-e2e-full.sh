@@ -135,7 +135,13 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && check_log "$SERIAL_A" "Playing call_secure exactly once" \
    && check_log "$SERIAL_B" "Saga Media Round-Trip.*decrypted_ok=true" \
    && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
-  record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag"
+  INIT_PREFIX="$(adb -s "$SERIAL_A" logcat -d 2>/dev/null | rg -o 'initiator session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
+  RESP_PREFIX="$(adb -s "$SERIAL_B" logcat -d 2>/dev/null | rg -o 'responder session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
+  if [[ -n "$INIT_PREFIX" && "$INIT_PREFIX" == "$RESP_PREFIX" ]]; then
+    record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag + session_key_hash_prefix=$INIT_PREFIX"
+  else
+    record "CASE2:FAIL session key hash prefix mismatch initiator=[$INIT_PREFIX] responder=[$RESP_PREFIX]"
+  fi
 else
   record "CASE2:FAIL"
   adb -s "$SERIAL_A" logcat -d | rg "Saga|Iroh|Media|MOCK_TOKEN|Handshake|Dial Target" | tail -12 || true
