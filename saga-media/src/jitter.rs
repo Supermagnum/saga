@@ -1,4 +1,4 @@
-//! Adaptive jitter buffer: target ~40–60 ms, cap ~200 ms.
+//! Adaptive jitter buffer: target ~40–60 ms, cap 300 ms.
 
 use std::collections::BTreeMap;
 
@@ -6,9 +6,13 @@ use crate::codec::FRAME_MS;
 
 const TARGET_MS_LOW: u32 = 40;
 const TARGET_MS_HIGH: u32 = 60;
-// Emulator RoQ can deliver a burst after a stall; a 200 ms cap dropped
-// still-useful packets (played stuck ~100 while peer sent ~400).
-const CAP_MS: u32 = 1000;
+/// Playout cap in ms (15 × 20 ms frames).
+///
+/// Kept at 300 ms (not 1 s): the reorder/loss wait is already ~200 ms
+/// (10 ticks); +100 ms headroom covers a short burst after Wait without
+/// soaking emulator inject artefacts into real call latency. Capture is
+/// paced at 20 ms, so a 1 s cap is no longer needed for test dumps.
+pub const CAP_MS: u32 = 300;
 
 /// Packet held in the jitter buffer.
 #[derive(Debug, Clone)]
@@ -84,8 +88,14 @@ impl JitterBuffer {
         self.next_seq.is_none()
     }
 
-    /// Insert a packet. Drops if buffer would exceed cap (keeps nearer-to-playout).
-    pub fn push(&mut self, seq: u16, payload: Vec<u8>) {
+    /// Current buffered packet count (depth).
+    pub fn depth(&self) -> usize {
+        self.packets.len()
+    }
+
+    /// Insert a packet. Returns whether it was accepted (false = late / already played).
+    /// Drops farthest-ahead if buffer would exceed cap.
+    pub fn push(&mut self, seq: u16, payload: Vec<u8>) -> bool {
         match self.next_seq {
             None => self.next_seq = Some(seq),
             Some(next) => {
@@ -94,19 +104,27 @@ impl JitterBuffer {
                     // Still priming: accept an earlier seq as the new start.
                     self.next_seq = Some(seq);
                 } else if self.already_played(seq, next) {
-                    return;
+                    return false;
                 }
             }
         }
         self.packets.insert(seq, payload);
+        // Over cap: drop nearest-to-playout and jump the playout cursor past it.
+        // Dropping farthest (old behavior) punched holes in the future sequence
+        // under RoQ catch-up bursts; jumping forward sheds latency instead.
         while self.packets.len() > self.max_packets {
-            // Drop farthest-from-playout (highest seq ahead of next).
-            if let Some((&k, _)) = self.packets.iter().next_back() {
-                self.packets.remove(&k);
-            } else {
+            let Some((&k, _)) = self.packets.iter().next() else {
                 break;
+            };
+            self.packets.remove(&k);
+            if let Some(next) = self.next_seq {
+                let ahead = k.wrapping_sub(next);
+                if ahead < 0x8000 {
+                    self.next_seq = Some(k.wrapping_add(1));
+                }
             }
         }
+        true
     }
 
     fn already_played(&self, seq: u16, next: u16) -> bool {
@@ -218,6 +236,27 @@ mod tests {
             jb.push(i, vec![0]);
         }
         assert!(jb.len() <= jb.max_packets());
+    }
+
+    #[test]
+    fn over_cap_jumps_forward_not_drop_farthest() {
+        let mut jb = JitterBuffer::new();
+        let cap = jb.max_packets() as u16;
+        // Fill beyond cap with a contiguous burst.
+        for i in 0..(cap + 5) {
+            assert!(jb.push(i, vec![i as u8]));
+        }
+        assert!(jb.len() <= jb.max_packets());
+        // Playout must land on a kept (later) seq — not a hole from
+        // dropping the tail while next still points at the head.
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected packet after over-cap jump");
+        };
+        assert!(
+            p.seq >= 5,
+            "expected jump-forward past shed head, got seq={}",
+            p.seq
+        );
     }
 
     #[test]

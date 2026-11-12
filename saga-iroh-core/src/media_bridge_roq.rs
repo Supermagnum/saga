@@ -97,13 +97,26 @@ pub fn start_media(
                     let mut guard = pipeline_task.lock().await;
                     if let Some(p) = guard.as_mut() {
                         // Recv first so playout sees fresh packets this tick.
-                        while tokio::time::timeout(
-                            std::time::Duration::from_millis(0),
-                            p.recv_one_datagram(),
-                        )
-                        .await
-                        .is_ok()
-                        {}
+                        // Cap drain: unbounded recv of a RoQ catch-up burst used
+                        // to fill the 300 ms JB and force jump-forward (audio
+                        // warp). Leave ≥1 slot and stop after a few datagrams;
+                        // the rest wait for the next 20 ms tick after playout.
+                        let mut drained = 0u32;
+                        while drained < 5 {
+                            if p.jitter_len() + 1 >= p.jitter_cap() {
+                                break;
+                            }
+                            if tokio::time::timeout(
+                                std::time::Duration::from_millis(0),
+                                p.recv_one_datagram(),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                            drained = drained.saturating_add(1);
+                        }
                         // Exactly one send per 20 ms tick.
                         match capture_rx.try_recv() {
                             Ok(mut pcm) => {
@@ -134,10 +147,15 @@ pub fn start_media(
                             let s = p.counters.snapshot();
                             info!(
                                 "[Saga Media] counters session=[{sid}] sent={} played={} plc={} \
+                                 late={} lost={} jb_med_ms={} jb_max_ms={} \
                                  tamper={} wrong_mode={} blocked={}",
                                 s.sent,
                                 s.played,
                                 s.plc_frames,
+                                s.late_arrivals,
+                                s.lost_packets,
+                                s.jb_depth_median_ms,
+                                s.jb_depth_max_ms,
                                 s.tamper_or_auth_fail,
                                 s.wrong_media_mode,
                                 s.datagram_blocked_drops

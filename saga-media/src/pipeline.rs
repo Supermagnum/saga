@@ -416,7 +416,10 @@ impl MediaPipeline {
         match rtp::header::Header::unmarshal(&mut buf) {
             Ok(hdr) => {
                 let payload = buf.to_vec();
-                self.jb.push(hdr.sequence_number, payload);
+                if !self.jb.push(hdr.sequence_number, payload) {
+                    self.counters.late_arrivals.fetch_add(1, Ordering::Relaxed);
+                }
+                self.counters.record_jb_depth(self.jb.depth());
             }
             Err(_) => {
                 self.counters
@@ -441,21 +444,26 @@ impl MediaPipeline {
                 let n = self.decoder.decode_frame(&pkt.payload, out, false)?;
                 self.last_opus = Some(pkt.payload);
                 self.counters.played.fetch_add(1, Ordering::Relaxed);
+                self.counters.record_jb_depth(self.jb.depth());
                 Ok(n)
             }
             PopOutcome::Wait => {
                 // Startup / reorder window / empty: silence, do not advance.
                 out[..FRAME_SAMPLES].fill(0);
+                self.counters.record_jb_depth(self.jb.depth());
                 Ok(FRAME_SAMPLES)
             }
             PopOutcome::Lost => {
                 // Confirmed gap (wait_ticks / ahead threshold). Conceal once.
+                self.counters.lost_packets.fetch_add(1, Ordering::Relaxed);
                 if !self.jb.playout_started() {
                     out[..FRAME_SAMPLES].fill(0);
+                    self.counters.record_jb_depth(self.jb.depth());
                     return Ok(FRAME_SAMPLES);
                 }
                 let n = self.decoder.conceal(out)?;
                 self.counters.plc_frames.fetch_add(1, Ordering::Relaxed);
+                self.counters.record_jb_depth(self.jb.depth());
                 Ok(n)
             }
         }
