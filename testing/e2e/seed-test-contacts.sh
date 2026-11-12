@@ -63,10 +63,12 @@ insert_contact_adb() {
   echo "  adb raw_contact_id=$raw_id name=$name"
 }
 
-KEY_BOB="$(printf '%s' "15550100010" | base64 -w0)"
-KEY_ALICE="$(printf '%s' "15550100011" | base64 -w0)"
+# ephemeral-session wire fingerprints (64 hex) for MockIdentity P384 labels —
+# must match TestContactSeeder / mock-token v2 derivation.
+KEY_BOB="$(printf '%s' "80342e72c8388b728d66df256f8231258f250f760cd45613e34ab5d2ed9f4fa8" | base64 -w0)"
+KEY_ALICE="$(printf '%s' "ee52f46cbefba6e71b8e0a727a021f9cc99e85771114ff1c0b12fcc83418458b" | base64 -w0)"
 insert_contact_adb "bob" "$PHONE_BOB" "$KEY_BOB" || true
 insert_contact_adb "alice" "$PHONE_ALICE" "$KEY_ALICE" || true
 insert_contact_adb "thor" "$PHONE_THOR" "" || true
 
-echo "seeded contacts on $SERIAL (adb fallback path)"
+echo "seeded contacts on $SERIAL (adb fallback path; fingerprint MIME rows)"

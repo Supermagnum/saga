@@ -9,7 +9,14 @@ import android.util.Base64
 import android.util.Log
 
 /**
- * Read/write Galdralag public keys in Android Contacts (custom MIME row).
+ * Read/write Galdralag long-term key material in Android Contacts (custom MIME row).
+ *
+ * Canonical DATA1 payload (after Base64 decode): 64 lowercase hex ASCII bytes —
+ * the ephemeral-session wire fingerprint (`InitMessage::encode_fingerprint_hex`).
+ * Iroh EndpointIds are not stored here.
+ *
+ * Dev reset: debug builds reseed via [TestContactSeeder] (delete + insert). There
+ * is no Room schema; legacy phone-label rows are replaced on next debug launch.
  */
 object ContactKeyRepository {
     private const val TAG = "[Saga Contact Key Repository]"
