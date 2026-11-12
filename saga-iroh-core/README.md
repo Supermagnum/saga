@@ -14,11 +14,16 @@ rustup target add aarch64-linux-android x86_64-linux-android
 From this directory:
 
 ```bash
+# Debug / CI (no fat LTO) — default from Gradle assembleDebug
+cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --profile ci --features iroh-transport,mock-token
+
+# Release / F-Droid (LTO + codegen-units=1)
 cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --release --features iroh-transport,mock-token
 ```
 
 Output: `target/ndk-libs/` with per-ABI `libsaga_iroh_core.so` files consumed by
 `android/app/build.gradle.kts` (`preBuild` runs this automatically when `cargo-ndk` is installed).
+CI sets `CI=true` so Gradle builds **x86_64 only** with `[profile.ci]`; release packaging keeps both ABIs and `[profile.release]`.
 
 ## Features
 

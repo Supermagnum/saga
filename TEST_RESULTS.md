@@ -1,8 +1,19 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 1 — upstream CI + E2E re-verify)
+**Last updated:** 2026-11-12 (Phase 1 — CI speed + PhoneAccount UX gap)
 
-**Status:** Emulator E2E Cases 1–6 **PASS** on this branch (local relay, fresh `Saga_Alice`/`Saga_Bob` AVDs). Phase 1 adds gating GitHub Actions CI. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+**Status:** Emulator E2E Cases 1–6 **PASS** on this branch (local relay, fresh `Saga_Alice`/`Saga_Bob` AVDs). Phase 1 adds gating GitHub Actions CI. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices. **PhoneAccount stays disabled without adb** — [#2](https://github.com/Supermagnum/saga/issues/2); fix before Phase 2.
+
+---
+
+## Harness note: “Cases 1–6 + Phase 3”
+
+In `testing/e2e/run-e2e-full.sh`, **Phase 3 is not product Phase 3** (Nitrokey / long-term key hardware). It is a **static source grep** after the live cases:
+
+- Greps `android/app/src/main/java` for `applyConnectSnapshot` / `maybePlayConnectCue` under `SagaInCallActivity` / `SagaInCallService`
+- Records `PHASE3:PASS` or `PHASE3:FAIL` — no emulator, no audio playback
+
+So “Cases 1–6 + Phase 3” means: live E2E cases 1–6 (and 2b/2c), then this audio-cue wiring regression check.
 
 ---
 
@@ -12,14 +23,16 @@
 
 | Area | Change |
 |------|--------|
-| Gating CI | `.github/workflows/ci.yml` — Rust fmt/clippy/`-D warnings`/test for `mock-token` + `saga-iroh-core`; Android `assembleDebug` + `testDebugUnitTest` with `SAGA_REQUIRE_NATIVE=1`; APK must contain `libsaga_iroh_core.so` for `arm64-v8a` and `x86_64` |
+| Gating CI | `.github/workflows/ci.yml` — Rust fmt/clippy/`-D warnings`/test for `mock-token` + `saga-iroh-core`; Android `assembleDebug` + `testDebugUnitTest` with `SAGA_REQUIRE_NATIVE=1`; CI APK must contain `libsaga_iroh_core.so` for **`x86_64` only** |
+| Native profile | `[profile.ci]` (no LTO, `codegen-units=16`) for debug/CI; `[profile.release]` fat LTO for release/F-Droid (both ABIs) |
 | E2E on CI | **Not gated.** Two concurrent AVDs are local-only; documented in `testing/e2e/README.md` (no notice-only workflow) |
 | Dependabot | Weekly; cargo / gradle / github-actions; minor+patch grouped per ecosystem |
 | Toolchain pins | `rust-toolchain.toml` → `1.94.0`; Gradle `ndkVersion = "27.2.12479018"` (r27c) |
 | Native fail-hard | **Release always** requires native (cannot be relaxed). Debug fail-hard via CI / `SAGA_REQUIRE_NATIVE` / `-Psaga.requireNative`. Local debug without cargo-ndk may warn + stub only |
-| E2E harness | `run-e2e-full.sh` launches app once before `set-phone-account-enabled` (fresh AVDs otherwise leave Saga PhoneAccount disabled) |
+| E2E harness | `run-e2e-full.sh` launches app once before `set-phone-account-enabled` (fresh AVDs otherwise leave Saga PhoneAccount disabled). Real users cannot run that adb command — see PhoneAccount UX gap below |
 | Spec | RFC 3711: sliding replay window ≠ call ceiling; master-key lifetime 2⁴⁸ packets. Brainpool+ECDSA + SRTP AES-256-GCM. §12 marked superseded |
 | Icons | `icons/broken.svg` for §13 downgraded state |
+| Gradle wrapper | Jar updated to official Gradle **8.10.2** wrapper SHA-256 `2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046` ([release-checksums](https://gradle.org/release-checksums/)). Earlier CI “wrapper validation” failures were from `gradle/actions/setup-gradle` (`validate-wrappers: true`); CI now uses `actions/cache` for Gradle caches |
 
 ### Verified (host)
 
@@ -36,9 +49,26 @@ cd saga-iroh-core && cargo fmt --check && cargo clippy --all-targets --features 
 ```
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
 export SAGA_REQUIRE_NATIVE=1
+# Local debug: both ABIs, cargo profile=ci
 cd android && ./gradlew assembleDebug testDebugUnitTest verifyNativeLibsInApk --no-daemon -Psaga.requireNative=true
 # BUILD SUCCESSFUL — OK: libsaga_iroh_core.so present for arm64-v8a and x86_64
+
+# CI-shaped (x86_64 only):
+CI=true ./gradlew assembleDebug --no-daemon -Psaga.requireNative=true
+# OK: lib/x86_64/libsaga_iroh_core.so only
 ```
+
+### PhoneAccount UX (fresh AVD, no `set-phone-account-enabled`)
+
+AVD `Saga_PA_Test` (`emulator-5558`): install debug APK, grant dialer role, launch app, **do not** enable PhoneAccount via adb.
+
+| Check | Result |
+|-------|--------|
+| Account state | Stays disabled (`[ ]` in `dumpsys telecom`) |
+| Outgoing Iroh | Does **not** work — Telecom falls back to SIM telephony account; peer never rings |
+| Incoming Iroh | Does **not** ring — `addNewIncomingCall` → `SecurityException: This PhoneAccountHandle is not enabled for this user!` |
+
+Issue: [#2](https://github.com/Supermagnum/saga/issues/2) (onboarding via `TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS`; fix before Phase 2).
 
 ### Verified (emulator E2E — local relay)
 
@@ -67,8 +97,15 @@ First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled 
 ### CI run link
 
 PR: https://github.com/Supermagnum/saga/pull/1  
-Green run: https://github.com/Supermagnum/saga/actions/runs/43137989958  
+Prior green run (dual ABI + release LTO): https://github.com/Supermagnum/saga/actions/runs/43137989958  
 Wall ~12.7 min (dominated by cold Android native+Gradle; Rust job ~33s). Earlier failed setup runs: `43137246126`, `43137734182`.
+
+Local CI-shaped timing after `[profile.ci]` + x86_64-only (`CI=true ./gradlew assembleDebug testDebugUnitTest --no-daemon`):
+
+| Run | Wall clock |
+|-----|------------|
+| Cold (clean `target/.../ci` + app/build) | **72 s** |
+| Warm (immediate re-run) | **7.4 s** |
 
 ---
 
