@@ -722,3 +722,92 @@ emulator audio I/O passthrough.
    if that separate setting is enabled — not the connect-time cue.
 7. **CI integration:** headless AVDs; automated regression on handshake
    and media pipeline changes.
+
+## 16. Phase 5 — Optional voice disguise (off by default)
+
+Optional **voice disguise** for Iroh (Saga) calls only. Off by default. It
+changes how the local mic feed sounds to the peer (and in any recording they
+make). It is **not** anonymisation: UI and docs must not claim the speaker
+cannot be identified. The contact key still identifies the caller; accent,
+word choice, and speaking rhythm are unchanged. It does not apply to
+cellular / phone-network calls.
+
+Apply on the **sender** side before Opus encoding. It never changes what the
+local user hears. Candidate modes for shipping are pitch shift and
+McAdams-coefficient LPC formant shift (VoicePrivacy Challenge baseline);
+neural voice conversion is evaluated for latency/cost and is not assumed to
+ship. Any library must be license-compatible with AGPL-3.0 and F-Droid.
+Added latency budget per mode: **≤ ~20 ms** on the emulator — modes that
+exceed that do not ship. Measure and record latency in `TEST_RESULTS.md`.
+
+### 16.1 Settings → Voice disguise (global defaults)
+
+- **Mode:** Off (default) / Pitch shift / Formant shift (McAdams) /
+  Formant + pitch.
+- **Pitch amount:** slider in semitones, −6 … +6; default −3 ("lower"), or
+  whichever value listening tests prefer. Shown only for modes that use
+  pitch.
+- **Formant strength:** Mild / Medium / Strong, mapped to McAdams α ranges
+  tuned by listening tests and the intelligibility metric. Shown only for
+  formant modes.
+- **"New random voice each call":** ON by default. A random α (and a random
+  pitch offset inside the chosen range) is drawn from a CSPRNG once per
+  call and zeroized at call end. Turning it OFF uses a fixed α and must
+  show the warning: "A fixed setting is easier to reverse."
+- **"Test my voice":** records ~5 s locally and plays it back through the
+  chosen mode. Nothing leaves the phone; the recording is deleted
+  afterwards.
+- **Help text (short):** what it does (changes how your voice sounds to the
+  other person and in any recording they make); what it does not (it does
+  not hide accent, words, rhythm, or who you are — your contact key
+  identifies you); and that it works on Saga calls only, not normal phone
+  calls.
+
+### 16.2 Per-contact override (contact detail screen)
+
+- **Voice disguise:** Use default / Always on / Always off.
+
+### 16.3 In-call screen (Iroh calls only)
+
+- A quick on/off toggle using the mode from settings or the contact
+  override. It may be switched mid-call; the change applies at the next
+  audio frame boundary with a short crossfade (no clicks).
+- A visible indicator chip while disguise is active (local side).
+- For cellular calls: the toggle is shown disabled with
+  "Not available on phone-network calls".
+- **Peer chip (decided):** when the remote party has disguise active, show
+  a neutral informational chip: "Caller is using voice disguise". See
+  §16.6. It must not change the padlock or security state.
+
+### 16.4 Behaviour
+
+- Sender-side only, before Opus encoding; local sidetone / what you hear is
+  unchanged.
+- Settings persist across calls; per-call random α / pitch offsets do not.
+- Latency for each mode is measured and shown in `TEST_RESULTS.md`. A mode
+  that exceeds ~20 ms on the emulator does not ship.
+
+### 16.5 Verification
+
+- **Host:** each mode × strength on the real speech clip → before/after
+  WAVs, latency, and intelligibility metric versus the original.
+- **Randomisation:** two calls with "New random voice each call" ON must
+  yield different α values; those values must never be logged in release
+  builds.
+- **Emulator screenshots** (look at each before accepting): settings page
+  for each mode; contact override; in-call toggle + active chip; peer
+  "Caller is using voice disguise" chip; disabled cellular-call state.
+
+### 16.6 Decisions and open items
+
+- [x] **Peer "voice disguise" chip — YES, tell the peer.** Add a field to
+  the **Saga call-setup messages** (not the ephemeral-session wire format)
+  that indicates disguise is active. Send it when the call starts and
+  whenever disguise is toggled mid-call. The peer shows a neutral chip:
+  "Caller is using voice disguise". Informational only — must not change
+  the padlock or security state. Implementation stays in Phase 5.
+- [ ] Confirm chosen DSP libraries' licenses against AGPL-3.0 and F-Droid
+  before dependency lock-in.
+- [ ] Report neural voice-conversion latency/cost on mid-range targets;
+  exclude from shipping modes if over the ~20 ms budget or otherwise
+  unsuitable.
