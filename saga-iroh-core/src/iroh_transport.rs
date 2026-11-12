@@ -590,11 +590,11 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
 
     #[cfg(not(feature = "mock-token"))]
     let (handshake, handshake_output, roq) = {
-        use tokio::io::AsyncWriteExt;
         let (mut send, _recv) = connection
             .open_bi()
             .await
             .map_err(|e| format!("iroh open_bi failed: {e}"))?;
+        // iroh SendStream provides write_all without AsyncWriteExt in scope.
         send.write_all(b"saga-connect-probe")
             .await
             .map_err(|e| format!("iroh probe write: {e}"))?;
