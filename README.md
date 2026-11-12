@@ -13,10 +13,11 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Emulator E2E harness | [`testing/e2e/`](testing/e2e/) |
 | Local Iroh relay (E2E/CI) | [`testing/iroh-relay/`](testing/iroh-relay/) |
 | Test results log | [TEST_RESULTS.md](TEST_RESULTS.md) |
+| Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 
 ## Status
 
-Implementation runs on two Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–6 pass with a **local dev relay** and **native relay-ready polling**; the suite is not production-ready until release hardening and on-device validation beyond emulators.
+Implementation runs on two Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–6 pass with a **local dev relay** and **native relay-ready polling**; the suite is not production-ready until release hardening and on-device validation beyond emulators. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)).
 
 See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
 

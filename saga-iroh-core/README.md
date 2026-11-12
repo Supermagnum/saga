@@ -30,6 +30,8 @@ Output: `target/ndk-libs/` with per-ABI `libsaga_iroh_core.so` files consumed by
 
 The `iroh` dependency enables `test-utils` so E2E can use a **local HTTP dev relay** with `CaTlsConfig::insecure_skip_verify()`. Release builds must use public relays with normal TLS — do not ship the test relay path to production.
 
+Toolchain: root [`rust-toolchain.toml`](../rust-toolchain.toml). Android NDK is pinned via `ndkVersion` in `android/app/build.gradle.kts`. CI sets `SAGA_REQUIRE_NATIVE=1` so a failed `cargo ndk` build fails the job (no silent stub).
+
 ## Dev peer labels (E2E)
 
 Dial targets may be a hex/base32 `EndpointId`, or a dev label (8+ alphanumeric) such as
