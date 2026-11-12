@@ -5,6 +5,16 @@
     <string name="dialer_role_granted">Saga is the default dialer</string>
     <string name="dialer_role_denied">Default dialer role not granted</string>
     <string name="end_call">End call</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="speaker">Speaker</string>
+    <string name="earpiece">Earpiece</string>
+    <string name="hold">Hold</string>
+    <string name="resume">Resume</string>
+    <string name="audio_status_idle">Audio idle</string>
+    <string name="audio_status_muted">Muted</string>
+    <string name="audio_status_speaker">Speaker</string>
+    <string name="audio_status_held">On hold</string>
     <string name="saga_downgrade_title">Call could not be secured</string>
     <string name="saga_downgrade_message">Couldn\'t secure this call with %1$s — it\'s usually encrypted. This could mean a network problem, or someone interfering with the call.</string>
     <string name="saga_continue_unencrypted">Continue unencrypted</string>
