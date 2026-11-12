@@ -54,10 +54,12 @@ class SagaVoiceAudioEngine(
     private var playbackThread: Thread? = null
 
     // Pre-allocated direct buffers — never replaced on the audio path.
+    // nativeOrder matches AudioRecord short[] / AudioTrack byte semantics on-device;
+    // x86_64/arm64 emulators are little-endian (same as Rust from_le_bytes).
     private val captureBuf: ByteBuffer =
-        ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.nativeOrder())
     private val playbackBuf: ByteBuffer =
-        ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.nativeOrder())
     private val silence = ByteArray(FRAME_BYTES)
     private val playbackScratch = ByteArray(FRAME_BYTES)
     private val captureShorts = ShortArray(FRAME_SAMPLES)
@@ -95,6 +97,12 @@ class SagaVoiceAudioEngine(
             rec.release()
             return
         }
+        Log.i(
+            TAG,
+            "AudioRecord sr=${rec.sampleRate} ch=${rec.channelCount} fmt=${rec.audioFormat} " +
+                "want sr=$SAMPLE_RATE ch=$CHANNELS enc=PCM16 frameSamples=$FRAME_SAMPLES " +
+                "byteOrder=${captureBuf.order()}"
+        )
 
         attachEffects(rec.audioSessionId)
 
@@ -122,6 +130,12 @@ class SagaVoiceAudioEngine(
             trk.release()
             return
         }
+        Log.i(
+            TAG,
+            "AudioTrack sr=${trk.sampleRate} ch=${trk.channelCount} fmt=${trk.audioFormat} " +
+                "want sr=$SAMPLE_RATE ch=$CHANNELS enc=PCM16 frameSamples=$FRAME_SAMPLES " +
+                "byteOrder=${playbackBuf.order()}"
+        )
 
         record = rec
         track = trk

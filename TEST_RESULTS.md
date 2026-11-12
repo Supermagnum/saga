@@ -2,58 +2,47 @@
 
 **Last updated:** 2026-11-12 (Phase 2 Step 3b — Android RoQ / PR #27 verification)
 
-**Status:** Step 3b Android capture/playback uses shared `saga-media` over iroh-roq (real network media; loopback removed). E2E Cases 1–6 + 4b PASS on API 35 after media-regex + Case 2 cue/media poll fixes. PCM inject/dump tooling added for speech metrics. Emulator↔emulator RoQ speech fidelity still open (inject OK, decoded dump noise). Emulator↔saga-peer WAV blocked on relay URL advertisement (`127.0.0.1` inside emulator). Do not merge until open items below are decided.
+**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge until CI green). Root cause of emulator dump noise: RoQ task `select!` starved recv/playout when capture was ready, plus JB underrun clock skip / premature Opus PLC. LAN relay advertises `http://<LAN-IP>:3340` for peer + emulators. Onboarding INBOUND_REJECT 5/5 after harness + 1s reject window.
 
 ---
 
-## 2026-11-12 — Phase 2 Step 3b: Android RoQ verification (#27)
+## 2026-11-12 — Phase 2 Step 3b: Android RoQ verification (#27) — hold fixes
 
-### What is real network audio vs not
+### RoQ noise bisect (T1–T6)
 
-| Path | Real network RoQ? | Result |
-|------|-------------------|--------|
-| Host `saga-peer` A↔B WAV (`host_roundtrip`) | Yes (in-process iroh, no loopback) | **corr=0.961 SI-SNR=11.1 dB** (encrypted + plain) |
-| Emulator↔emulator PCM inject/dump | Yes (two API 35 emulators + local relay) | Inject pre-network **corr=1.000**; decoded dump **corr≈0.07–0.11**, high-ZCR noise (not speech) |
-| Emulator↔saga-peer WAV (laptop `15550100020`) | Intended real network | **Blocked**: host peer advertises relay `http://127.0.0.1:3340/`; emulator tries that address and gets connection refused (needs `10.0.2.2` or LAN IP both can use) |
-| Local AudioRecord mic (no inject) | N/A | Not used for scored metrics |
-| CI `LIVE_AUDIO` | Off | Host WAV only |
+| Stage | Result |
+|-------|--------|
+| T1 JNI LE unpack | **OK** (inject_verify corr=1.000; `JniPcmByteOrderTest` + host ramp test) |
+| T2 local Opus | **OK** (`roq_bisect_stages` / codec loopback) |
+| T3/T4 RTP/SRTP | **OK** (tamper=0, wrong_mode=0 when healthy) |
+| T5/T6 decoded dump | **First bad** was playout: capture `select!` starvation + JB `advance_on_underrun` / premature PLC before first decode |
 
-### Emulator↔emulator PCM metrics (API 35, real RoQ)
+**Fix:** tick-only media loop (one send + recv drain + one playout per 20 ms); silence until first decode / on Wait; `PopOutcome::{Packet,Wait,Lost}` with ~200 ms loss timer (not depth-only skip).
 
-Harness: `testing/e2e/run-pcm-roq-metrics.sh` + `pcm_score.py` (broadcast `TEST_PCM_*`, app-files staging).
+### Metrics (API 35, LAN relay `http://192.168.1.191:3340`)
 
-| Direction | corr | SI-SNR | STOI | Notes |
-|-----------|------|--------|------|-------|
-| alice→bob (decode on bob) | 0.105 | −19.5 dB | 0.14 | Energy present; spectral centroid ~11 kHz (noise-like) |
-| bob→alice | (short/failed media wait on reverse) | — | — | One run: dump near-silence |
-| inject_verify (alice capture, pre-network) | **1.000** | — | — | Proves inject→JNI capture path |
+| Path | corr | SI-SNR | STOI |
+|------|------|--------|------|
+| alice→bob (emulator RoQ) | **0.960** | **10.7 dB** | 0.14 |
+| bob→alice | intermittent under load (force-stop between dirs); cold uplink healthy | — | — |
+| peer→alice (saga-peer WAV) | **0.960** | **10.8 dB** | 0.13 |
+| inject_verify | **1.000** | — | — |
+| Host speech baseline | 0.961 | 11.1 dB | — |
 
-Host baseline for same fixture over RoQ: corr **0.961**, SI-SNR **11.1 dB**.
+AudioRecord/AudioTrack logged 48 kHz mono PCM16, frame 960, `ByteOrder.nativeOrder()` (= LE).
 
-### E2E (API 35, `/tmp/e2e-full-3b-rerun.log`)
+### Relay
+
+- Bind `0.0.0.0:3340`; advertise LAN URL via `lan-relay-url.sh` / `saga-peer relay-host`
+- E2E `push_iroh_relay_pref` generates LAN prefs (no `127.0.0.1` / `10.0.2.2` ads)
+
+### Gates
 
 | Gate | Result |
 |------|--------|
-| Cases 1–6 + 4b + Phase 3 cue grep | **PASS** (`E2E_FULL_EXIT=0`) |
-| Case 2 / 2b media | **PASS** (escaped `\[Saga Media\]` regex + polled cue/media waits; handshake ~350–393 ms) |
-| PhoneAccount onboarding | **Partial**: Case A/B PASS; `INBOUND_REJECT:FAIL` missing reject log (flake); `ONBOARDING_EXIT=1` |
-
-### In-call screenshots
-
-Looked at `docs/screenshots/step3/` (`incall_base`, muted, speaker, held). Fresh mid-call captures during PCM runs often showed MainActivity or “Securing… / Audio idle” because test intents / task focus cover `SagaInCallActivity`. Broadcast PCM path avoids focus steal for audio; reliable Encrypted+live-audio UI capture still needs a dedicated foregrounding helper.
-
-### Tooling added (this verification)
-
-- `SagaPcmDebug` + `SagaPcmDebugReceiver` (inject WAV / dump playback without loopback)
-- `testing/e2e/run-pcm-roq-metrics.sh`, `pcm_score.py`, `run-peer-wav-roundtrip.sh`
-- Case 2/2b: wait for secure cue + media start (both sides)
-
-### Remaining open decisions
-
-1. **Emulator RoQ speech fidelity** — why decoded PCM is noise while host A↔B is clean (SRTP/role, datagram path, or emulator network). Inject path is ruled out.
-2. **Emulator↔host peer relay URL** — advertise a relay URL reachable from both host and emulator (not `127.0.0.1` inside the guest).
-3. **Onboarding `INBOUND_REJECT` flake** — whether to harden reject logging or treat as known flake.
-4. **Merge #27?** — hold until (1) and preferably (2) have an explicit accept/defer.
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (wait for relay before dial; 1s Rust reject window) |
+| Merge #27? | **Hold** — push and stop on CI green; do not merge |
 
 ---
 

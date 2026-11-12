@@ -16,7 +16,6 @@ mkdir -p "$OUT_DIR"
 APP_SPEECH="/data/data/org.saga/files/speech_clip_48k.wav"
 APP_DUMP="/data/data/org.saga/files/saga_play_peer.pcm"
 DEVICE_DUMP_REL="files/saga_play_peer.pcm"
-RELAY_URL="${RELAY_URL:-http://127.0.0.1:3340}"
 # Resolve binary: explicit PEER_BIN, else cargo target next to crate, else CARGO_TARGET_DIR.
 if [[ -z "${PEER_BIN:-}" ]]; then
   if [[ -x "$REPO_ROOT/tools/saga-peer/target/release/saga-peer" ]]; then
@@ -67,6 +66,10 @@ Path(sys.argv[2]).write_bytes(w.readframes(w.getnframes()))
 }
 
 ensure_local_relay
+RELAY_URL="${RELAY_URL:-$SAGA_IROH_RELAY_URL}"
+RELAY_URL="${RELAY_URL:-$(bash "$REPO_ROOT/testing/iroh-relay/lan-relay-url.sh")}"
+export SAGA_IROH_RELAY_URL="$RELAY_URL"
+echo "peer/emulator relay URL: $RELAY_URL"
 
 if [[ -z "$PEER_BIN" || ! -x "$PEER_BIN" ]]; then
   echo "=== Building saga-peer ==="
@@ -81,6 +84,7 @@ if [[ -z "$PEER_BIN" || ! -x "$PEER_BIN" ]]; then
   fi
 fi
 
+push_iroh_relay_pref "$SERIAL"
 bash "$E2E_DIR/seed-test-contacts.sh" "$SERIAL"
 adb -s "$SERIAL" push "$SPEECH" /data/local/tmp/speech_clip_48k.wav >/dev/null
 adb -s "$SERIAL" shell run-as org.saga cp /data/local/tmp/speech_clip_48k.wav files/speech_clip_48k.wav
@@ -93,7 +97,14 @@ rm -f "$PEER_OUT1"
   --wav-in "$SPEECH" --wav-out "$PEER_OUT1" --loop-wav \
   >"$OUT_DIR/peer-listen1.log" 2>&1 &
 PEER_PID=$!
-sleep 2
+# Wait until peer has joined the LAN relay before dialing from the emulator.
+for _ in $(seq 1 40); do
+  if rg -q 'relay online' "$OUT_DIR/peer-listen1.log" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+sleep 1
 
 ensure_callee_listening "$SERIAL"
 warm_encrypted_caller "$SERIAL" || true

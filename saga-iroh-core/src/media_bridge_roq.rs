@@ -82,13 +82,20 @@ pub fn start_media(
         let frame_dur =
             std::time::Duration::from_millis(1000 * FRAME_SAMPLES as u64 / SAMPLE_RATE as u64);
         let mut tick = tokio::time::interval(frame_dur);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         info!("[Saga Media] RoQ task running session=[{sid}]");
+        let mut ticks: u64 = 0;
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => break,
+                // Capture must NOT share this select as a peer branch: when the
+                // audio thread feeds every 20 ms, capture_rx.recv() stays ready
+                // and starves the tick (recv+playout), leaving the dump as
+                // near-silence with a short speech burst (corr~0.5, STOI~0).
                 _ = tick.tick() => {
                     let mut guard = pipeline_task.lock().await;
                     if let Some(p) = guard.as_mut() {
+                        // Recv first so playout sees fresh packets this tick.
                         while tokio::time::timeout(
                             std::time::Duration::from_millis(0),
                             p.recv_one_datagram(),
@@ -96,6 +103,17 @@ pub fn start_media(
                         .await
                         .is_ok()
                         {}
+                        // Exactly one send per 20 ms tick. Leave backlog queued
+                        // (do not drain/drop — that skips inject WAV samples).
+                        match capture_rx.try_recv() {
+                            Ok(mut pcm) => {
+                                if let Err(e) = p.send_pcm_frame(&mut pcm) {
+                                    warn!("[Saga Media] send: {e}");
+                                }
+                            }
+                            Err(mpsc::error::TryRecvError::Empty) => {}
+                            Err(mpsc::error::TryRecvError::Disconnected) => break,
+                        }
                         let mut out = vec![0i16; FRAME_SAMPLES];
                         if p.playout_frame(&mut out).is_ok() {
                             let mut bytes = vec![0u8; FRAME_BYTES];
@@ -111,14 +129,20 @@ pub fn start_media(
                                 ring.push_back(bytes);
                             }
                         }
-                    }
-                }
-                frame = capture_rx.recv() => {
-                    let Some(mut pcm) = frame else { break };
-                    let mut guard = pipeline_task.lock().await;
-                    if let Some(p) = guard.as_mut() {
-                        if let Err(e) = p.send_pcm_frame(&mut pcm) {
-                            warn!("[Saga Media] send: {e}");
+                        ticks = ticks.wrapping_add(1);
+                        // ~2 s @ 20 ms: surface SRTP/PLC health for RoQ bisect.
+                        if ticks % 100 == 0 {
+                            let s = p.counters.snapshot();
+                            info!(
+                                "[Saga Media] counters session=[{sid}] sent={} played={} plc={} \
+                                 tamper={} wrong_mode={} blocked={}",
+                                s.sent,
+                                s.played,
+                                s.plc_frames,
+                                s.tamper_or_auth_fail,
+                                s.wrong_media_mode,
+                                s.datagram_blocked_drops
+                            );
                         }
                     }
                 }
