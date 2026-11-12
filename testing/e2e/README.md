@@ -2,6 +2,12 @@
 
 No SIP registrar or Flexisip. Requires one or two running AVDs, `adb`, and (by default) a **local Iroh relay** on the host.
 
+**CI note:** the two-emulator suite is **local-only** — not a push/PR gate.
+GitHub-hosted runners cannot reliably run two concurrent AVDs (RAM/KVM), so
+Cases 1–6 are not claimed green by Actions. Gating CI is
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) (host Rust +
+`assembleDebug` with packaged `libsaga_iroh_core.so`).
+
 ## Prerequisites
 
 - Android SDK / `adb` on PATH

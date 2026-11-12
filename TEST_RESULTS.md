@@ -1,8 +1,72 @@
 # Saga Test Results
 
-**Last updated:** 2026-07-10 (full suite ringing checkpoints — thread closed)
+**Last updated:** 2026-11-12 (Phase 1 — upstream CI + E2E re-verify)
 
-**Status:** Emulator E2E green on Cases 1–6 with **local relay** + **native relay polling** + **inbound ringing bridge**. All six Iroh callee cases (2, 2b, 3, 4, 5, 6) verified with real ringing checkpoints in **standalone and full suite**. Not ready to ship — needs release build, physical devices, production relay/TLS policy.
+**Status:** Emulator E2E Cases 1–6 **PASS** on this branch (local relay, fresh `Saga_Alice`/`Saga_Bob` AVDs). Phase 1 adds gating GitHub Actions CI. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+
+---
+
+## 2026-11-12 — Phase 1: upstream CI (host + Android native) + E2E re-verify
+
+### What changed
+
+| Area | Change |
+|------|--------|
+| Gating CI | `.github/workflows/ci.yml` — Rust fmt/clippy/`-D warnings`/test for `mock-token` + `saga-iroh-core`; Android `assembleDebug` + `testDebugUnitTest` with `SAGA_REQUIRE_NATIVE=1`; APK must contain `libsaga_iroh_core.so` for `arm64-v8a` and `x86_64` |
+| E2E on CI | **Not gated.** Two concurrent AVDs are local-only; documented in `testing/e2e/README.md` (no notice-only workflow) |
+| Dependabot | Weekly; cargo / gradle / github-actions; minor+patch grouped per ecosystem |
+| Toolchain pins | `rust-toolchain.toml` → `1.94.0`; Gradle `ndkVersion = "27.2.12479018"` (r27c) |
+| Native fail-hard | **Release always** requires native (cannot be relaxed). Debug fail-hard via CI / `SAGA_REQUIRE_NATIVE` / `-Psaga.requireNative`. Local debug without cargo-ndk may warn + stub only |
+| E2E harness | `run-e2e-full.sh` launches app once before `set-phone-account-enabled` (fresh AVDs otherwise leave Saga PhoneAccount disabled) |
+| Spec | RFC 3711: sliding replay window ≠ call ceiling; master-key lifetime 2⁴⁸ packets. Brainpool+ECDSA + SRTP AES-256-GCM. §12 marked superseded |
+| Icons | `icons/broken.svg` for §13 downgraded state |
+
+### Verified (host)
+
+```
+cd testing/mock-token && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+# PASS
+
+cd saga-iroh-core && cargo fmt --check && cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings && cargo test --features iroh-transport,mock-token
+# PASS
+```
+
+### Verified (host Android build)
+
+```
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
+export SAGA_REQUIRE_NATIVE=1
+cd android && ./gradlew assembleDebug testDebugUnitTest verifyNativeLibsInApk --no-daemon -Psaga.requireNative=true
+# BUILD SUCCESSFUL — OK: libsaga_iroh_core.so present for arm64-v8a and x86_64
+```
+
+### Verified (emulator E2E — local relay)
+
+AVDs: `Saga_Alice` / `Saga_Bob` (`sdk_gphone64_x86_64`, API 35) as `emulator-5554` / `emulator-5556`.
+Relay: `iroh-relay --dev` → `http://10.0.2.2:3340`.
+
+```
+SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
+CASE1:PASS … CASE2:PASS … CASE2b:PASS … CASE2c:PASS …
+CASE3:PASS … CASE4:PASS … CASE5:PASS … CASE6:PASS … PHASE3:PASS
+```
+
+First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled — enable ran before `Application` registered the account). After launch-then-enable (harness fix), full suite green. Screencaps under `/tmp/saga-case{2,2b,3,4,5,6}-*-ringing.png`.
+
+### Not verified / needs hardware
+
+- Real phones, Galdralag token, Nitrokey USB
+- Production relay TLS (still `test-utils` / insecure path in debug)
+
+### Known gaps before Phase 2
+
+- Phase 1.5: replace homemade mock-token wire with real `ephemeral-session` Brainpool bytes
+- No Opus / iroh-roq / SRTP media path yet
+- Release still carries `test-utils` / `mock-token` / `TEST_*` (Phase 6 hygiene)
+
+### CI run link
+
+Filled after push — see PR / Actions workflow **CI**.
 
 ---
 
