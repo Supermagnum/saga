@@ -9,22 +9,35 @@ import android.util.Log
 
 /**
  * Ensures bob, alice, and thor exist for E2E/manual testing.
- * Saga keys use each contact's phone digits (not legacy peer labels like bobpeer12).
+ *
+ * Saga key rows store the ephemeral-session long-term fingerprint (64 lowercase
+ * hex ASCII), Base64-wrapped in DATA1. Iroh dial still uses phone-digit labels.
  * Thor has no Saga key.
+ *
+ * Dev reset: this seeder deletes and re-inserts named contacts on every debug
+ * launch, so legacy phone-label key rows are replaced automatically. No Room
+ * migration is required for Contacts MIME data.
  */
 object TestContactSeeder {
     private const val TAG = "[Saga Test Contact Seeder]"
 
+    /**
+     * Fingerprints for MockIdentity::from_label (BrainpoolP384r1 default),
+     * pinned to Galdralag-firmware rev b781bf6f / mock-token v2 derivation.
+     */
+    private val FINGERPRINT_BOB = "80342e72c8388b728d66df256f8231258f250f760cd45613e34ab5d2ed9f4fa8"
+    private val FINGERPRINT_ALICE = "ee52f46cbefba6e71b8e0a727a021f9cc99e85771114ff1c0b12fcc83418458b"
+
     private data class SeedContact(
         val displayName: String,
         val phone: String,
-        /** null = no Saga key row (e.g. thor). */
-        val endpointLabel: String?
+        /** null = no Saga key row (e.g. thor). Else 64-char fingerprint hex. */
+        val fingerprintHex: String?
     )
 
     private val CONTACTS = listOf(
-        SeedContact("bob", "+15550100010", "15550100010"),
-        SeedContact("alice", "+15550100011", "15550100011"),
+        SeedContact("bob", "+15550100010", FINGERPRINT_BOB),
+        SeedContact("alice", "+15550100011", FINGERPRINT_ALICE),
         SeedContact("thor", "+15550100012", null)
     )
 
@@ -92,7 +105,6 @@ object TestContactSeeder {
     }
 
     private fun insertContact(context: Context, seed: SeedContact) {
-        val label = seed.endpointLabel
         val ops = ArrayList<ContentProviderOperation>()
         ops.add(
             ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
@@ -115,8 +127,11 @@ object TestContactSeeder {
                 .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
                 .build()
         )
-        if (label != null) {
-            val encoded = Base64.encodeToString(label.toByteArray(), Base64.NO_WRAP)
+        if (seed.fingerprintHex != null) {
+            val encoded = Base64.encodeToString(
+                seed.fingerprintHex.toByteArray(Charsets.UTF_8),
+                Base64.NO_WRAP
+            )
             ops.add(
                 ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
                     .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
@@ -129,7 +144,7 @@ object TestContactSeeder {
             context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             Log.i(
                 TAG,
-                "Seeded contact [${seed.displayName}] phone=[${seed.phone}] endpoint=[$label]"
+                "Seeded contact [${seed.displayName}] phone=[${seed.phone}] fingerprint=[${seed.fingerprintHex}]"
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to seed [${seed.displayName}]: ${e.message}")
