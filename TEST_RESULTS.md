@@ -46,8 +46,9 @@ AudioRecord/AudioTrack logged 48 kHz mono PCM16, frame 960, `ByteOrder.nativeOrd
 
 | Gate | Result |
 |------|--------|
-| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27.log`) |
-| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-run-{1..5}.log`) |
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27-rerun2.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-final-{1..5}.log`) |
+| CI | **green** https://github.com/Supermagnum/saga/actions/runs/43283426003 (`ba7946f`) |
 | Merge #27? | **Hold** — do not merge |
 
 ---
