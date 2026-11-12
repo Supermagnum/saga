@@ -2315,7 +2315,7 @@ dependencies = [
 [[package]]
 name = "iroh-roq"
 version = "0.1.0"
-source = "git+https://github.com/Supermagnum/iroh-roq?rev=408d8ccccd3c6ee6a44d7da4a960d34e0c36e971#408d8ccccd3c6ee6a44d7da4a960d34e0c36e971"
+source = "git+https://github.com/Supermagnum/iroh-roq?rev=c9b02963a1c786f7ae2788ee4c39e44c9c76b01d#c9b02963a1c786f7ae2788ee4c39e44c9c76b01d"
 dependencies = [
  "anyhow",
  "bytes",

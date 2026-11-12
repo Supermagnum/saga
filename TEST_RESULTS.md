@@ -1,14 +1,98 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 1 — iroh-roq port)
+**Last updated:** 2026-11-12 (Phase 2 Step 2 — pre-merge #23 follow-ups)
 
-**Status:** Phase 2 Step 1 — `iroh-roq` forked/ported to iroh 1.x (datagram RoQ); pinned via git rev. No Opus/SRTP pipeline yet (Step 2). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Phase 2 Step 2 — `saga-media` Opus + SRTP (Encrypted) or plain RTP (not-encrypted Iroh). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+
+---
+
+## 2026-11-12 — Phase 2 Step 2 follow-ups (LibriSpeech, STOI, CI, unsecured)
+
+### Speech fixture (LibriSpeech CC BY 4.0)
+
+| Field | Value |
+|-------|--------|
+| File | `saga-media/fixtures/speech_clip_48k.wav` |
+| Utterance | `5694-64038-0005` (`dev-clean-2`, OpenSLR 31) |
+| Transcript | HE WALKED UP AND SAYS HELLO BOYS WHAT IS IT BOSS |
+| Attribution | `fixtures/ATTRIBUTION.md` + NOTICE |
+
+espeak fixture **not kept** — LibriSpeech is the CI gate; espeak only useful as a zero-download smoke generator when OpenSLR is unreachable (do not commit).
+
+### Re-baselined speech CI gates
+
+| Test | corr | SI-SNR | Gate |
+|------|------|--------|------|
+| Tone full pipeline | 0.987 | 15.7 dB | corr ≥ 0.85, SI-SNR ≥ 15 dB |
+| LibriSpeech speech | **0.961** | **11.1 dB** | corr ≥ 0.85, SI-SNR ≥ 10 dB |
+
+### STOI (local, not CI) — pystoi MIT
+
+Speech-mode STOI at 16 kHz on the LibriSpeech clip after Opus/SRTP/JB path:
+
+| Condition | STOI |
+|-----------|------|
+| clean | **0.9312** |
+| 5% loss | **0.8847** |
+| 15% loss | **0.8436** |
+
+**Exact command (reuse in Phase 5):**
+
+```bash
+cd saga-media
+cargo test --test stoi_export -- --ignored --nocapture
+python3 scripts/stoi_eval.py \
+  --ref fixtures/speech_clip_48k.wav \
+  --deg target/stoi/deg-clean.wav \
+  --deg target/stoi/deg-5pct.wav \
+  --deg target/stoi/deg-15pct.wav \
+  --labels clean,5pct,15pct
+```
+
+Deps: `pip install pystoi soundfile numpy`. ViSQOL not used (binary unavailable); STOI chosen instead.
+
+### CI speed (saga-media)
+
+| | Wall |
+|--|------|
+| Cold (`cargo clean` then `cargo test -j 2`) | **354 s** (local; dominated by libopus cmake + dep compile) |
+| Warm (target populated, `[profile.test] opt-level = 2`) | **~6.8 s** |
+
+CI: Swatinem rust-cache `shared-key: saga-rust-host-v2` + dedicated `actions/cache` on `saga-media/target` keyed by `Cargo.lock`.
+
+### Unsecured Iroh media decision
+
+Plain RTP inside RoQ after not-encrypted resolution (QUIC still encrypts transport; no token/SRTP). Spec §5/§6 updated. Host tests in `tests/unsecured.rs` (policy, §5a decline, no silent downgrade, plain↔SRTP tag reject).
+
+---
+
+## 2026-11-12 — Phase 2 Step 2: saga-media host pipeline (initial)
+
+### Crate / stack
+
+| Item | Choice |
+|------|--------|
+| Crate | `saga-media/` (host-testable; not inside `saga-iroh-core`) |
+| Opus | `opus` **0.3.1** + `audiopus_sys` (cmake/cc from source — F-Droid-safe; same stack as iroh-roq tests). 48 kHz mono, 20 ms, VBR **32 kbps**, in-band FEC on, **DTX off**, `Application::Voip`, complexity 10 |
+| SRTP | `webrtc-srtp` **0.17.3** `ProtectionProfile::AeadAes256Gcm` |
+| RoQ | fork `c9b02963…` — `try_send_payload` (non-blocking; never `send_rtp_wait` on media path), `read_bytes`, `max_datagram_size` |
+| Keys | HKDF-SHA256 over `saga_session_key`; info = direction label + `transcript_hash`; labels `saga-srtp-caller-to-callee-v1` / `saga-srtp-callee-to-caller-v1` |
+
+### Loss / security / limits
+
+| Test | Result |
+|------|--------|
+| 5% loss + jitter/reorder | corr ≈ 0.99; JB bounded |
+| 15% loss + jitter/reorder | corr ≈ 0.77 (≥ 0.30); no panic |
+| Tamper / replay / wrong-key | counters; all wrong-key rejected |
+| Tiny `max_datagram_size` | `DatagramTooLarge`; `media_failed` |
+| Forced blocked drops | `datagram_blocked_drops` |
 
 ---
 
 ## 2026-11-12 — Phase 2 Step 1: iroh-roq → iroh 1.x
 
-- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971`
+- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971` (superseded by `c9b02963…` in Step 2)
 - Upstream draft (not opened): `docs/upstream/iroh-roq-port.md`
 - Source diff vs upstream: +118 / −48 (7 files, excl. lock)
 - Fork tests: datagram (10 + 1000), stream, opus — PASS

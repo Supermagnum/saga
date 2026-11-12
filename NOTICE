@@ -20,10 +20,28 @@ iroh and related n0 crates (iroh, iroh-base, iroh-relay, iroh-dns, …)
 iroh-roq (RTP over QUIC / RoQ; Saga fork ported to iroh 1.x)
   Upstream: https://github.com/n0-computer/iroh-roq
   Fork: https://github.com/Supermagnum/iroh-roq
-  Pinned rev: 408d8ccccd3c6ee6a44d7da4a960d34e0c36e971
+  Pinned rev: c9b02963a1c786f7ae2788ee4c39e44c9c76b01d
   Licence: MIT OR Apache-2.0
   Note: minimal port for Saga; upstream PR not opened yet — see
   docs/upstream/iroh-roq-port.md. Do not replace the pin with a branch tip.
+  Step 2 additions: try_send_rtp / try_send_payload, read_bytes, max_datagram_size.
+
+webrtc-srtp (SRTP AEAD_AES_256_GCM for saga-media)
+  crates.io: webrtc-srtp 0.17.3
+  Licence: MIT OR Apache-2.0
+
+opus / libopus (via Rust `opus` 0.3.1 + audiopus_sys; built from source)
+  Licence: BSD-3-Clause (libopus)
+  Note: F-Droid-safe (cmake/cc from source; no prebuilt blobs).
+
+LibriSpeech (CI speech fixture + local STOI / listening)
+  https://www.openslr.org/12/ (parent corpus); subset https://www.openslr.org/31/
+  Fixture: saga-media/fixtures/speech_clip_48k.wav
+    utterance 5694-64038-0005 from LibriSpeech/dev-clean-2 (OpenSLR 31)
+  Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  Cite: V. Panayotov, G. Chen, D. Povey, S. Khudanpur,
+    "Librispeech: an ASR corpus based on public domain audio books", ICASSP 2015.
+  See also saga-media/fixtures/ATTRIBUTION.md.
 
 RustCrypto and related cryptographic crates used via Galdralag / Saga
   (including but not limited to sha2, hmac, hkdf, aes-gcm, chacha20poly1305,

@@ -131,8 +131,14 @@ handshake failure on a previously-encrypted contact triggers §5a.
    downgrade case only. Connect-time cues are **structurally distinct**
    from the §5b mid-call security-loss toggle — separate prefs, separate
    code paths, separate audio assets; verify by grep, not assumption.
-5. **Media (Iroh):** Opus frames in RTP over `iroh-roq`, protected with SRTP
-   AEAD_AES_256_GCM (keys from the ephemeral-session shared secret via HKDF).
+5. **Media (Iroh):** Opus frames in RTP over `iroh-roq`. **Encrypted** calls
+   use SRTP AEAD_AES_256_GCM (keys from the ephemeral-session shared secret
+   via HKDF). **Not-encrypted** Iroh calls (after §5 step 4 / §5a continue)
+   use **plain RTP inside RoQ** — QUIC still encrypts the transport via iroh
+   endpoint keys, but without token authentication or SRTP; the UI stays
+   "Not encrypted" and must not imply protection. Never mix: once a call is
+   encrypted, a later failure takes the §5b path, never a silent switch to
+   plain RTP. If the user ends the call at the §5a modal, no media at all.
    Cellular: carrier voice path.
 6. **UI state:** `InCallService` call screen shows padlock + status text
    (§13) for the full call duration. Iroh: "Securing…" until handshake
@@ -255,8 +261,8 @@ rekeying?** Two realistic triggers, with different correct responses:
 | Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). Default profile **P384r1** (CESS preference). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
 | Transcript / KDF | HKDF-SHA256 from ECDH shared secret + ordered-EPK salt as defined by `ephemeral-session` | Not Noise; not the draft §12 table. Output retained for Phase 2: `shared_secret` + `transcript_hash` + `profile_prk` (`HandshakeOutput`) |
 | Saga channel binding | HKDF-Expand(`profile_prk`, info = `saga-iroh-channel-v1` \|\| min(EndpointId)\|\|max(EndpointId)) | **No wire change.** ephemeral-session does not bind Iroh EndpointIds; Saga derives `saga_session_key` so handshake material cannot be reused on a swapped QUIC identity pair (confused-deputy / endpoint-swap). Prevents applying a valid LT-authenticated transcript to the wrong Iroh path when LT keys are shared or confused across devices |
-| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) — Phase 2 | Master key + salt from HKDF over Phase 1.5 `HandshakeOutput` (bound session key + transcript); separate keys per direction; `Zeroize`/`ZeroizeOnDrop`. QUIC encrypts the hop; SRTP is the end-to-end layer |
-| Media framing | RTP over `iroh-roq` + SRTP | Replay via SRTP sliding window (RFC 3711); no custom nonce/replay code |
+| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) when Encrypted — Phase 2 | Master key + salt from HKDF over Phase 1.5 `HandshakeOutput` (bound session key + transcript); separate keys per direction; `Zeroize`/`ZeroizeOnDrop`. QUIC encrypts the hop; SRTP is the end-to-end layer. Not-encrypted Iroh media is plain RTP (no SRTP): transport is still QUIC-encrypted by iroh endpoint keys, but without token authentication |
+| Media framing | RTP over `iroh-roq` + SRTP (Encrypted) or plain RTP (not-encrypted Iroh) | Saga 1-byte media tag distinguishes modes (no silent mix). SRTP replay via sliding window (RFC 3711) |
 
 Cipher profile selection reuses the token's existing named-profile concept
 (`standard`, `conservative`, etc.) for *configuration*, not layering — voice
