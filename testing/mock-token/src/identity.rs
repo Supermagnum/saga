@@ -10,7 +10,7 @@ use galdr_vault::session_long_term_signing::{
 };
 use zeroize::Zeroizing;
 
-use crate::token::DEFAULT_SESSION_CURVE;
+use saga_session::DEFAULT_SESSION_CURVE;
 
 /// Vault backing size used by FakeVaultStorage in firmware tests.
 pub(crate) const VAULT_SIZE: usize = 0x120_000;

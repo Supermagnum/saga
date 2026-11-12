@@ -10,15 +10,16 @@ use ephemeral_session::{
     SessionKeys,
 };
 use galdr_core::fake_hal::FakeTrng;
+use saga_session::{
+    bind_iroh_endpoints, derive_confirmation_key, transcript_hash, HandshakeOutput,
+    InitiatorPending, SessionToken, TokenError,
+};
 use zeroize::Zeroizing;
 
-use crate::channel_bind::{bind_iroh_endpoints, transcript_hash};
-use crate::confirm::derive_confirmation_key;
 use crate::identity::{MockIdentity, LOCAL_SLOT};
-use crate::token::{HandshakeOutput, InitiatorPending, SessionToken, TokenError};
 
 #[cfg(debug_assertions)]
-use crate::token::MOCK_TOKEN_MARKER;
+use crate::MOCK_TOKEN_MARKER;
 #[cfg(debug_assertions)]
 use log::info;
 
@@ -130,11 +131,7 @@ impl SessionToken for MockSessionToken {
             let init_ephemeral_public_key = init.ephemeral_public_key.as_slice().to_vec();
             Ok((
                 init,
-                InitiatorPending {
-                    inner: session,
-                    curve,
-                    init_ephemeral_public_key,
-                },
+                InitiatorPending::from_session(session, curve, init_ephemeral_public_key),
             ))
         })
         .await
@@ -142,7 +139,7 @@ impl SessionToken for MockSessionToken {
 
     async fn initiator_finish(
         &self,
-        mut pending: InitiatorPending,
+        pending: InitiatorPending,
         response: ResponseMessage,
         peer_cert: LongTermCert,
         local_endpoint_id: &[u8],
@@ -152,9 +149,9 @@ impl SessionToken for MockSessionToken {
         let local = local_endpoint_id.to_vec();
         let remote = remote_endpoint_id.to_vec();
         with_timeout(timeout, move || {
-            let init_epk = pending.init_ephemeral_public_key.clone();
-            let keys = pending
-                .inner
+            let init_epk = pending.init_ephemeral_public_key().to_vec();
+            let mut session = pending.take_inner();
+            let keys = session
                 .complete(&response, &peer_cert)
                 .map_err(TokenError::from)?;
             let resp_epk = response.ephemeral_public_key.as_slice();

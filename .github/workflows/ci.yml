@@ -34,9 +34,17 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
+            saga-session
             saga-iroh-core
             testing/mock-token
           shared-key: saga-rust-host
+
+      - name: saga-session fmt / clippy / test
+        working-directory: saga-session
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
 
       - name: mock-token fmt / clippy / test
         working-directory: testing/mock-token
@@ -50,6 +58,7 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
+          cargo clippy --all-targets --features iroh-transport -- -D warnings
           cargo test --features iroh-transport,mock-token
 
   android:
@@ -66,8 +75,8 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
-          # CI packages x86_64 only (emulator). Release/F-Droid still build arm64+x86_64.
-          targets: x86_64-linux-android
+          # CI packages x86_64 for debug APK; also arm64 for release .so hygiene check.
+          targets: x86_64-linux-android,aarch64-linux-android
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -129,3 +138,15 @@ jobs:
             exit 1
           fi
           echo "OK: libsaga_iroh_core.so present for x86_64 (CI)"
+
+      - name: Release arm64 .so mock/dev hygiene (no mock-token)
+        working-directory: saga-iroh-core
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          cargo ndk -o /tmp/saga-ndk-release-ci -t arm64-v8a \
+            build --release --features iroh-transport
+          bash ../scripts/check-release-so.sh \
+            /tmp/saga-ndk-release-ci/arm64-v8a/libsaga_iroh_core.so

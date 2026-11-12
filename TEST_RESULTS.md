@@ -1,8 +1,39 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 1.5 confirmation MAC + pre-merge #16)
+**Last updated:** 2026-11-12 (Phase 2 Step 0 — saga-session)
 
-**Status:** Phase 1.5 — mock-token + Saga confirmation MAC after channel binding. Host vectors/negatives/confirm **PASS**. Emulator E2E (incl. Case 4b binding perturb) tracked below. Not ready to ship — needs real audio (Phase 2), release hygiene, physical Galdralag (blocked on xous-core#937).
+**Status:** Phase 2 Step 0 — production `saga-session` crate; `mock-token` is test-only. Release builds have no SessionToken backend → Iroh calls resolve to not encrypted (expected until a real token). Not ready to ship — needs real audio (Phase 2 Steps 1+), physical Galdralag (blocked on xous-core#937).
+
+---
+
+## 2026-11-12 — Phase 2 Step 0: saga-session production crate
+
+### Layout
+
+| Crate | Role |
+|-------|------|
+| `saga-session/` | `SessionToken`, `HandshakeOutput`, channel binding, confirmation MAC + stream driver |
+| `testing/mock-token/` | `MockSessionToken`, `MockIdentity`, synthetic media probe (debug/E2E) |
+| `saga-iroh-core/` | Depends on `saga-session` always; `mock-token` feature for debug/E2E only |
+
+Release Cargo features: `--features iroh-transport` (no `mock-token`, no iroh `test-utils`). Debug/E2E: `iroh-transport,mock-token`.
+
+`cargo tree -e normal --features iroh-transport`: includes `saga-session` + `ephemeral-session` + `galdr-core`/`galdr-vault` (firmware types for production handshake). **No** `mock-token`. `vsss-rs` appears via `galdr-vault` (firmware dep, not the mock).
+
+Release arm64 `.so` hygiene (`scripts/check-release-so.sh`): absent `MockSessionToken`, `saga-dev-v1`, `insecure_skip_verify`, `saga-synthetic-audio-v1`.
+
+### Expected release behaviour
+
+No production `SessionToken` backend wired yet (FakeTrng / USB token still behind `mock-token` or future Galdralag) → every Iroh call handshake fails → "not encrypted" + `call_unsecure` (and §5a when prior encrypted history). Documented; not a regression of the UX rules for when a token *is* present (debug/E2E with mock).
+
+### Emulator E2E (API 35, after move)
+
+| Case | Result | Notes |
+|------|--------|-------|
+| 1–5, 2b, 2c, 4b | PASS | Full suite `/tmp/e2e-phase2-step0.log` |
+| 6 | PASS | Suite timed out RING once (flake after Case 5); standalone re-run PASS `/tmp/e2e-case6-retry.log` |
+| Phase 3 | PASS | |
+| Handshake budget | PASS | case2 372 ms; case2b 336 ms (≤2 s target) |
 
 ---
 
