@@ -8,11 +8,12 @@ import android.util.Base64
 import android.util.Log
 
 /**
- * Ensures bob, alice, and thor exist for E2E/manual testing.
+ * Ensures bob, alice, laptop, and thor exist for E2E/manual testing.
  *
  * Saga key rows store the ephemeral-session long-term fingerprint (64 lowercase
  * hex ASCII), Base64-wrapped in DATA1. Iroh dial still uses phone-digit labels.
- * Thor has no Saga key.
+ * Thor has no Saga key (cellular-only; must never resolve to an Iroh identity).
+ * Laptop is the Linux saga-peer identity on a label unused by cellular fixtures.
  *
  * Dev reset: this seeder deletes and re-inserts named contacts on every debug
  * launch, so legacy phone-label key rows are replaced automatically. No Room
@@ -27,6 +28,7 @@ object TestContactSeeder {
      */
     private val FINGERPRINT_BOB = "80342e72c8388b728d66df256f8231258f250f760cd45613e34ab5d2ed9f4fa8"
     private val FINGERPRINT_ALICE = "ee52f46cbefba6e71b8e0a727a021f9cc99e85771114ff1c0b12fcc83418458b"
+    private val FINGERPRINT_LAPTOP = "43676d156721e149e722ad891a441287df5dcbe66f8daf155f1ba0168274d471"
 
     private data class SeedContact(
         val displayName: String,
@@ -38,6 +40,8 @@ object TestContactSeeder {
     private val CONTACTS = listOf(
         SeedContact("bob", "+15550100010", FINGERPRINT_BOB),
         SeedContact("alice", "+15550100011", FINGERPRINT_ALICE),
+        // Linux saga-peer; unused by cellular fixtures (thor stays +15550100012).
+        SeedContact("laptop", "+15550100020", FINGERPRINT_LAPTOP),
         SeedContact("thor", "+15550100012", null)
     )
 

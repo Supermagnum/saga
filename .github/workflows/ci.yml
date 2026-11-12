@@ -41,7 +41,8 @@ jobs:
             saga-iroh-core
             saga-media
             testing/mock-token
-          shared-key: saga-rust-host-v2
+            tools/saga-peer
+          shared-key: saga-rust-host-v4
           cache-targets: true
 
       # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
@@ -52,6 +53,15 @@ jobs:
           key: saga-media-target-${{ runner.os }}-${{ hashFiles('saga-media/Cargo.lock') }}-test-opt2
           restore-keys: |
             saga-media-target-${{ runner.os }}-
+
+      # saga-peer reuses saga-media/iroh; keep its target warm separately (WAV-only CI; no live-audio).
+      - name: Cache saga-peer target
+        uses: actions/cache@v4
+        with:
+          path: tools/saga-peer/target
+          key: saga-peer-target-${{ runner.os }}-${{ hashFiles('tools/saga-peer/Cargo.lock') }}-test-opt2
+          restore-keys: |
+            saga-peer-target-${{ runner.os }}-
 
       - name: saga-session fmt / clippy / test
         working-directory: saga-session
@@ -81,6 +91,14 @@ jobs:
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
           cargo clippy --all-targets --features iroh-transport -- -D warnings
           cargo test --features iroh-transport,mock-token
+
+      # Default features only (no live-audio/cpal). [profile.test] opt-level=2 for Opus speed.
+      - name: saga-peer fmt / clippy / host tests
+        working-directory: tools/saga-peer
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --offline || cargo test
 
   android:
     name: android (assembleDebug + unit tests + native .so)

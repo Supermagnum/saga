@@ -37,7 +37,7 @@ has_name() {
   echo "$DATA" | rg -q "data1=$1, mimetype=vnd.android.cursor.item/name"
 }
 
-for name in bob alice; do
+for name in bob alice laptop; do
   if ! has_name "$name"; then
     echo "FAIL: contact [$name] not found"
     FAIL=1
