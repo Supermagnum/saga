@@ -9,6 +9,7 @@ import org.saga.R
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
+import org.saga.call.PadlockDisplayState
 import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.databinding.ActivityInCallBinding
@@ -70,6 +71,14 @@ class SagaInCallActivity : AppCompatActivity() {
     private fun maybePlayConnectCue(snapshot: org.saga.call.CallSecuritySnapshot) {
         if (connectCuePlayed) return
         if (!snapshot.playSecureCue && !snapshot.playUnsecureCue) return
+        // Iroh KEY_NOT_FOUND before handshake settles can be transient (phone lookup keys
+        // need Contacts). Do not consume the one-shot cue until Encrypted / true unsecure.
+        if (snapshot.playUnsecureCue && !snapshot.playSecureCue &&
+            snapshot.padlockState == PadlockDisplayState.KEY_NOT_FOUND &&
+            intent.getStringExtra(EXTRA_ORIGIN) == CallOrigin.IROH.name
+        ) {
+            return
+        }
         CallSecurityPresenter.applyConnectSnapshot(applicationContext, snapshot)
         connectCuePlayed = true
     }
