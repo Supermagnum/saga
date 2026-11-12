@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
-iroh-transport = ["dep:iroh", "dep:tokio"]
+iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq"]
 # Debug / E2E only: software SessionToken + local insecure relay TLS + BLAKE3 dev labels.
 mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils"]
 
@@ -18,6 +18,8 @@ mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils
 jni = "0.21"
 log = "0.4"
 saga-session = { path = "../saga-session" }
+# RoQ media framing (datagrams). Fork ported to Saga's iroh 1.x pin — see docs/upstream/iroh-roq-port.md.
+iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "408d8ccccd3c6ee6a44d7da4a960d34e0c36e971", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

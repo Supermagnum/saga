@@ -12,6 +12,9 @@ use iroh::tls::CaTlsConfig;
 #[cfg(feature = "mock-token")]
 use iroh::SecretKey;
 use iroh::{endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
+// Linked for Phase 2 media (Step 2+). Keep the crate in the release tree via git rev.
+#[allow(unused_imports)]
+use iroh_roq::ALPN as ROQ_ALPN;
 use log::{error, info, warn};
 #[cfg(feature = "mock-token")]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

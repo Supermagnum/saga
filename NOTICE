@@ -17,6 +17,14 @@ pin-policy, and their in-tree companions)
 iroh and related n0 crates (iroh, iroh-base, iroh-relay, iroh-dns, …)
   Licence: MIT OR Apache-2.0 (per crate)
 
+iroh-roq (RTP over QUIC / RoQ; Saga fork ported to iroh 1.x)
+  Upstream: https://github.com/n0-computer/iroh-roq
+  Fork: https://github.com/Supermagnum/iroh-roq
+  Pinned rev: 408d8ccccd3c6ee6a44d7da4a960d34e0c36e971
+  Licence: MIT OR Apache-2.0
+  Note: minimal port for Saga; upstream PR not opened yet — see
+  docs/upstream/iroh-roq-port.md. Do not replace the pin with a branch tip.
+
 RustCrypto and related cryptographic crates used via Galdralag / Saga
   (including but not limited to sha2, hmac, hkdf, aes-gcm, chacha20poly1305,
   elliptic-curve, ecdsa, bp256, bp384, zeroize, subtle, digest, …)
