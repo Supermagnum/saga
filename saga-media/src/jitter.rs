@@ -227,11 +227,7 @@ impl<C: Clock> JitterBuffer<C> {
         if let Some(prev) = self.last_arrival {
             let ia = now.saturating_duration_since(prev);
             let expected = FRAME_DUR;
-            let dev = if ia > expected {
-                ia - expected
-            } else {
-                expected - ia
-            };
+            let dev = ia.abs_diff(expected);
             let dev_ms = u32::try_from(dev.as_millis()).unwrap_or(u32::MAX);
             if self.jitter_samples.len() >= JITTER_HIST {
                 self.jitter_samples.remove(0);
