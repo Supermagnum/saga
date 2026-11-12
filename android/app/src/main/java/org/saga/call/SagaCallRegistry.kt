@@ -95,11 +95,21 @@ object SagaCallRegistry {
         return peer
     }
 
-    fun initialSnapshot(origin: CallOrigin, peerId: String = ""): CallSecuritySnapshot {
+    fun initialSnapshot(
+        origin: CallOrigin,
+        peerId: String = "",
+        context: android.content.Context? = null
+    ): CallSecuritySnapshot {
         if (origin == CallOrigin.CELLULAR) {
             return CallSecurityStateResolver.resolve(CallOrigin.CELLULAR)
         }
-        val hasKey = ContactKeyStore.hasResolvableKey(peerId)
+        // Prefer Contacts-aware lookup; the no-Context overload only accepts IrohNodeId shape
+        // and would treat phone lookup keys as KEY_NOT_FOUND (premature call_unsecure).
+        val hasKey = if (context != null) {
+            ContactKeyStore.hasResolvableKey(context, peerId)
+        } else {
+            ContactKeyStore.hasResolvableKey(peerId)
+        }
         return if (hasKey) {
             CallSecurityStateResolver.resolve(
                 origin = CallOrigin.IROH,
