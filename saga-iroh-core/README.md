@@ -31,17 +31,18 @@ CI sets `CI=true` so Gradle builds **x86_64 only** with `[profile.ci]`; release 
 |---------|-------------|
 | *(default)* | Native thread stub (short sleep, no QUIC) |
 | `iroh-transport` | Real `iroh::Endpoint` with ALPN `saga/voice/1`, accept loop, session map |
-| `mock-token` | Real `ephemeral-session` handshake (Brainpool + ECDSA), Saga confirmation MAC (§12), media round-trip probe (E2E). Needs `galdr-core`/`galdr-vault` for FakeTrng + vault LT keys — not types-only; see root `NOTICE`. |
+| `mock-token` | Thin wrappers around `saga-session` + Galdr FakeTrng (E2E / debug). Production session logic lives in `saga-session` (always linked). See root `NOTICE`. |
 
-### ephemeral-session pin
+### Session crypto
 
-`testing/mock-token` depends on Galdralag-firmware via git **rev**
+- **`saga-session`**: production Brainpool handshake, confirmation MAC (§12), channel binding, media AEAD. Always compiled into the `.so`.
+- **`testing/mock-token`**: debug-only Galdr FakeTrng + identity/media helpers. Linked only with `--features mock-token`.
+
+`testing/mock-token` / `saga-session` pin Galdralag-firmware via git **rev**
 `b781bf6fa5ccf8700a5fb061583c31cfa00241a1` (**2026-10-22**), never a branch tip.
-Licence: **GPL-3.0** (compatible with Saga AGPL-3.0). Host and Android
-(`aarch64` / `x86_64-linux-android`) builds of the crate succeed with
-`galdr-core` feature `test-hal` for the software mock.
+Licence: **GPL-3.0** (compatible with Saga AGPL-3.0).
 
-The `iroh` dependency enables `test-utils` so E2E can use a **local HTTP dev relay** with `CaTlsConfig::insecure_skip_verify()`. Release builds must use public relays with normal TLS — do not ship the test relay path to production.
+The `iroh` dependency enables `test-utils` only under `mock-token` so E2E can use a **local HTTP dev relay** with `CaTlsConfig::insecure_skip_verify()`. Release builds (`iroh-transport` only) must not ship the test-relay path.
 
 Toolchain: root [`rust-toolchain.toml`](../rust-toolchain.toml). Android NDK is pinned via `ndkVersion` in `android/app/build.gradle.kts`. CI sets `SAGA_REQUIRE_NATIVE=1` so a failed `cargo ndk` build fails the job (no silent stub).
 

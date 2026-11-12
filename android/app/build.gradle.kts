@@ -62,6 +62,15 @@ fun sagaCargoProfile(): String {
     return if (sagaIsReleaseRequested()) "release" else "ci"
 }
 
+/**
+ * Cargo features for native lib.
+ * Release: iroh-transport only (no mock-token / test-utils).
+ * Debug / CI: iroh-transport,mock-token for E2E SessionToken + local relay TLS.
+ */
+fun sagaCargoFeatures(): String {
+    return if (sagaIsReleaseRequested()) "iroh-transport" else "iroh-transport,mock-token"
+}
+
 android {
     namespace = "org.saga"
     compileSdk = 35
@@ -118,7 +127,7 @@ tasks.register<Exec>("cargoNdkBuild") {
         cmd += "-t"
         cmd += abi
     }
-    cmd += listOf("build", "--profile", profile, "--features", "iroh-transport,mock-token")
+    cmd += listOf("build", "--profile", profile, "--features", sagaCargoFeatures())
     commandLine(cmd)
     val requireNative = sagaRequireNative()
     isIgnoreExitValue = !requireNative

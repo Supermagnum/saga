@@ -1,0 +1,23 @@
+[package]
+name = "saga-session"
+version = "0.1.0"
+edition = "2021"
+description = "Saga SessionToken trait, HandshakeOutput, channel binding, and confirmation over Iroh streams"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+async-trait = "0.1"
+hkdf = "0.12"
+hmac = "0.12"
+log = "0.4"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }
+zeroize = { version = "1", features = ["derive"] }
+
+# Pinned Galdralag-firmware ephemeral-session (never a branch tip).
+# Rev b781bf6fa5ccf8700a5fb061583c31cfa00241a1 — 2026-10-22. Licence: GPL-3.0.
+ephemeral-session = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util", "time"] }

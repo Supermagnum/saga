@@ -2544,11 +2544,8 @@ dependencies = [
  "galdr-core",
  "galdr-vault",
  "heapless",
- "hkdf 0.12.4",
- "hmac 0.12.1",
  "log",
- "sha2 0.10.9",
- "subtle",
+ "saga-session",
  "tokio",
  "zeroize",
 ]
@@ -3789,7 +3786,23 @@ dependencies = [
  "jni 0.21.1",
  "log",
  "mock-token",
+ "saga-session",
  "tokio",
+]
+
+[[package]]
+name = "saga-session"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "ephemeral-session",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "log",
+ "sha2 0.10.9",
+ "subtle",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
