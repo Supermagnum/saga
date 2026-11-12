@@ -14,8 +14,6 @@ use iroh::SecretKey;
 use iroh::{endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
 use iroh_roq::ALPN as ROQ_ALPN;
 use log::{error, info, warn};
-#[cfg(not(feature = "mock-token"))]
-use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 
@@ -592,6 +590,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
 
     #[cfg(not(feature = "mock-token"))]
     let (handshake, handshake_output, roq) = {
+        use tokio::io::AsyncWriteExt;
         let (mut send, _recv) = connection
             .open_bi()
             .await
