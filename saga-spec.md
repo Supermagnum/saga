@@ -11,7 +11,7 @@ device through its own `InCallService`. Encrypted Saga-to-Saga calls use
 **Iroh only** (dial-by-public-key, QUIC, built-in NAT traversal/relay
 fallback): no SIP registrar, no Flexisip, no signaling server. The
 Galdralag token handshake runs as an early exchange over the Iroh
-connection; media is Opus over `iroh-roq` with frame-level AEAD.
+connection; media is Opus over `iroh-roq` with SRTP AEAD_AES_256_GCM.
 
 Plain **cellular** calls still work: the carrier's telephony
 `ConnectionService` originates and transports them; Saga renders them in
@@ -49,9 +49,11 @@ modal. Encryption is never required to place a call.
 
 ## 3. Non-goals (this iteration)
 
-- No in-call rekeying / ratcheting — one handshake per call; SRTP replay
-  window limits single-key call duration to roughly 15–20 minutes at typical
-  VoIP rates (see §8).
+- No in-call rekeying / ratcheting — one handshake per call (see §8). SRTP
+  replay protection uses a sliding window (RFC 3711 §3.3.2); it is **not** a
+  call-length ceiling. The pre-defined transform master-key lifetime is
+  2⁴⁸ SRTP packets per stream (RFC 3711 §9.2 / default parameters) — far
+  beyond practical call duration at VoIP rates.
 - No group calls in v1 core flow (§1–§13 describe two-party calling only);
   group calling and decentralized routing options are captured as a
   forward-looking design in §14 but not part of this iteration's build.
@@ -129,8 +131,9 @@ handshake failure on a previously-encrypted contact triggers §5a.
    downgrade case only. Connect-time cues are **structurally distinct**
    from the §5b mid-call security-loss toggle — separate prefs, separate
    code paths, separate audio assets; verify by grep, not assumption.
-5. **Media (Iroh):** Opus frames encrypted via negotiated AEAD (default:
-   ChaCha20-Poly1305) over `iroh-roq`. Cellular: carrier voice path.
+5. **Media (Iroh):** Opus frames in RTP over `iroh-roq`, protected with SRTP
+   AEAD_AES_256_GCM (keys from the ephemeral-session shared secret via HKDF).
+   Cellular: carrier voice path.
 6. **UI state:** `InCallService` call screen shows padlock + status text
    (§13) for the full call duration. Iroh: "Securing…" until handshake
    completes, then "Encrypted" or downgrade states. Cellular: always neutral
@@ -249,10 +252,10 @@ rekeying?** Two realistic triggers, with different correct responses:
 
 | Stage | Primitive | Notes |
 |---|---|---|
-| Key agreement | Token: ephemeral ECDH, long-term key signs ephemeral offer | On-device TRNG, forward secret per call |
-| Transcript binding | HKDF `info` = hash of handshake transcript | Hand-rolled 3-message handshake, not full Noise — revisit if session shapes grow (see §7.4) |
-| Session cipher | ChaCha20-Poly1305 (default profile) | Per-RTP-frame, nonce derived from sequence number |
-| Media framing | SRTP | Handles replay protection, per-packet IV derivation |
+| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
+| Transcript / KDF | HKDF-SHA256 from ECDH shared secret + transcript binding as defined by `ephemeral-session` | Not Noise; not the draft §12 table |
+| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) | Master key + salt from HKDF over the ephemeral-session shared secret; transcript hash in `info`; separate keys per direction; `zeroize` on drop. QUIC encrypts the hop; SRTP is the end-to-end layer |
+| Media framing | RTP over `iroh-roq` + SRTP | Replay via SRTP sliding window (RFC 3711); no custom nonce/replay code |
 
 Cipher profile selection reuses the token's existing named-profile concept
 (`standard`, `conservative`, etc.) for *configuration*, not layering — voice
@@ -274,21 +277,23 @@ Galdralag-firmware's cryptographic dependency policy draws everything from
 audited RustCrypto/dalek crates, nothing implemented in-tree. Saga adopts
 the same crates for the overlapping needs, rather than picking equivalents:
 
-| Crate | Used for in Saga | Matches firmware's use |
+| Crate / component | Used for in Saga | Matches firmware's use |
 |---|---|---|
-| `x25519-dalek` | ECDH half of the handshake | Same crate, same curve (X25519, RFC 7748) |
-| `ed25519-dalek` | Signing the ephemeral offer with the long-term token key | Same crate, same signature scheme (RFC 8032) |
-| `chacha20poly1305` | Per-frame AEAD for SRTP media and the group-call frame-encryption layer (§14) | Same crate, same cipher (RFC 8439) |
-| `hkdf` | Session key derivation from the ECDH shared secret + transcript | Same crate |
-| `blake3` | Transcript hashing / integrity binding | Same crate |
+| Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Same crate / same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
+| `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation | Same crates as firmware |
+| `aes-gcm` (via `webrtc-srtp` AES-256-GCM profile) | SRTP media AEAD | Firmware already lists `aes-gcm`; media uses it through `webrtc-srtp`, not a hand-rolled AEAD |
+| `chacha20poly1305` | Reserved for §14 group-call frame encryption (SFrame-style), not two-party SRTP | Same crate as firmware |
+| `blake3` | Where firmware/CESS uses BLAKE3 (e.g. outer-envelope labels); not a substitute for Brainpool ECDSA | Same crate |
 | `zeroize` | Clearing session keys and derived secrets from memory on drop | Same crate, same pattern (`Zeroize`/`ZeroizeOnDrop`) |
-| `subtle` | Constant-time comparison anywhere Saga compares secret-derived values (e.g. transcript MAC verification) | Same crate (`ConstantTimeEq`) |
+| `subtle` | Constant-time comparison anywhere Saga compares secret-derived values | Same crate (`ConstantTimeEq`) |
 
-`aes-gcm`, `sha2`, `sha3`, `blake2`, `pbkdf2`, `hmac`, `p256`, `p384` are in
-the firmware's dependency set but not currently needed on the Saga side —
-listed here only so a future cipher-profile choice (e.g. matching a
-`conservative` or Brainpool-based token profile) doesn't introduce a new
-crate where one is already vetted and in use.
+Do **not** use `x25519-dalek` / `ed25519-dalek` for the Galdralag/Nitrokey
+handshake path — the firmware protocol is Brainpool + ECDSA only. Mock-token
+must speak the same `InitMessage`/`ResponseMessage` bytes (Phase 1.5).
+
+`sha3`, `blake2`, `pbkdf2`, `hmac`, `p256`, `p384` remain in the firmware set
+for other profiles; introduce them on the Saga side only when a named cipher
+profile requires them.
 
 `vsss-rs` (Shamir) is a firmware/vault concern, not a calling-app concern —
 excluded from Saga's dependency list unless a future feature needs the phone
@@ -298,8 +303,9 @@ app itself to handle key shares.
 
 | Crate | Used for | Why not self-rolled |
 |---|---|---|
-| `webrtc-srtp` / `webrtc` | RTP/SRTP packet framing, replay protection, per-packet IV derivation | Getting SRTP framing subtly wrong by hand is a known footgun; use the existing pure-Rust implementation |
-| `iroh` | Decentralized-mode transport (§14.4): NAT traversal, relay fallback, dial-by-public-key | Solves QUIC/NAT-traversal/relay correctly; not something to reimplement |
+| `webrtc-srtp` | RTP/SRTP packet framing, replay protection, per-packet IV (AES-256-GCM profile) | Getting SRTP framing subtly wrong by hand is a known footgun; use the existing pure-Rust implementation |
+| `iroh` (1.x) | Dial-by-public-key, QUIC, NAT traversal / relay | Solves transport correctly; not something to reimplement |
+| `iroh-roq` (fork/port to iroh 1.x) | RTP-over-QUIC media flows (RoQ semantics + ALPN) | Prefer n0's RoQ crate; port kept minimal for upstreaming — do not invent a parallel framing stack |
 
 ### 7.3 Explicitly cut
 
@@ -311,25 +317,14 @@ app itself to handle key shares.
   redundant, harder-to-audit surface this design criteria exists to avoid.
 - Any bespoke SRTP, ICE, or DTLS code — covered by `webrtc`/`webrtc-srtp`.
 
-### 7.4 Open item superseding §12
+### 7.4 §12 superseded
 
-**§12's 3-message handshake format was drafted before this repository was
-located and is very likely redundant.** Galdralag-firmware already defines
-and tests an authenticated ephemeral ECDH session protocol with its own
-wire format (`docs/EPHEMERAL_SESSION.md`, crate `ephemeral-session`). The
-minimum-self-rolled rule means Saga should transport *that* protocol's
-messages over Iroh rather than defining a new one:
-
-- [ ] Read `docs/EPHEMERAL_SESSION.md` and the `ephemeral-session` crate
-      directly; confirm whether its wire format already includes transcript
-      confirmation and cipher-profile negotiation (§12's messages 2–3), or
-      whether Saga still needs a thin wrapper for those two things.
-- [ ] If the firmware's protocol covers it end-to-end, retire §12 in favor
-      of a reference to that protocol rather than maintaining a parallel
-      spec.
-- [ ] If a wrapper is still needed, keep it to the smallest possible
-      addition (e.g. just the cipher-profile-ack field), not a rewrite of
-      the handshake itself.
+**§12's draft 3-message CBOR/X25519 table is retired.** Canonical handshake
+is Galdralag-firmware `docs/EPHEMERAL_SESSION.md` / crate `ephemeral-session`
+(Brainpool + ECDSA `InitMessage` / `ResponseMessage`). Saga transports those
+bytes over Iroh. Media cipher choice (SRTP AES-256-GCM) is negotiated or
+fixed outside that handshake as needed; do not reinvent the token session
+protocol.
 
 ## 8. Decisions (formerly open questions)
 
@@ -387,10 +382,15 @@ Blake3), AES, ALU, TRNG, and SDMA. Transport is USB High Speed over USB-C.
 
 - [x] **v1: no in-call rekeying** — one ephemeral ECDH handshake yields one
   session key for the entire call (§3). Mid-call path change gets a bounded
-  re-handshake (§5b), not periodic rekey. Known ceiling: the SRTP replay
-  window (~2¹⁵ frames) imposes a practical limit of roughly 15–20 minutes at
-  typical VoIP packet rates on a single key; accept for v1, revisit in v2 if
-  long-call use cases matter.
+  re-handshake (§5b), not periodic rekey.
+- [x] **SRTP lifetime (RFC 3711 corrected):** the replay list is a **sliding
+  window** for detecting replays (RFC 3711 §3.3.2). The ~2¹⁵ figure in the
+  ROC/index discussion is about receiver synchronization robustness under
+  extreme loss/reordering, **not** a key lifetime. Default master-key
+  lifetime is **2⁴⁸ SRTP packets** per stream (RFC 3711 §9.2). At 50
+  packets/s that is far longer than any practical call — **do not implement
+  a 15–20 minute single-key call-length ceiling.** Revisit only if a future
+  profile shortens the lifetime or long multi-day sessions appear.
 
 ### Linux peer scope
 
@@ -516,23 +516,21 @@ Played once per call when security state resolves (§5 step 4). Distinct from
 §5b mid-call warning audio and prefs (`saga_mid_call_security` vs connect
 cue code in `org.saga.security.connect`).
 
-## 12. Handshake wire format
+## 12. Handshake wire format (superseded draft)
 
-**Carrier:** Galdralag `ephemeral-session` messages over the Iroh connection
-as an early exchange after QUIC establishment — not SIP `INFO`/`MESSAGE`.
-Message content and order follow `docs/EPHEMERAL_SESSION.md` in
-Galdralag-firmware (§7.4). Only the transport changed.
+**Canonical:** Galdralag `ephemeral-session` over Iroh after QUIC
+establishment — `InitMessage` / `ResponseMessage` as specified in
+Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4). Only the transport
+is Saga-specific.
 
-The draft 3-message CBOR format below is **superseded** if the firmware
-protocol covers transcript confirmation and cipher-profile negotiation
-end-to-end — prefer the firmware wire format and retire this table once
-confirmed:
+The historical draft table below is **retired** (kept only so old notes
+remain searchable). Do not implement it:
 
 | # | Direction | Fields | Purpose |
 |---|---|---|---|
-| 1 | A -> B | `version:u8`, `ephemeral_pubkey`, `signature`, `nonce_a:16B` | Offer |
-| 2 | B -> A | `ephemeral_pubkey`, `signature`, `nonce_b:16B`, `profile_choice:u8` | Counter-offer |
-| 3 | A -> B | `transcript_mac:32B` | Mutual confirmation |
+| ~~1~~ | ~~A -> B~~ | ~~`version:u8`, `ephemeral_pubkey`, `signature`, `nonce_a:16B`~~ | ~~Offer~~ |
+| ~~2~~ | ~~B -> A~~ | ~~`ephemeral_pubkey`, `signature`, `nonce_b:16B`, `profile_choice:u8`~~ | ~~Counter-offer~~ |
+| ~~3~~ | ~~A -> B~~ | ~~`transcript_mac:32B`~~ | ~~Mutual confirmation~~ |
 
 Mismatch or timeout → unencrypted outcome per §5 step 4 (with universal
 audio cue; §5a modal if prior encrypted history).
@@ -549,7 +547,7 @@ calls.
 | **Encryption possible** | **Iroh call only.** Peer's key resolves; handshake in progress | Open padlock — [`icons/open.svg`](icons/open.svg) |
 | **Encrypted** | **Iroh call only.** Handshake completed, session key active | Closed padlock — [`icons/locked.svg`](icons/locked.svg) |
 | **Key not found** | Cellular call (**always**); or Iroh call with no resolvable key / never-encrypted handshake failure | [`icons/key-error.svg`](icons/key-error.svg) |
-| **Downgraded (warning)** | **Iroh call only.** Key resolves or prior encrypted history, handshake failed | Broken-padlock — **not yet in `icons/`**; plus §5a modal + `call_unsecure.wav` |
+| **Downgraded (warning)** | **Iroh call only.** Key resolves or prior encrypted history, handshake failed | Broken-padlock — [`icons/broken.svg`](icons/broken.svg); plus §5a modal + `call_unsecure.wav` |
 
 **Cellular rule:** never show open/closed padlock on a cellular-origin call,
 even if the contact has a known Galdralag key from prior Iroh calls —
@@ -590,9 +588,9 @@ Messenger:
 ### 14.2 Mesh vs. relay threshold
 
 - **Small groups (roughly ≤4–5 participants):** full mesh, no relay. Each
-  device runs the §12 pairwise handshake with every other participant
-  (O(N²) handshakes) and sends/receives N−1 direct SRTP streams. No new
-  key-management scheme needed — pure extension of the two-party design.
+  device runs the ephemeral-session pairwise handshake with every other
+  participant (O(N²) handshakes) and sends/receives N−1 direct SRTP streams.
+  No new key-management scheme needed — pure extension of the two-party design.
 - **Larger groups:** O(N²) handshakes/bandwidth stop scaling; a relay
   (SFU-equivalent) is needed. Media stays opaque to the relay via the
   frame-level encryption layer above; the token's role stays pairwise
@@ -662,12 +660,13 @@ hardware token or real audio device is involved.
 ### 15.1 Mock token — scope and enforcement
 
 The mock token implements the same `ephemeral-session` wire format the real
-Galdralag firmware defines (§7.4) — same message shapes, same
-`x25519-dalek`/`ed25519-dalek` primitives — but backed by an in-memory
-software keypair instead of hardware-backed TRNG and secure storage. It
-exists to exercise the handshake, managed `ConnectionService` /
-`InCallService` lifecycle, and encrypted media pipeline on two emulators
-without physical tokens.
+Galdralag firmware defines (§7.4) — same `InitMessage`/`ResponseMessage`
+bytes, same Brainpool + ECDSA primitives — but backed by an in-memory
+software keypair instead of hardware-backed TRNG and secure storage.
+(Phase 1.5 replaces any temporary homemade mock layout.) It exists to
+exercise the handshake, managed `ConnectionService` / `InCallService`
+lifecycle, and encrypted media pipeline on two emulators without physical
+tokens.
 
 Scope is enforced at build time, not by convention:
 
