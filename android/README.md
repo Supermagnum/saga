@@ -13,12 +13,15 @@ gradle wrapper --gradle-version 8.11.1   # once
 
 `preBuild` runs `cargo ndk` in [`../saga-iroh-core`](../saga-iroh-core).
 
-- **Release (`assembleRelease` / `bundleRelease` / …):** native build ALWAYS
+- **Release (`assembleRelease` / `bundleRelease` / …):** cargo `--profile release`
+  (LTO + `codegen-units=1`), both `arm64-v8a` and `x86_64`. Native build ALWAYS
   required. Missing `libsaga_iroh_core.so` fails the build. Cannot be disabled
   by flags.
-- **Debug + CI / `-Psaga.requireNative=true` / `SAGA_REQUIRE_NATIVE=1`:** same
-  fail-hard behaviour. Use `./gradlew verifyNativeLibsInApk` to assert the
-  debug APK packages the `.so`.
+- **Debug / CI:** cargo `--profile ci` (inherits release, `lto=false`,
+  `codegen-units=16`). Local debug packages both ABIs; GitHub Actions (`CI=true`)
+  packages **x86_64 only**. Override with `-Psaga.abis=…` or `SAGA_NDK_ABIS`.
+- **Debug + CI / `-Psaga.requireNative=true` / `SAGA_REQUIRE_NATIVE=1`:** fail-hard
+  if the native `.so` is missing. Use `./gradlew verifyNativeLibsInApk`.
 - **Local debug only (no flags):** if `cargo-ndk` is missing, the APK may still
   build and fall back to `StubIrohCallSession`, with a loud Gradle error-level
   warning. Never use that path for release.
