@@ -291,9 +291,7 @@ async fn handle_inbound_connection(conn: Connection) {
                     let key = *output.saga_session_key;
                     // mock-token builds only: short hash prefix for E2E key equality checks.
                     let (a, b) = output.session_key_debug_prefix();
-                    info!(
-                        "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
-                    );
+                    info!("[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}");
                     let media_ok = read_media_round_trip(&mut recv, &key, "responder")
                         .await
                         .unwrap_or(false);
