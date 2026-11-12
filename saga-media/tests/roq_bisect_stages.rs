@@ -13,9 +13,7 @@
 mod common;
 
 use common::{linked_pipelines, tone_pcm};
-use saga_media::{
-    signal_correlation, signal_snr_db, OpusDecoder, OpusEncoder, FRAME_SAMPLES,
-};
+use saga_media::{signal_correlation, signal_snr_db, OpusDecoder, OpusEncoder, FRAME_SAMPLES};
 
 fn corr_snr(a: &[i16], b: &[i16]) -> (f64, f64) {
     let n = a.len().min(b.len());
