@@ -270,10 +270,32 @@ async fn handle_inbound_connection(conn: Connection) {
     let (handshake, session_key, media_round_trip_ok) = match conn.accept_bi().await {
         Ok((mut send, mut recv)) => {
             let identity = MockIdentity::from_label(&local_identity_label());
-            let outcome =
-                run_responder(&identity, force_handshake_fail(), &mut recv, &mut send).await;
+            let Ok(ep) = bind_shared_endpoint() else {
+                warn!("inbound mock-token: local endpoint unavailable");
+                conn.close(0u32.into(), b"saga no local eid");
+                return;
+            };
+            let local_eid = *ep.id().as_bytes();
+            let remote_eid = *conn.remote_id().as_bytes();
+            let outcome = run_responder(
+                &identity,
+                &local_eid,
+                &remote_eid,
+                force_handshake_fail(),
+                &mut recv,
+                &mut send,
+            )
+            .await;
             match outcome {
-                HandshakeOutcome::Encrypted { session_key: key } => {
+                HandshakeOutcome::Encrypted { output } => {
+                    let key = *output.saga_session_key;
+                    #[cfg(debug_assertions)]
+                    {
+                        let (a, b) = output.session_key_debug_prefix();
+                        info!(
+                            "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
+                        );
+                    }
                     let media_ok = read_media_round_trip(&mut recv, &key, "responder")
                         .await
                         .unwrap_or(false);
@@ -475,16 +497,28 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("iroh open_bi failed: {e}"))?;
         let identity = MockIdentity::from_label(&local_identity_label());
+        // peer_id may be a hex EndpointId; map back to phone-digit label for LT keys.
+        let peer_label = dev_label_for_endpoint(&remote).unwrap_or_else(|| peer_id.to_string());
+        let local_eid = *endpoint.id().as_bytes();
+        let remote_eid = *connection.remote_id().as_bytes();
         let outcome = run_initiator(
             &identity,
-            peer_id,
+            &peer_label,
+            &local_eid,
+            &remote_eid,
             force_handshake_fail(),
             &mut recv,
             &mut send,
         )
         .await;
         match outcome {
-            HandshakeOutcome::Encrypted { session_key: key } => {
+            HandshakeOutcome::Encrypted { output } => {
+                let key = *output.saga_session_key;
+                #[cfg(debug_assertions)]
+                {
+                    let (a, b) = output.session_key_debug_prefix();
+                    info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
+                }
                 let media_ok = send_media_round_trip(&mut send, &key)
                     .await
                     .unwrap_or(false);
