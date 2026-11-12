@@ -131,7 +131,7 @@ pub fn start_media(
                         }
                         ticks = ticks.wrapping_add(1);
                         // ~2 s @ 20 ms: surface SRTP/PLC health for RoQ bisect.
-                        if ticks % 100 == 0 {
+                        if ticks.is_multiple_of(100) {
                             let s = p.counters.snapshot();
                             info!(
                                 "[Saga Media] counters session=[{sid}] sent={} played={} plc={} \
