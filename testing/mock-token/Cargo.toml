@@ -3,18 +3,27 @@ name = "mock-token"
 version = "0.1.0"
 edition = "2021"
 description = "Software mock Galdralag token for Saga E2E (ephemeral-session wire format)"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
+async-trait = "0.1"
 blake3 = "1"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+heapless = { version = "0.9", default-features = false }
 hkdf = "0.12"
 log = "0.4"
-rand = "0.8"
 sha2 = "0.10"
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }
+zeroize = { version = "1", features = ["derive"] }
 
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+# Pinned Galdralag-firmware ephemeral-session stack (never a branch tip).
+# Rev b781bf6fa5ccf8700a5fb061583c31cfa00241a1 — 2026-10-22.
+# Licence: GPL-3.0 (compatible with Saga AGPL-3.0 as a stronger copyleft peer).
+ephemeral-session = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1" }
+galdr-core = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-core", features = ["test-hal"] }
+galdr-vault = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-vault" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util", "time"] }
+hex = "0.4"
+serde_json = "1"
