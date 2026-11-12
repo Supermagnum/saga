@@ -41,7 +41,8 @@ jobs:
             saga-iroh-core
             saga-media
             testing/mock-token
-          shared-key: saga-rust-host-v2
+            tools/saga-peer
+          shared-key: saga-rust-host-v3
           cache-targets: true
 
       # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
@@ -81,6 +82,13 @@ jobs:
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
           cargo clippy --all-targets --features iroh-transport -- -D warnings
           cargo test --features iroh-transport,mock-token
+
+      - name: saga-peer fmt / clippy / host tests
+        working-directory: tools/saga-peer
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
 
   android:
     name: android (assembleDebug + unit tests + native .so)

@@ -424,6 +424,7 @@ fn resolve_peer_cert_from_init(init: &InitMessage) -> Result<LongTermCert, Token
         "15550100010",
         "15550100011",
         "15550100012",
+        "15550100013",
         "alicepeer1",
         "bobpeer12",
         "vector-alice",
