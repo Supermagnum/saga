@@ -1,8 +1,18 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 0 — saga-session)
+**Last updated:** 2026-11-12 (Phase 2 Step 1 — iroh-roq port)
 
-**Status:** Phase 2 Step 0 — production `saga-session` crate; `mock-token` is test-only. Release builds have no SessionToken backend → Iroh calls resolve to not encrypted (expected until a real token). Not ready to ship — needs real audio (Phase 2 Steps 1+), physical Galdralag (blocked on xous-core#937).
+**Status:** Phase 2 Step 1 — `iroh-roq` forked/ported to iroh 1.x (datagram RoQ); pinned via git rev. No Opus/SRTP pipeline yet (Step 2). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+
+---
+
+## 2026-11-12 — Phase 2 Step 1: iroh-roq → iroh 1.x
+
+- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971`
+- Upstream draft (not opened): `docs/upstream/iroh-roq-port.md`
+- Source diff vs upstream: +118 / −48 (7 files, excl. lock)
+- Fork tests: datagram (10 + 1000), stream, opus — PASS
+- Case 6 RING flake tracked: https://github.com/Supermagnum/saga/issues/20 (0/3 in dedicated full runs; 1 prior Step0 FAIL)
 
 ---
 
