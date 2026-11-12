@@ -289,13 +289,11 @@ async fn handle_inbound_connection(conn: Connection) {
             match outcome {
                 HandshakeOutcome::Encrypted { output } => {
                     let key = *output.saga_session_key;
-                    #[cfg(debug_assertions)]
-                    {
-                        let (a, b) = output.session_key_debug_prefix();
-                        info!(
-                            "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
-                        );
-                    }
+                    // mock-token builds only: short hash prefix for E2E key equality checks.
+                    let (a, b) = output.session_key_debug_prefix();
+                    info!(
+                        "[Saga Session Key] responder session_key_hash_prefix={a:02x}{b:02x}"
+                    );
                     let media_ok = read_media_round_trip(&mut recv, &key, "responder")
                         .await
                         .unwrap_or(false);
@@ -514,11 +512,9 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         match outcome {
             HandshakeOutcome::Encrypted { output } => {
                 let key = *output.saga_session_key;
-                #[cfg(debug_assertions)]
-                {
-                    let (a, b) = output.session_key_debug_prefix();
-                    info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
-                }
+                // mock-token builds only: short hash prefix for E2E key equality checks.
+                let (a, b) = output.session_key_debug_prefix();
+                info!("[Saga Session Key] initiator session_key_hash_prefix={a:02x}{b:02x}");
                 let media_ok = send_media_round_trip(&mut send, &key)
                     .await
                     .unwrap_or(false);
