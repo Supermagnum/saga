@@ -33,13 +33,20 @@ enum Command {
     },
     /// List cpal input/output devices (requires --features live-audio).
     Devices,
+    /// Print the LAN relay URL (`http://<LAN-IP>:3340`) for peer + emulator configs.
+    RelayHost {
+        #[arg(long, default_value_t = 3340)]
+        port: u16,
+    },
 }
 
 #[derive(clap::Args, Debug)]
 struct CommonOpts {
     #[arg(long, default_value = LABEL_LAPTOP)]
     identity: String,
-    /// Local relay URL (default http://127.0.0.1:3340). Ignored with --public-relay.
+    /// Local relay URL. Default: `$SAGA_IROH_RELAY_URL`, else `/tmp/saga-iroh-relay-url.txt`
+    /// (written by `start-local-relay.sh`), else `http://127.0.0.1:3340`. Use LAN IP for
+    /// emulator↔peer. Ignored with --public-relay.
     #[arg(long)]
     relay: Option<String>,
     /// Use public N0 relays instead of the local dev relay.
@@ -79,6 +86,11 @@ fn main() -> Result<()> {
                 anyhow::bail!("rebuild with --features live-audio to list cpal devices")
             }
         }
+        Command::RelayHost { port } => {
+            let url = resolve_relay_host(port)?;
+            println!("{url}");
+            Ok(())
+        }
         Command::Listen { common, ask } => {
             let opts = to_opts(common, None, ask);
             let out = rt.block_on(run_listen(opts))?;
@@ -109,4 +121,28 @@ fn to_opts(common: CommonOpts, peer: Option<String>, ask: bool) -> CallOpts {
         input_device: common.input_device,
         output_device: common.output_device,
     }
+}
+
+fn resolve_relay_host(port: u16) -> Result<String> {
+    if let Ok(ip) = std::env::var("SAGA_IROH_RELAY_LAN_IP") {
+        if !ip.is_empty() {
+            return Ok(format!("http://{ip}:{port}"));
+        }
+    }
+    // One-liner equivalent: ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}'
+    let out = std::process::Command::new("ip")
+        .args(["-4", "route", "get", "1.1.1.1"])
+        .output();
+    if let Ok(o) = out {
+        let s = String::from_utf8_lossy(&o.stdout);
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        if let Some(i) = parts.iter().position(|p| *p == "src") {
+            if let Some(ip) = parts.get(i + 1) {
+                if *ip != "127.0.0.1" {
+                    return Ok(format!("http://{ip}:{port}"));
+                }
+            }
+        }
+    }
+    anyhow::bail!("could not determine LAN IP; set SAGA_IROH_RELAY_LAN_IP or use testing/iroh-relay/lan-relay-url.sh")
 }

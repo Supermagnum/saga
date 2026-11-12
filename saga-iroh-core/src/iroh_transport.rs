@@ -296,8 +296,10 @@ async fn handle_inbound_connection(conn: Connection) {
     #[cfg(feature = "iroh-transport")]
     crate::bridge_notify_incoming_call(&session_id, &lookup_key, &remote_id_str);
 
-    // Brief window for main-thread bridge to reject (disabled account / SecurityException).
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    // Window for main-thread bridge to reject (disabled account / SecurityException).
+    // Emulator main-thread lag after Settings UI / force-stop made 250ms flaky for
+    // onboarding Case C (INBOUND_REJECT missing reject log).
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
     let conn = {
         let Ok(mut sessions) = SESSIONS.lock() else {

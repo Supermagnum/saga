@@ -12,7 +12,7 @@ use webrtc_util::Unmarshal;
 
 use crate::codec::{OpusDecoder, OpusEncoder, FRAME_SAMPLES};
 use crate::error::{MediaError, Result};
-use crate::jitter::JitterBuffer;
+use crate::jitter::{JitterBuffer, PopOutcome};
 use crate::keys::{CallRole, SrtpKeyPair};
 use crate::metrics::MediaCounters;
 use crate::policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};
@@ -437,16 +437,25 @@ impl MediaPipeline {
             return Err(MediaError::Failed("short playout buffer".into()));
         }
         match self.jb.pop_ready() {
-            Some(pkt) => {
+            PopOutcome::Packet(pkt) => {
                 let n = self.decoder.decode_frame(&pkt.payload, out, false)?;
                 self.last_opus = Some(pkt.payload);
                 self.counters.played.fetch_add(1, Ordering::Relaxed);
                 Ok(n)
             }
-            None => {
+            PopOutcome::Wait => {
+                // Startup / reorder window / empty: silence, do not advance.
+                out[..FRAME_SAMPLES].fill(0);
+                Ok(FRAME_SAMPLES)
+            }
+            PopOutcome::Lost => {
+                // Confirmed gap (wait_ticks / ahead threshold). Conceal once.
+                if !self.jb.playout_started() {
+                    out[..FRAME_SAMPLES].fill(0);
+                    return Ok(FRAME_SAMPLES);
+                }
                 let n = self.decoder.conceal(out)?;
                 self.counters.plc_frames.fetch_add(1, Ordering::Relaxed);
-                self.jb.advance_on_underrun();
                 Ok(n)
             }
         }
@@ -456,5 +465,10 @@ impl MediaPipeline {
         self.counters
             .datagram_blocked_drops
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Test helper: whether a real packet has been played out yet.
+    pub fn jb_playout_started_for_test(&self) -> bool {
+        self.jb.playout_started()
     }
 }

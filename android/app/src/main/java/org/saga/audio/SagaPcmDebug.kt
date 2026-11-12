@@ -111,7 +111,7 @@ object SagaPcmDebug {
         val n = injectFrames.incrementAndGet()
         try {
             val bytes = ByteArray(SagaVoiceAudioEngine.FRAME_BYTES)
-            val dup = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            val dup = buf.duplicate().order(ByteOrder.nativeOrder())
             dup.position(0)
             dup.limit(SagaVoiceAudioEngine.FRAME_BYTES)
             dup.get(bytes)
@@ -130,7 +130,7 @@ object SagaPcmDebug {
         val stream = dumpStream ?: return
         try {
             val dup = buf.duplicate()
-            dup.order(ByteOrder.LITTLE_ENDIAN)
+            dup.order(ByteOrder.nativeOrder())
             dup.position(0)
             dup.limit(len.coerceAtMost(dup.capacity()))
             val bytes = ByteArray(dup.remaining())

@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Start a local iroh-relay in --dev mode (HTTP on port 3340).
-# Android emulators reach the host relay at http://10.0.2.2:3340
+# --dev binds [::]:3340 (all interfaces). Advertise the host LAN IP so
+# saga-peer and Android emulators share one relay URL (no 127.0.0.1 / 10.0.2.2
+# in EndpointAddr advertisements).
 set -euo pipefail
 
 PORT="${SAGA_IROH_RELAY_PORT:-3340}"
 PID_FILE="${SAGA_IROH_RELAY_PID_FILE:-/tmp/saga-iroh-relay.pid}"
 LOG_FILE="${SAGA_IROH_RELAY_LOG:-/tmp/saga-iroh-relay.log}"
-BIND_ADDR="${SAGA_IROH_RELAY_BIND:-0.0.0.0}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LAN_URL="$("$SCRIPT_DIR/lan-relay-url.sh")"
+echo "$LAN_URL" > /tmp/saga-iroh-relay-url.txt
 
 if [[ -f "$PID_FILE" ]]; then
   old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-    echo "iroh-relay already running (pid=$old_pid)"
+    echo "iroh-relay already running (pid=$old_pid) advertise=$(cat /tmp/saga-iroh-relay-url.txt)"
     exit 0
   fi
 fi
 
-if ! command -v iroh-relay >/dev/null 2>&1; then
+if ! command -v iroh-relay >/dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/iroh-relay" ]]; then
   echo "Installing iroh-relay 1.0 (server feature) via cargo ..."
   cargo install iroh-relay --version 1.0.2 --features server --locked
 fi
@@ -27,8 +31,17 @@ if [[ ! -x "$IROH_RELAY_BIN" ]]; then
   exit 1
 fi
 
-echo "Starting iroh-relay --dev (default bind [::]:${PORT}) log: $LOG_FILE"
-nohup "$IROH_RELAY_BIN" --dev >"$LOG_FILE" 2>&1 &
+# Explicit bind to all interfaces (0.0.0.0) so LAN peers + emulators can connect.
+# --dev still disables TLS.
+CONFIG_FILE="${SAGA_IROH_RELAY_CONFIG:-/tmp/saga-iroh-relay.toml}"
+cat >"$CONFIG_FILE" <<EOF
+enable_relay = true
+enable_quic_addr_discovery = false
+http_bind_addr = "0.0.0.0:${PORT}"
+EOF
+
+echo "Starting iroh-relay --dev bind=0.0.0.0:${PORT} advertise=${LAN_URL} log: $LOG_FILE"
+nohup "$IROH_RELAY_BIN" --dev --config-path "$CONFIG_FILE" >"$LOG_FILE" 2>&1 &
 echo $! >"$PID_FILE"
 sleep 2
 
@@ -38,15 +51,15 @@ if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   exit 1
 fi
 
-# Wait until port accepts connections from host.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if curl -sf --max-time 1 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1 \
-     || curl -sf --max-time 1 "http://127.0.0.1:${PORT}/relay" >/dev/null 2>&1; then
-    echo "iroh-relay ready at http://127.0.0.1:${PORT} (emulator: http://10.0.2.2:${PORT})"
+     || curl -sf --max-time 1 "http://127.0.0.1:${PORT}/relay" >/dev/null 2>&1 \
+     || curl -sf --max-time 1 "${LAN_URL}/" >/dev/null 2>&1; then
+    echo "iroh-relay ready at ${LAN_URL} (bound 0.0.0.0:${PORT})"
     exit 0
   fi
   sleep 1
 done
 
 echo "iroh-relay process up (pid=$(cat "$PID_FILE")) but HTTP probe inconclusive; continuing" >&2
-echo "emulator relay url: http://10.0.2.2:${PORT}"
+echo "advertise url: ${LAN_URL}"

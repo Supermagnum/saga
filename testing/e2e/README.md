@@ -45,7 +45,7 @@ Seeding: `seed-test-contacts.sh` (in-app `TestContactSeeder`) + `verify-contact-
 
 | Mode | Configuration | When to use |
 |------|---------------|-------------|
-| **local** (default) | `testing/iroh-relay/start-local-relay.sh` → `iroh-relay --dev` on `[::]:3340`; emulators use `http://10.0.2.2:3340` via `saga_iroh_relay_local.xml` | Normal E2E and CI — stable ~3s `endpoint.online()`, no load on public N0 relays |
+| **local** (default) | `testing/iroh-relay/start-local-relay.sh` → bind `0.0.0.0:3340`, advertise `http://<LAN-IP>:3340` for host + emulators + saga-peer (via `lan-relay-url.sh` / `push_iroh_relay_pref`) | Normal E2E and CI — stable ~3s `endpoint.online()`, no load on public N0 relays |
 | **public** | `SAGA_IROH_RELAY_MODE=public` — Iroh `presets::N0` (`*.relay.n0.iroh.link`) | Comparison / soak only; intermittent 120s registration stalls observed under rapid restarts |
 
 Forensics on public relay showed **genuine** `endpoint.online()` delays (endpoint bound, relay log never emitted), not harness false negatives. Restart-count sweep: 1/8 cycles failed at 120s, 7/8 passed immediately — intermittent, not cumulative “fatigue.”
@@ -80,7 +80,8 @@ Relay host:
 
 | Script | Purpose |
 |--------|---------|
-| [`../iroh-relay/start-local-relay.sh`](../iroh-relay/start-local-relay.sh) | Start local dev relay |
+| [`../iroh-relay/start-local-relay.sh`](../iroh-relay/start-local-relay.sh) | Start local dev relay (0.0.0.0 + LAN advertise URL) |
+| [`../iroh-relay/lan-relay-url.sh`](../iroh-relay/lan-relay-url.sh) | Print `http://<LAN-IP>:3340` |
 | [`../iroh-relay/stop-local-relay.sh`](../iroh-relay/stop-local-relay.sh) | Stop relay by pid file |
 
 ## Run
@@ -113,7 +114,8 @@ Environment variables:
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `SAGA_IROH_RELAY_MODE` | `local` | `local` or `public` |
-| `SAGA_IROH_RELAY_URL` | `http://10.0.2.2:3340` | Emulator-facing relay URL (local mode) |
+| `SAGA_IROH_RELAY_URL` | `http://<LAN-IP>:3340` (from `lan-relay-url.sh`) | Shared relay URL for emulators + saga-peer (local mode) |
+| `SAGA_IROH_RELAY_LAN_IP` | (auto) | Override LAN IP used by `lan-relay-url.sh` / `saga-peer relay-host` |
 | `RELAY_POLL_MAX_SECS` | `120` | Native relay wait ceiling |
 | `RELAY_POLL_INTERVAL_SECS` | `3` | Poll interval |
 | `SAGA_RELAY_RETRY_ON_FAIL` | `0` | One warm restart on relay timeout |
@@ -150,4 +152,4 @@ Prefs are read on app start; encrypted cases use `warm_encrypted_caller()` (forc
 
 - [`e2e-common.sh`](e2e-common.sh) — relay poll, `contact_call`, `provision_clean_baseline`, handshake poll
 - [`saga_dev_identity_bob.xml`](saga_dev_identity_bob.xml) / [`saga_dev_identity_alice.xml`](saga_dev_identity_alice.xml)
-- [`saga_iroh_relay_local.xml`](saga_iroh_relay_local.xml) — `http://10.0.2.2:3340`
+- [`saga_iroh_relay_local.xml`](saga_iroh_relay_local.xml) — fallback stub; E2E generates LAN URL prefs at runtime

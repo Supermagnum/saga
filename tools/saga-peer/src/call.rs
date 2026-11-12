@@ -24,7 +24,30 @@ use crate::identity::{dev_secret_key, resolve_peer_label};
 /// Same ALPN as Android `saga-iroh-core`.
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 
-const DEFAULT_RELAY: &str = "http://127.0.0.1:3340";
+/// Fallback only when LAN advertise URL is unavailable. Prefer
+/// `/tmp/saga-iroh-relay-url.txt` or `--relay` so emulators never see 127.0.0.1.
+const DEFAULT_RELAY_FALLBACK: &str = "http://127.0.0.1:3340";
+
+/// Resolve the relay URL to advertise to peers (must be reachable from emulators).
+pub fn resolve_relay_url(explicit: Option<&str>) -> String {
+    if let Some(u) = explicit {
+        if !u.is_empty() {
+            return u.to_string();
+        }
+    }
+    if let Ok(u) = std::env::var("SAGA_IROH_RELAY_URL") {
+        if !u.is_empty() {
+            return u;
+        }
+    }
+    if let Ok(s) = std::fs::read_to_string("/tmp/saga-iroh-relay-url.txt") {
+        let t = s.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    DEFAULT_RELAY_FALLBACK.to_string()
+}
 
 #[derive(Clone, Debug)]
 pub struct CallOpts {
@@ -597,10 +620,8 @@ async fn bind_endpoint(identity: &str, opts: &CallOpts) -> Result<Endpoint> {
     if opts.public_relay {
         // N0 defaults.
     } else {
-        let url = opts
-            .relay
-            .clone()
-            .unwrap_or_else(|| DEFAULT_RELAY.to_string());
+        let url = resolve_relay_url(opts.relay.as_deref());
+        info!("using relay url=[{url}]");
         let relay_url: RelayUrl = url.parse().context("relay url")?;
         let map = RelayMap::from_iter([relay_url]);
         builder = builder

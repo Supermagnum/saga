@@ -7,8 +7,27 @@ RELAY_POLL_MAX_SECS="${RELAY_POLL_MAX_SECS:-120}"
 LISTEN_POLL_MAX_SECS="${LISTEN_POLL_MAX_SECS:-30}"
 HANDSHAKE_POLL_MAX_SECS="${HANDSHAKE_POLL_MAX_SECS:-120}"
 SAGA_IROH_RELAY_MODE="${SAGA_IROH_RELAY_MODE:-local}"
-SAGA_IROH_RELAY_URL="${SAGA_IROH_RELAY_URL:-http://10.0.2.2:3340}"
+# Prefer LAN IP shared by host saga-peer + emulators (no 127.0.0.1 / 10.0.2.2 ads).
+SAGA_IROH_RELAY_URL="${SAGA_IROH_RELAY_URL:-}"
 SAGA_RELAY_RETRY_ON_FAIL="${SAGA_RELAY_RETRY_ON_FAIL:-0}"
+
+resolve_lan_relay_url() {
+  local e2e_dir="${E2E_DIR:-$(dirname "${BASH_SOURCE[0]}")}"
+  local repo_root="${REPO_ROOT:-$(cd "$e2e_dir/../.." && pwd)}"
+  if [[ -n "${SAGA_IROH_RELAY_URL:-}" ]]; then
+    echo "$SAGA_IROH_RELAY_URL"
+    return 0
+  fi
+  if [[ -f /tmp/saga-iroh-relay-url.txt ]]; then
+    local cached
+    cached="$(tr -d '\r\n' </tmp/saga-iroh-relay-url.txt)"
+    if [[ -n "$cached" ]]; then
+      echo "$cached"
+      return 0
+    fi
+  fi
+  bash "$repo_root/testing/iroh-relay/lan-relay-url.sh"
+}
 
 LISTEN_MARKER="${LISTEN_MARKER:-\[Saga Iroh Listen\] endpoint bound and accepting inbound}"
 RELAY_MARKER="${RELAY_MARKER:-\[Saga Iroh Listen\] relay online}"
@@ -32,6 +51,8 @@ ensure_local_relay() {
   fi
   local repo_root="${REPO_ROOT:-$(cd "$E2E_DIR/../.." && pwd)}"
   bash "$repo_root/testing/iroh-relay/start-local-relay.sh"
+  SAGA_IROH_RELAY_URL="$(resolve_lan_relay_url)"
+  export SAGA_IROH_RELAY_URL
   record "RELAY:INFO local relay at $SAGA_IROH_RELAY_URL"
 }
 
@@ -41,7 +62,19 @@ push_iroh_relay_pref() {
     adb -s "$serial" shell run-as org.saga rm -f shared_prefs/saga_iroh_relay.xml 2>/dev/null || true
     return 0
   fi
-  push_pref "$serial" "$E2E_DIR/saga_iroh_relay_local.xml" saga_iroh_relay.xml
+  if [[ -z "${SAGA_IROH_RELAY_URL:-}" ]]; then
+    SAGA_IROH_RELAY_URL="$(resolve_lan_relay_url)"
+    export SAGA_IROH_RELAY_URL
+  fi
+  # Generate prefs XML with the LAN advertise URL (never 127.0.0.1 / 10.0.2.2).
+  local gen="/tmp/saga_iroh_relay_local_gen.xml"
+  cat >"$gen" <<EOF
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="relay_url">${SAGA_IROH_RELAY_URL}</string>
+</map>
+EOF
+  push_pref "$serial" "$gen" saga_iroh_relay.xml
 }
 
 query_relay_ready_native() {

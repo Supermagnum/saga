@@ -15,6 +15,17 @@ pub struct BufferedPacket {
     pub payload: Vec<u8>,
 }
 
+/// Result of a playout tick against the jitter buffer.
+#[derive(Debug)]
+pub enum PopOutcome {
+    /// Next packet ready to decode.
+    Packet(BufferedPacket),
+    /// Wait (silence): next missing but not yet declared lost.
+    Wait,
+    /// Gap declared lost; caller should conceal. Sequence already advanced.
+    Lost,
+}
+
 #[derive(Debug)]
 pub struct JitterBuffer {
     packets: BTreeMap<u16, Vec<u8>>,
@@ -25,6 +36,8 @@ pub struct JitterBuffer {
     /// Current delay target in frames (adaptive).
     target_frames: u32,
     max_packets: usize,
+    /// Consecutive ticks with later packets buffered but `next` missing.
+    wait_ticks: u32,
 }
 
 impl Default for JitterBuffer {
@@ -43,6 +56,7 @@ impl JitterBuffer {
             playout_started: false,
             target_frames: target_frames.max(1),
             max_packets,
+            wait_ticks: 0,
         }
     }
 
@@ -56,6 +70,16 @@ impl JitterBuffer {
 
     pub fn max_packets(&self) -> usize {
         self.max_packets
+    }
+
+    /// True once a real packet has been popped (playout clock engaged).
+    pub fn playout_started(&self) -> bool {
+        self.playout_started
+    }
+
+    /// True when no RTP has been inserted yet (still waiting for first packet).
+    pub fn awaiting_first_packet(&self) -> bool {
+        self.next_seq.is_none()
     }
 
     /// Insert a packet. Drops if buffer would exceed cap (keeps nearer-to-playout).
@@ -88,25 +112,51 @@ impl JitterBuffer {
         delta > 0 && delta < 0x8000
     }
 
-    /// Pop next packet if buffered enough (≥ target) or packet is exactly next.
-    /// Returns `None` if we should wait or run PLC.
-    pub fn pop_ready(&mut self) -> Option<BufferedPacket> {
-        let next = self.next_seq?;
+    /// Pop next packet, or indicate wait / loss.
+    pub fn pop_ready(&mut self) -> PopOutcome {
+        let Some(next) = self.next_seq else {
+            return PopOutcome::Wait;
+        };
         if let Some(payload) = self.packets.remove(&next) {
             self.playout_started = true;
             self.next_seq = Some(next.wrapping_add(1));
+            self.wait_ticks = 0;
             self.adapt_after_hit();
-            return Some(BufferedPacket { seq: next, payload });
+            return PopOutcome::Packet(BufferedPacket { seq: next, payload });
         }
-        // Not ready: only skip ahead (PLC) once we have later packets and
-        // buffer depth suggests the next is lost.
-        if self.packets.len() as u32 >= self.target_frames {
-            // Gap — advance and let caller PLC.
+        if self.packets.is_empty() {
+            self.wait_ticks = 0;
+            return PopOutcome::Wait;
+        }
+        // Later packets exist but `next` is missing: allow a short reorder
+        // window, then declare loss so we do not freeze on a permanent hole
+        // (B→A emulator: played stuck at 10 while plc climbed).
+        self.wait_ticks = self.wait_ticks.saturating_add(1);
+        let ahead = self
+            .packets
+            .keys()
+            .next()
+            .map(|e| e.wrapping_sub(next))
+            .unwrap_or(0);
+        // Allow ~200 ms reorder/slow-recv before declaring loss. Too-short
+        // windows skipped still-arriving seqs on loaded emulators.
+        let lost = self.wait_ticks >= 10
+            || (ahead >= 8 && ahead < 0x8000 && self.packets.len() as u32 >= self.target_frames);
+        if lost {
             self.next_seq = Some(next.wrapping_add(1));
+            self.wait_ticks = 0;
             self.adapt_after_miss();
-            return None;
+            return PopOutcome::Lost;
         }
-        None
+        PopOutcome::Wait
+    }
+
+    /// Compatibility: packet or none (treats Wait/Lost as none).
+    pub fn pop_packet(&mut self) -> Option<BufferedPacket> {
+        match self.pop_ready() {
+            PopOutcome::Packet(p) => Some(p),
+            _ => None,
+        }
     }
 
     /// Force PLC advance when playout clock ticks and nothing is ready.
@@ -146,9 +196,13 @@ mod tests {
         for i in 2..10 {
             jb.push(i, vec![i as u8]);
         }
-        let a = jb.pop_ready().unwrap();
+        let PopOutcome::Packet(a) = jb.pop_ready() else {
+            panic!("expected packet");
+        };
         assert_eq!(a.seq, 0);
-        let b = jb.pop_ready().unwrap();
+        let PopOutcome::Packet(b) = jb.pop_ready() else {
+            panic!("expected packet");
+        };
         assert_eq!(b.seq, 1);
     }
 
