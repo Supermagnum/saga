@@ -6,10 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
-use blake3;
 use iroh::endpoint::Connection;
 use iroh::tls::CaTlsConfig;
-use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey, endpoint::presets};
+use iroh::{
+    endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
+};
 use log::{error, info, warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
@@ -17,8 +18,8 @@ use tokio::sync::oneshot;
 
 #[cfg(feature = "mock-token")]
 use mock_token::{
-    HandshakeOutcome, MockIdentity, SYNTHETIC_PLAINTEXT, decrypt_frame, encrypt_frame,
-    run_initiator, run_responder,
+    decrypt_frame, encrypt_frame, run_initiator, run_responder, HandshakeOutcome, MockIdentity,
+    SYNTHETIC_PLAINTEXT,
 };
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
@@ -45,6 +46,8 @@ pub enum RelayPoll {
 struct Session {
     connection: Connection,
     handshake: HandshakePoll,
+    /// Retained for Phase 2 media key derivation; read via [`session_key_hex`].
+    #[allow(dead_code)]
     session_key: Option<[u8; 32]>,
     media_round_trip_ok: bool,
 }
@@ -207,10 +210,13 @@ fn inbound_session_id(lookup_key: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    format!("inbound-{safe}-{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0))
+    format!(
+        "inbound-{safe}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    )
 }
 
 async fn handle_inbound_connection(conn: Connection) {
@@ -226,44 +232,34 @@ async fn handle_inbound_connection(conn: Connection) {
     #[cfg(feature = "iroh-transport")]
     crate::bridge_notify_incoming_call(&session_id, &lookup_key, &remote_id_str);
 
-    let mut handshake = HandshakePoll::Pending;
-    let mut session_key = None;
-    let mut media_round_trip_ok = false;
-
     #[cfg(feature = "mock-token")]
-    {
-        match conn.accept_bi().await {
-            Ok((mut send, mut recv)) => {
-                let identity = MockIdentity::from_label(&local_identity_label());
-                let outcome =
-                    run_responder(&identity, force_handshake_fail(), &mut recv, &mut send).await;
-                match outcome {
-                    HandshakeOutcome::Encrypted { session_key: key } => {
-                        handshake = HandshakePoll::Encrypted;
-                        session_key = Some(key);
-                        media_round_trip_ok =
-                            read_media_round_trip(&mut recv, &key, "responder").await.unwrap_or(false);
-                        info!(
-                            "[Saga Media Round-Trip] responder decrypted_ok={media_round_trip_ok}"
-                        );
-                    }
-                    HandshakeOutcome::Failed { reason } => {
-                        handshake = HandshakePoll::Failed;
-                        warn!("inbound mock-token handshake failed: {reason}");
-                    }
+    let (handshake, session_key, media_round_trip_ok) = match conn.accept_bi().await {
+        Ok((mut send, mut recv)) => {
+            let identity = MockIdentity::from_label(&local_identity_label());
+            let outcome =
+                run_responder(&identity, force_handshake_fail(), &mut recv, &mut send).await;
+            match outcome {
+                HandshakeOutcome::Encrypted { session_key: key } => {
+                    let media_ok = read_media_round_trip(&mut recv, &key, "responder")
+                        .await
+                        .unwrap_or(false);
+                    info!("[Saga Media Round-Trip] responder decrypted_ok={media_ok}");
+                    (HandshakePoll::Encrypted, Some(key), media_ok)
+                }
+                HandshakeOutcome::Failed { reason } => {
+                    warn!("inbound mock-token handshake failed: {reason}");
+                    (HandshakePoll::Failed, None, false)
                 }
             }
-            Err(e) => {
-                handshake = HandshakePoll::Failed;
-                warn!("inbound accept_bi failed: {e}");
-            }
         }
-    }
+        Err(e) => {
+            warn!("inbound accept_bi failed: {e}");
+            (HandshakePoll::Failed, None, false)
+        }
+    };
 
     #[cfg(not(feature = "mock-token"))]
-    {
-        handshake = HandshakePoll::Encrypted;
-    }
+    let (handshake, session_key, media_round_trip_ok) = (HandshakePoll::Encrypted, None, false);
 
     if let Ok(mut sessions) = SESSIONS.lock() {
         sessions.insert(
@@ -298,9 +294,7 @@ async fn read_media_round_trip<R: AsyncReadExt + Unpin>(
         .map_err(|e| format!("read media frame: {e}"))?;
     let plain = decrypt_frame(key, &frame)?;
     let ok = plain == SYNTHETIC_PLAINTEXT;
-    info!(
-        "[Saga Media Round-Trip] {role} decrypted_ok={ok} plaintext_match={ok}"
-    );
+    info!("[Saga Media Round-Trip] {role} decrypted_ok={ok} plaintext_match={ok}");
     Ok(ok)
 }
 
@@ -387,7 +381,9 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         .await
         .is_err()
     {
-        warn!("initiator relay online wait timed out before connect to [{peer_id}] — trying anyway");
+        warn!(
+            "initiator relay online wait timed out before connect to [{peer_id}] — trying anyway"
+        );
     } else {
         info!("initiator relay online before connect to [{peer_id}]");
     }
@@ -434,16 +430,11 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             }
         }
     }
-    let connection = connection.ok_or_else(|| {
-        format!("iroh connect failed after retries: {last_err}")
-    })?;
-
-    let mut handshake = HandshakePoll::Encrypted;
-    let mut session_key = None;
-    let mut media_round_trip_ok = false;
+    let connection =
+        connection.ok_or_else(|| format!("iroh connect failed after retries: {last_err}"))?;
 
     #[cfg(feature = "mock-token")]
-    {
+    let (handshake, session_key, media_round_trip_ok) = {
         let (mut send, mut recv) = connection
             .open_bi()
             .await
@@ -459,20 +450,21 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         .await;
         match outcome {
             HandshakeOutcome::Encrypted { session_key: key } => {
-                handshake = HandshakePoll::Encrypted;
-                session_key = Some(key);
-                media_round_trip_ok = send_media_round_trip(&mut send, &key).await.unwrap_or(false);
+                let media_ok = send_media_round_trip(&mut send, &key)
+                    .await
+                    .unwrap_or(false);
                 let _ = send.finish();
+                (HandshakePoll::Encrypted, Some(key), media_ok)
             }
             HandshakeOutcome::Failed { reason } => {
-                handshake = HandshakePoll::Failed;
                 warn!("mock-token handshake failed: {reason}");
+                (HandshakePoll::Failed, None, false)
             }
         }
-    }
+    };
 
     #[cfg(not(feature = "mock-token"))]
-    {
+    let (handshake, session_key, media_round_trip_ok) = {
         let (mut send, _recv) = connection
             .open_bi()
             .await
@@ -481,9 +473,13 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("iroh probe write: {e}"))?;
         let _ = send.finish();
-    }
+        (HandshakePoll::Encrypted, None, false)
+    };
 
-    info!("iroh connected to [{}] handshake={handshake:?}", connection.remote_id());
+    info!(
+        "iroh connected to [{}] handshake={handshake:?}",
+        connection.remote_id()
+    );
 
     SESSIONS
         .lock()
@@ -505,10 +501,12 @@ pub fn connect(peer_id: &str, session_id: &str) -> Result<(), String> {
     if peer_id.to_ascii_lowercase().contains("fail") {
         return Err("native connect failure (peer id contains 'fail')".into());
     }
-    runtime().block_on(connect_async(peer_id, session_id)).map_err(|e| {
-        error!("connect_async failed: {e}");
-        e
-    })
+    runtime()
+        .block_on(connect_async(peer_id, session_id))
+        .map_err(|e| {
+            error!("connect_async failed: {e}");
+            e
+        })
 }
 
 pub fn disconnect(session_id: &str) {
@@ -525,14 +523,13 @@ pub fn poll_handshake(session_id: &str) -> HandshakePoll {
         .unwrap_or(HandshakePoll::Pending)
 }
 
+/// Hex session key for debug / Phase 2 media binding. Not yet exposed over JNI.
+#[allow(dead_code)]
 pub fn session_key_hex(session_id: &str) -> Option<String> {
     SESSIONS.lock().ok().and_then(|m| {
         m.get(session_id).and_then(|s| {
-            s.session_key.map(|key| {
-                key.iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            })
+            s.session_key
+                .map(|key| key.iter().map(|b| format!("{b:02x}")).collect::<String>())
         })
     })
 }

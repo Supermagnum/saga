@@ -3,6 +3,8 @@
 
 use std::sync::OnceLock;
 use std::thread;
+
+#[cfg(not(feature = "iroh-transport"))]
 use std::time::Duration;
 
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
@@ -168,7 +170,7 @@ fn connect_peer(peer_id: &str, session_id: &str) -> Result<(), String> {
 
     #[cfg(feature = "iroh-transport")]
     {
-        return iroh_transport::connect(peer_id, session_id);
+        iroh_transport::connect(peer_id, session_id)
     }
 
     #[cfg(not(feature = "iroh-transport"))]
@@ -274,7 +276,7 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePollHandshake(
     };
     #[cfg(feature = "iroh-transport")]
     {
-        return iroh_transport::poll_handshake(&session) as jint;
+        iroh_transport::poll_handshake(&session) as jint
     }
     #[cfg(not(feature = "iroh-transport"))]
     {
@@ -294,11 +296,11 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMediaRoundTripO
     };
     #[cfg(feature = "iroh-transport")]
     {
-        return if iroh_transport::media_round_trip_ok(&session) {
+        if iroh_transport::media_round_trip_ok(&session) {
             jni::sys::JNI_TRUE
         } else {
             jni::sys::JNI_FALSE
-        };
+        }
     }
     #[cfg(not(feature = "iroh-transport"))]
     {
@@ -340,11 +342,11 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePollRelayReady(
 ) -> jint {
     #[cfg(feature = "iroh-transport")]
     {
-        return match iroh_transport::poll_relay_ready() {
+        match iroh_transport::poll_relay_ready() {
             iroh_transport::RelayPoll::Pending => 0,
             iroh_transport::RelayPoll::Ready => 1,
             iroh_transport::RelayPoll::Failed => 2,
-        };
+        }
     }
     #[cfg(not(feature = "iroh-transport"))]
     1
@@ -382,7 +384,10 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId
     #[cfg(feature = "iroh-transport")]
     {
         match iroh_transport::local_endpoint_id_hex() {
-            Ok(id) => env.new_string(id).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut()),
+            Ok(id) => env
+                .new_string(id)
+                .map(|s| s.into_raw())
+                .unwrap_or(std::ptr::null_mut()),
             Err(e) => {
                 error!("nativeLocalEndpointId failed: {e}");
                 std::ptr::null_mut()
