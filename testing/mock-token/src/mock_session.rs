@@ -10,14 +10,16 @@ use ephemeral_session::{
     SessionKeys,
 };
 use galdr_core::fake_hal::FakeTrng;
-use log::info;
 use zeroize::Zeroizing;
 
 use crate::channel_bind::{bind_iroh_endpoints, transcript_hash};
 use crate::identity::{MockIdentity, LOCAL_SLOT};
-use crate::token::{
-    HandshakeOutput, InitiatorPending, SessionToken, TokenError, MOCK_TOKEN_MARKER,
-};
+use crate::token::{HandshakeOutput, InitiatorPending, SessionToken, TokenError};
+
+#[cfg(debug_assertions)]
+use crate::token::MOCK_TOKEN_MARKER;
+#[cfg(debug_assertions)]
+use log::info;
 
 /// Software mock token. Ephemeral ECDH runs in-process via FakeTrng, mirroring
 /// on-device steps without USB.
