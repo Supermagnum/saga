@@ -12,8 +12,7 @@ screen before shipping (see saga-spec.md §8, Fallback UX).
 | `locked.svg` | Encrypted | Session key active, transcript confirmed |
 | `key-error.svg` | Key not found | No resolvable key; neutral "not encrypted" |
 | `key.svg` | (supplementary) | Gnupg/Galdra keys loaded in the system |
-| `ic_saga_padlock_downgraded.xml` (android) | Downgraded (warning) | Broken padlock in `android/app/src/main/res/drawable/` |
-| *(repo root)* | Downgraded (warning) SVG | Optional future asset; Android uses vector above |
+| `broken.svg` | Downgraded (warning) | Broken padlock; Android vector `ic_saga_padlock_downgraded.xml` |
 
 Paired status text: "Securing…", "Encrypted", "Not encrypted", and the §5a
 modal for downgrade (not icon-only).
