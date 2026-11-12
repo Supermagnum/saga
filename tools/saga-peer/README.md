@@ -88,7 +88,6 @@ cargo run --manifest-path tools/saga-peer/Cargo.toml -- \
 
 ## Note on Android media
 
-Until Step 3b wires RoQ end-to-end, Android may still loopback PCM locally.
-Handshake and security UI work against saga-peer; full Opus/SRTP audio with
-the emulator needs the Android RoQ media path. Host A↔B tests in this crate
-exercise the real media pipeline.
+With Step 3b, Android capture/playback uses shared `saga-media` over RoQ
+(Opus + SRTP or plain RTP). Host A↔B tests and emulator↔peer WAV paths
+exercise real network media — not local loopback.

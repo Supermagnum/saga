@@ -401,9 +401,45 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeStartMedia(
     let Some(session) = jstring_to_rust(&mut env, &session_id) else {
         return jni::sys::JNI_FALSE;
     };
-    if media_bridge::start_media(&session, mode as u8) {
-        jni::sys::JNI_TRUE
-    } else {
+    #[cfg(feature = "iroh-transport")]
+    {
+        let mode = match mode {
+            1 => media_bridge::MediaMode::Srtp,
+            2 => media_bridge::MediaMode::PlainRtp,
+            _ => return jni::sys::JNI_FALSE,
+        };
+        let Some((role, hs, roq_conn)) = iroh_transport::take_media_setup(&session) else {
+            log::warn!("nativeStartMedia: no RoQ setup for [{session}]");
+            return jni::sys::JNI_FALSE;
+        };
+        let ok = iroh_transport::runtime().block_on(async move {
+            let flow = saga_media::MediaPipeline::flow_id_hint();
+            let roq = iroh_roq::Session::new(roq_conn);
+            let send = match roq.new_send_flow(flow).await {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("RoQ send flow: {e}");
+                    return false;
+                }
+            };
+            let recv = match roq.new_receive_flow(flow).await {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("RoQ recv flow: {e}");
+                    return false;
+                }
+            };
+            media_bridge::start_media(&session, mode, role, hs.as_deref(), send, recv, roq)
+        });
+        if ok {
+            jni::sys::JNI_TRUE
+        } else {
+            jni::sys::JNI_FALSE
+        }
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (session, mode);
         jni::sys::JNI_FALSE
     }
 }
@@ -504,7 +540,18 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeRekeyMedia(
     let Some(session) = jstring_to_rust(&mut env, &session_id) else {
         return -1;
     };
-    media_bridge::rekey_media(&session)
+    #[cfg(feature = "iroh-transport")]
+    {
+        let Some(hs) = iroh_transport::handshake_output(&session) else {
+            return -1;
+        };
+        media_bridge::rekey_media(&session, hs.as_ref())
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = session;
+        -1
+    }
 }
 
 #[no_mangle]

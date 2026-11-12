@@ -11,15 +11,11 @@ use iroh::tls::CaTlsConfig;
 use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
 use iroh_roq::{Session as RoqSession, ALPN as ROQ_ALPN};
 use log::{info, warn};
-use mock_token::{
-    decrypt_frame, encrypt_frame, run_initiator, run_responder, HandshakeOutcome, MockIdentity,
-    SYNTHETIC_PLAINTEXT,
-};
+use mock_token::{run_initiator, run_responder, HandshakeOutcome, MockIdentity};
 use saga_media::{
     CallRole, MediaCounters, MediaPipeline, SecurityResolution, FRAME_SAMPLES, SAMPLE_RATE,
 };
 use saga_session::HandshakeOutput;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 use crate::audio::{CaptureSource, PlayoutSink};
@@ -137,7 +133,6 @@ async fn drive_initiator(
             );
             #[cfg(not(debug_assertions))]
             eprintln!("Encrypted");
-            let _ = send_media_probe(&mut send, &output).await;
             let _ = send.finish();
             (Some(output), "Encrypted", Some(prefix))
         }
@@ -202,8 +197,6 @@ async fn drive_responder(
             );
             #[cfg(not(debug_assertions))]
             eprintln!("Encrypted");
-            let media_ok = read_media_probe(&mut recv, &output).await.unwrap_or(false);
-            info!("media probe ok={media_ok}");
             (Some(output), "Encrypted", Some(prefix))
         }
         HandshakeOutcome::Failed { reason } => {
@@ -282,10 +275,7 @@ pub async fn host_pair_roundtrip(
             )
             .await;
             let hs = match outcome {
-                HandshakeOutcome::Encrypted { output } => {
-                    let _ = read_media_probe(&mut recv, &output).await;
-                    Some(output)
-                }
+                HandshakeOutcome::Encrypted { output } => Some(output),
                 HandshakeOutcome::Failed { .. } => None,
             };
             let remote = incoming.remote_id();
@@ -321,7 +311,6 @@ pub async fn host_pair_roundtrip(
     .await;
     let hs_a = match outcome {
         HandshakeOutcome::Encrypted { output } => {
-            let _ = send_media_probe(&mut send, &output).await;
             let _ = send.finish();
             Some(output)
         }
@@ -627,31 +616,4 @@ fn resolve_endpoint_id(peer: &str) -> Result<PublicKey> {
     }
     let label = resolve_peer_label(peer);
     Ok(dev_secret_key(&label).public())
-}
-
-async fn send_media_probe(
-    writer: &mut (impl AsyncWriteExt + Unpin),
-    output: &HandshakeOutput,
-) -> Result<bool> {
-    let key = *output.saga_session_key;
-    let frame = encrypt_frame(&key, SYNTHETIC_PLAINTEXT);
-    let len = (frame.len() as u32).to_be_bytes();
-    writer.write_all(&len).await?;
-    writer.write_all(&frame).await?;
-    writer.flush().await?;
-    Ok(true)
-}
-
-async fn read_media_probe(
-    reader: &mut (impl AsyncReadExt + Unpin),
-    output: &HandshakeOutput,
-) -> Result<bool> {
-    let key = *output.saga_session_key;
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut frame = vec![0u8; len];
-    reader.read_exact(&mut frame).await?;
-    let plain = decrypt_frame(&key, &frame).map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(plain == SYNTHETIC_PLAINTEXT)
 }
