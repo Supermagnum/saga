@@ -15,7 +15,7 @@ iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq", "dep:saga-media", "de
 mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils"]
 
 [dependencies]
-jni = "0.21"
+jni = "0.22"
 log = "0.4"
 saga-session = { path = "../saga-session" }
 # Shared Opus+SRTP media pipeline (host + Android NDK).
