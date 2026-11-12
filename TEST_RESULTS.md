@@ -66,7 +66,9 @@ First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled 
 
 ### CI run link
 
-Filled after push — see PR / Actions workflow **CI**.
+PR: https://github.com/Supermagnum/saga/pull/1  
+Green run: https://github.com/Supermagnum/saga/actions/runs/43137989958  
+Wall ~12.7 min (dominated by cold Android native+Gradle; Rust job ~33s). Earlier failed setup runs: `43137246126`, `43137734182`.
 
 ---
 
