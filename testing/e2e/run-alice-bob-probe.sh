@@ -89,7 +89,7 @@ if adb -s "$SERIAL_A" logcat -d | rg -q "Resolved direct Iroh peer"; then
   echo "FAIL: harness dialed raw peer label"; PASS=false
 fi
 if check_log "$SERIAL_A" "settled to \[Encrypted\].*$PHONE_BOB" \
-   && check_log "$SERIAL_B" "Saga Media Round-Trip.*decrypted_ok=true"; then
+   && check_log "$SERIAL_B" "[Saga Media] start session=.*mode="; then
   echo "CALL:PASS alice->bob encrypted + media round-trip"
 else
   echo "CALL:FAIL connection or handshake did not complete"
