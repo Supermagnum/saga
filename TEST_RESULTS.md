@@ -1,14 +1,61 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 1 — iroh-roq port)
+**Last updated:** 2026-11-12 (Phase 2 Step 2 — host media pipeline)
 
-**Status:** Phase 2 Step 1 — `iroh-roq` forked/ported to iroh 1.x (datagram RoQ); pinned via git rev. No Opus/SRTP pipeline yet (Step 2). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Phase 2 Step 2 — `saga-media` Opus + SRTP AEAD_AES_256_GCM over RoQ (encrypted path only). Unsecured Iroh media deferred (stop-and-ask). Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+
+---
+
+## 2026-11-12 — Phase 2 Step 2: saga-media host pipeline
+
+### Crate / stack
+
+| Item | Choice |
+|------|--------|
+| Crate | `saga-media/` (host-testable; not inside `saga-iroh-core`) |
+| Opus | `opus` **0.3.1** + `audiopus_sys` (cmake/cc from source — F-Droid-safe; same stack as iroh-roq tests). 48 kHz mono, 20 ms, VBR **32 kbps**, in-band FEC on, **DTX off**, `Application::Voip`, complexity 10 |
+| SRTP | `webrtc-srtp` **0.17.3** `ProtectionProfile::AeadAes256Gcm` |
+| RoQ | fork `c9b02963…` — `try_send_payload` (non-blocking; never `send_rtp_wait` on media path), `read_bytes`, `max_datagram_size` |
+| Keys | HKDF-SHA256 over `saga_session_key`; info = direction label + `transcript_hash`; labels `saga-srtp-caller-to-callee-v1` / `saga-srtp-callee-to-caller-v1` |
+
+Unsecured Iroh media: **not implemented** (encrypted-only until product answers stop-and-ask).
+
+### Clean path (CI gates)
+
+| Test | corr | SI-SNR | Gate |
+|------|------|--------|------|
+| 1 kHz tone (Opus-only loopback) | 0.987 | 15.7 dB | ceiling of codec |
+| 1 kHz tone full pipeline | 0.987 | 15.7 dB | corr ≥ 0.85, SI-SNR ≥ 15 dB |
+| Speech (espeak-ng fixture) | 0.920 | 8.1 dB | corr ≥ 0.85, SI-SNR ≥ 7 dB |
+| Relay (`clear_ip_transports` + local test relay) | 0.987 | — | corr ≥ 0.85 |
+
+**Why not SI-SNR ≥ 20 dB:** scale-invariant SNR on Opus VoIP @ 32 kbps for a pure tone saturates near 10·log10(1/(1−ρ²)) with ρ≈0.987 → **~16 dB**. Measured Opus-only loopback matches the full RoQ/SRTP path (no pipeline tax). Plan's 20 dB assumed; CI uses achievable SI-SNR with corr as the primary gate.
+
+### Loss / security / limits
+
+| Test | Result |
+|------|--------|
+| 5% loss + jitter/reorder | corr ≈ 0.99; JB bounded |
+| 15% loss + jitter/reorder | corr ≈ 0.77 (≥ 0.30); no panic |
+| Tamper (flip ciphertext byte) | dropped; `tamper_or_auth_fail`++ |
+| Replay | dropped; `replay`++ |
+| Wrong receiver key | all 5 rejected |
+| Tiny `max_datagram_size` | `MediaError::DatagramTooLarge`; `media_failed` |
+| Forced blocked drops | `datagram_blocked_drops` counter (unit path; QUIC `Ok(false)` from `try_send_payload`) |
+
+### ViSQOL (local only)
+
+**Skipped.** `visqol` binary not installed on this host (`which visqol` empty; no `/usr/local/bin/visqol`). Install attempt: not available via apt package name `visqol` without building from https://github.com/google/visqol. CI does not run ViSQOL. Re-run locally after install for clean / 5% / 15% MOS and paste here.
+
+### Fixture note
+
+CI speech clip is **espeak-ng** TTS (see `saga-media/fixtures/ATTRIBUTION.md`). LibriSpeech CC BY 4.0 remains the preferred substitute for listening / ViSQOL (NOTICE updated).
 
 ---
 
 ## 2026-11-12 — Phase 2 Step 1: iroh-roq → iroh 1.x
 
-- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971`
+- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971` (superseded by `c9b02963…` in Step 2)
 - Upstream draft (not opened): `docs/upstream/iroh-roq-port.md`
 - Source diff vs upstream: +118 / −48 (7 files, excl. lock)
 - Fork tests: datagram (10 + 1000), stream, opus — PASS
