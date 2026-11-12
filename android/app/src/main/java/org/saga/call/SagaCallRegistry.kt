@@ -45,17 +45,36 @@ object SagaCallRegistry {
 
     fun peerIdFromCall(call: Call): String {
         val intentExtras = call.details.intentExtras
-        intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
-            ?.getString(SagaDialer.EXTRA_PEER_ID)?.let { return it }
-        intentExtras?.getString(SagaDialer.EXTRA_PEER_ID)?.let { return it }
+        val outgoing = intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
+        outgoing?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        outgoing?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
+        val incoming = intentExtras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        incoming?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
         val handle = call.details.handle ?: return "Unknown"
         if (handle.scheme == SagaCallUri.SCHEME) {
             return handle.schemeSpecificPart ?: handle.toString()
+        }
+        // tel:iroh is a non-routable placeholder — never treat it as the peer id.
+        if (handle.schemeSpecificPart.equals(SagaCallUri.IROH_TELECOM_SSP, ignoreCase = true)) {
+            return "Unknown"
         }
         if (call.details.accountHandle?.id == SagaPhoneAccountRegistrar.ACCOUNT_ID) {
             return handle.schemeSpecificPart ?: handle.toString()
         }
         return handle.schemeSpecificPart ?: handle.toString()
+    }
+
+    fun displayNameFromCall(call: Call): String {
+        val intentExtras = call.details.intentExtras
+        val outgoing = intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
+        outgoing?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        val incoming = intentExtras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        return peerIdFromCall(call)
     }
 
     fun telecomCallId(call: Call): String {

@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.util.Log
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -19,10 +20,13 @@ import org.saga.iroh.SagaDialer
 import org.saga.iroh.IrohRelayStatus
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallRehandshakeController
+import org.saga.telecom.SagaPhoneAccountRegistrar
 
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "[Saga Main Activity]"
+        private const val PREFS = "saga_phone_account_ui"
+        private const val KEY_ONBOARDING_SHOWN = "onboarding_shown"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -32,6 +36,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         updateRoleStatus()
+        refreshPhoneAccountUi(launchOnboardingIfNeeded = true)
         if (result.resultCode != RESULT_OK) {
             Toast.makeText(this, R.string.dialer_role_denied, Toast.LENGTH_SHORT).show()
         }
@@ -65,19 +70,55 @@ class MainActivity : AppCompatActivity() {
         binding.pickContact.setOnClickListener { launchContactPicker() }
         binding.dialIroh.setOnClickListener { placeFromInput(preferCellular = false) }
         binding.dialUnencrypted.setOnClickListener { placeFromInput(preferCellular = true) }
+        binding.phoneAccountBanner.setOnClickListener {
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+        }
         updateRoleStatus()
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshPhoneAccountUi(launchOnboardingIfNeeded = true)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+            return
+        }
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+    }
+
+    private fun refreshPhoneAccountUi(launchOnboardingIfNeeded: Boolean) {
+        SagaPhoneAccountRegistrar.register(this)
+        val enabled = SagaPhoneAccountRegistrar.isAccountEnabled(this)
+        binding.phoneAccountBanner.visibility = if (enabled) View.GONE else View.VISIBLE
+        if (enabled) {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_ONBOARDING_SHOWN, true)
+                .apply()
+            return
+        }
+        Log.i(TAG, "PhoneAccount disabled — banner visible")
+        if (!launchOnboardingIfNeeded) return
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val shown = prefs.getBoolean(KEY_ONBOARDING_SHOWN, false)
+        if (!shown || intent?.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
+            prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, true).apply()
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+        }
     }
 
     private fun handleIncomingIntent(intent: Intent?, autoPlace: Boolean) {
         if (intent == null) return
         when (intent.action) {
+            SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING -> {
+                startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+            }
             "org.saga.TEST_ANSWER_INCOMING" -> {
                 val lookupKey = intent.getStringExtra("lookup_key") ?: return
                 Log.i(TAG, "E2E answer incoming lookup=[$lookupKey]")

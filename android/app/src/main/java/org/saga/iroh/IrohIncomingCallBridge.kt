@@ -1,12 +1,10 @@
 package org.saga.iroh
 
 import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.ContactsContract
-import android.telecom.PhoneAccount
 import android.telecom.TelecomManager
 import android.util.Log
 import org.saga.telecom.SagaPhoneAccountRegistrar
@@ -29,6 +27,7 @@ object IrohIncomingCallBridge {
         val ctx = appContext
         if (ctx == null) {
             Log.e(TAG, "CHECKPOINT FAIL appContext null — cannot addNewIncomingCall")
+            rejectNativeSession(sessionId, "appContext null")
             return
         }
         mainHandler.post {
@@ -45,11 +44,16 @@ object IrohIncomingCallBridge {
         val telecom = context.getSystemService(TelecomManager::class.java)
         if (telecom == null) {
             Log.e(TAG, "CHECKPOINT FAIL TelecomManager unavailable")
+            rejectNativeSession(sessionId, "TelecomManager unavailable")
             return
         }
 
-        if (!SagaPhoneAccountRegistrar.ensureEnabled(context)) {
-            Log.e(TAG, "CHECKPOINT FAIL Saga PhoneAccount not enabled")
+        if (!SagaPhoneAccountRegistrar.isAccountEnabled(context)) {
+            Log.e(
+                TAG,
+                "CHECKPOINT FAIL Saga PhoneAccount not enabled — rejecting inbound session=[$sessionId]"
+            )
+            rejectNativeSession(sessionId, "PhoneAccount disabled")
             return
         }
 
@@ -58,17 +62,23 @@ object IrohIncomingCallBridge {
         if (registered == null) {
             Log.e(TAG, "CHECKPOINT FAIL PhoneAccount not registered handle=[$handle]")
             SagaPhoneAccountRegistrar.register(context)
+            rejectNativeSession(sessionId, "PhoneAccount not registered")
+            return
+        }
+        if (!registered.isEnabled) {
+            Log.e(TAG, "CHECKPOINT FAIL PhoneAccount disabled handle=[$handle]")
+            rejectNativeSession(sessionId, "PhoneAccount disabled")
             return
         }
         Log.i(
             TAG,
-            "CHECKPOINT PhoneAccount verified enabled=[${registered.isEnabled}] handle=[$handle]"
+            "CHECKPOINT PhoneAccount verified enabled=[true] handle=[$handle]"
         )
 
         val peerId = IrohNodeId.parse(lookupKey) ?: IrohNodeId(lookupKey)
         val displayName = resolveDisplayName(context, lookupKey)
-        val telAddress = resolveTelAddress(context, lookupKey) ?: SagaDialer.IROH_PLACEHOLDER_TEL
-        val address = Uri.fromParts(PhoneAccount.SCHEME_TEL, telAddress, null)
+        // tel:iroh — never a contact E.164 that SIM telephony could dial.
+        val address = SagaCallUri.telecomPlaceUri(peerId)
 
         val callExtras = Bundle().apply {
             putString(SagaDialer.EXTRA_PEER_ID, peerId.raw)
@@ -86,16 +96,23 @@ object IrohIncomingCallBridge {
 
         Log.i(
             TAG,
-            "CHECKPOINT addNewIncomingCall session=[$sessionId] lookup=[$lookupKey] display=[$displayName]"
+            "CHECKPOINT addNewIncomingCall session=[$sessionId] lookup=[$lookupKey] display=[$displayName] address=[$address]"
         )
         try {
             telecom.addNewIncomingCall(handle, extras)
             Log.i(TAG, "CHECKPOINT addNewIncomingCall returned (no throw)")
         } catch (e: SecurityException) {
             Log.e(TAG, "CHECKPOINT FAIL addNewIncomingCall SecurityException: ${e.message}")
+            rejectNativeSession(sessionId, "SecurityException: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "CHECKPOINT FAIL addNewIncomingCall: ${e.message}")
+            rejectNativeSession(sessionId, e.message ?: "addNewIncomingCall failed")
         }
+    }
+
+    private fun rejectNativeSession(sessionId: String, reason: String) {
+        Log.w(TAG, "Rejecting inbound Iroh session=[$sessionId] reason=[$reason]")
+        IrohNativeBridge.disconnect(sessionId)
     }
 
     private fun resolveDisplayName(context: Context, lookupKey: String): String {
@@ -119,26 +136,5 @@ object IrohIncomingCallBridge {
             }
         }
         return lookupKey
-    }
-
-    private fun resolveTelAddress(context: Context, lookupKey: String): String? {
-        val cursor = context.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-            null,
-            null,
-            null
-        ) ?: return null
-        cursor.use {
-            while (it.moveToNext()) {
-                val number = it.getString(0) ?: continue
-                val digits = number.filter { ch -> ch.isDigit() }
-                val keyDigits = lookupKey.filter { ch -> ch.isDigit() }
-                if (digits.endsWith(keyDigits) || digits == keyDigits) {
-                    return number
-                }
-            }
-        }
-        return null
     }
 }

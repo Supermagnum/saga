@@ -40,8 +40,23 @@ class SagaConnectionService : ConnectionService() {
         val connection = SagaIrohConnection(this, contactName, telecomCallKey, incoming = false)
         connection.setInitializing()
         connection.setDialing()
+        PendingDialLookup.markIrohDialConsumed()
         IrohDialManager.get(this).startOutgoing(peerId, connection, telecomCallKey, lookupKey)
         return connection
+    }
+
+    override fun onCreateOutgoingConnectionFailed(
+        connectionManagerPhoneAccount: PhoneAccountHandle?,
+        request: ConnectionRequest
+    ) {
+        val uri = request.address
+        val peerId = SagaDialer.peerIdFromConnectionRequest(uri, request.extras)
+        Log.e(
+            TAG,
+            "IROH_ABORT_OUTGOING_FAILED uri=[$uri] peer=[${peerId?.raw}] — Telecom rejected Saga account"
+        )
+        peerId?.raw?.let { PendingDialLookup.clear(it) }
+        PendingDialLookup.markIrohDialConsumed()
     }
 
     override fun onCreateIncomingConnection(

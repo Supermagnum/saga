@@ -10,8 +10,6 @@ import org.saga.telecom.SagaPhoneAccountRegistrar
 
 object SagaDialer {
     private const val TAG = "[Saga Dialer]"
-    /** Non-routable placeholder; real peer is in [EXTRA_PEER_ID] for Telecom. */
-    const val IROH_PLACEHOLDER_TEL = "+15550100999"
     const val EXTRA_PEER_ID = "org.saga.EXTRA_PEER_ID"
     const val EXTRA_SESSION_ID = "org.saga.EXTRA_SESSION_ID"
     const val EXTRA_LOOKUP_KEY = "org.saga.EXTRA_LOOKUP_KEY"
@@ -72,9 +70,17 @@ object SagaDialer {
         lookupKey: String = peerId.raw,
         contactName: String = lookupKey
     ) {
+        if (!SagaPhoneAccountRegistrar.ensureEnabled(context)) {
+            Log.e(
+                TAG,
+                "IROH_BLOCKED_PHONE_ACCOUNT_DISABLED — refusing placeCall for [$contactName]"
+            )
+            launchOnboarding(context)
+            return
+        }
         PendingDialLookup.put(peerId.raw, lookupKey, contactName)
         Log.i(TAG, "Placing Iroh call to contact [$contactName] via Saga PhoneAccount")
-        placeIrohViaTelecom(context, peerId)
+        placeIrohViaTelecom(context, peerId, lookupKey, contactName)
     }
 
     fun placeCellularCall(context: Context, number: String) {
@@ -83,19 +89,55 @@ object SagaDialer {
         context.getSystemService(TelecomManager::class.java).placeCall(uri, Bundle())
     }
 
-    private fun placeIrohViaTelecom(context: Context, peerId: IrohNodeId) {
-        val telecom = context.getSystemService(TelecomManager::class.java)
-        val uri = Uri.fromParts("tel", IROH_PLACEHOLDER_TEL, null)
+    private fun placeIrohViaTelecom(
+        context: Context,
+        peerId: IrohNodeId,
+        lookupKey: String,
+        contactName: String
+    ) {
+        val telecom = context.getSystemService(TelecomManager::class.java) ?: run {
+            Log.e(TAG, "IROH_BLOCKED TelecomManager unavailable")
+            PendingDialLookup.clear(peerId.raw)
+            return
+        }
+        val handle = SagaPhoneAccountRegistrar.phoneAccountHandle(context)
+        // tel:iroh — managed ConnectionService requires tel:; SSP is not E.164 / not carrier-routable.
+        // Peer id is only in extras. SIM cannot usefully dial "iroh" if handle is ignored.
+        val uri = SagaCallUri.telecomPlaceUri(peerId)
         val peerExtras = Bundle().apply {
             putString(EXTRA_PEER_ID, peerId.raw)
+            putString(EXTRA_LOOKUP_KEY, lookupKey)
+            putString(EXTRA_CONTACT_NAME, contactName)
         }
         val extras = Bundle().apply {
-            putParcelable(
-                TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE,
-                SagaPhoneAccountRegistrar.phoneAccountHandle(context)
-            )
+            putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
             putBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, peerExtras)
         }
-        telecom.placeCall(uri, extras)
+        try {
+            telecom.placeCall(uri, extras)
+            Log.i(TAG, "placeCall issued uri=[$uri] handle=[$handle]")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "IROH_BLOCKED placeCall SecurityException: ${e.message}")
+            PendingDialLookup.clear(peerId.raw)
+            PendingDialLookup.markIrohDialConsumed()
+            launchOnboarding(context)
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "IROH_BLOCKED placeCall IllegalStateException: ${e.message}")
+            PendingDialLookup.clear(peerId.raw)
+            PendingDialLookup.markIrohDialConsumed()
+            launchOnboarding(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "IROH_BLOCKED placeCall failed: ${e.message}")
+            PendingDialLookup.clear(peerId.raw)
+            PendingDialLookup.markIrohDialConsumed()
+        }
+    }
+
+    private fun launchOnboarding(context: Context) {
+        try {
+            context.startActivity(SagaPhoneAccountRegistrar.showOnboardingIntent(context))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch PhoneAccount onboarding: ${e.message}")
+        }
     }
 }
