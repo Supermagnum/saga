@@ -2,7 +2,7 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use log::info;
 use sha2::{Digest, Sha256};
@@ -84,7 +84,10 @@ fn parse_hello(buf: &[u8; HELLO_LEN]) -> Result<(X25519PublicKey, VerifyingKey),
     let verifying_key =
         VerifyingKey::from_bytes(&e_bytes).map_err(|e| format!("invalid ed25519 pk: {e}"))?;
     verifying_key
-        .verify_strict(&buf[..64], &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+        .verify_strict(
+            &buf[..64],
+            &ed25519_dalek::Signature::from_bytes(&sig_bytes),
+        )
         .map_err(|e| format!("hello signature invalid: {e}"))?;
     Ok((X25519PublicKey::from(x_bytes), verifying_key))
 }
@@ -229,7 +232,9 @@ pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
 pub fn decrypt_frame(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = ChaCha20Poly1305::new(key.into());
     let nonce = Nonce::from_slice(b"saga-frame00");
-    cipher.decrypt(nonce, ciphertext).map_err(|e| format!("decrypt: {e}"))
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("decrypt: {e}"))
 }
 
 pub const SYNTHETIC_PLAINTEXT: &[u8] = b"saga-synthetic-audio-v1";
