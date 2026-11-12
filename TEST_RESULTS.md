@@ -1,8 +1,104 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 3 — Android audio I/O + Telecom)
+**Last updated:** 2026-11-12 (Phase 2 Step 3b — STOI fix + JB cap 300 ms / PR #27)
 
-**Status:** Phase 2 Step 3 — AudioRecord/AudioTrack VOICE_COMMUNICATION + Telecom mute/route/hold; Encrypted→SRTP / not-encrypted→plain RTP after security resolve; §5b re-key swap measured. Release builds still have no SessionToken backend → not encrypted. Physical Galdralag blocked on xous-core#937.
+**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge). First-bad stage T5/T6; root causes below. CI must stay green.
+
+---
+
+## 2026-11-12 — Phase 2 Step 3b: STOI measurement + JB cap 300 ms (#27)
+
+### STOI fix (`testing/e2e/pcm_score.py`)
+
+Prior STOI ≈0.14 with corr 0.960 was a **measurement bug**: pystoi ran on unaligned 48 kHz windows.
+Fix: apply the **same lag** as corr/SI-SNR, trim equal length, resample **both** 48 kHz → 16 kHz, then pystoi.
+
+Reference: LibriSpeech fixture `saga-media/fixtures/speech_clip_48k.wav` (48 kHz mono s16).
+
+Sanity:
+```
+python3 testing/e2e/pcm_score.py --ref saga-media/fixtures/speech_clip_48k.wav --self-stoi
+# self_stoi: stoi=1.0000 sr_in=48000 sr_stoi=16000
+
+python3 testing/e2e/pcm_score.py --ref saga-media/fixtures/speech_clip_48k.wav \
+  --deg-wav saga-media/target/stoi/deg-clean.wav --label host_clean
+# host_clean: corr=0.960 si_snr_db=10.8 stoi=0.9946  (lag-aligned)
+# legacy stoi_eval.py (no lag) on same pair: STOI=0.9312
+```
+
+Exact score command (all four paths):
+```
+python3 testing/e2e/pcm_score.py \
+  --ref saga-media/fixtures/speech_clip_48k.wav \
+  --deg-raw <path.pcm> \
+  --label <label>
+```
+
+### JB cap = 300 ms (keep loss-window fix)
+
+- Reorder/loss wait remains ~200 ms (10 ticks) then jump-forward.
+- Cap **300 ms** (15 × 20 ms): wait window + 100 ms headroom for a short burst; not 1 s (would soak test backlog into call latency).
+- Overflow drops **nearest** (jump-forward), not farthest (which punched future holes).
+- RoQ tick recv drain capped (≤5 datagrams / stop before JB full) so catch-up bursts do not force overflow.
+
+### Metrics (API 35, LAN `http://192.168.1.191:3340`) — `/tmp/pcm-cap300c.log`, `/tmp/peer-cap300b.log`
+
+Mouth-to-ear ≈ `lag_ms` from pcm_score (emulator scheduling; **not** representative of phones).
+
+| Path | corr | SI-SNR | STOI | jb med/max (ms) | late | lost | lag_ms (M2E est.) |
+|------|------|--------|------|-----------------|------|------|-------------------|
+| alice→bob | **0.960** | **10.7 dB** | **0.9940** | 260 / 280 | 0 | 0 | 433.6 |
+| bob→alice | **0.960** | **10.7 dB** | **0.9940** | 260 / 280 | 0 | 0 | 433.6 |
+| alice→peer | **0.960** | **10.7 dB** | **0.9940** | peer ≤20 max | 0 | 0 | 433.6 |
+| peer→alice | **0.960** | **10.8 dB** | **0.9946** | 80 / 100 | 0 | 0 | 433.6 |
+
+### Gates (after cap change)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-cap300.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-cap300-{1..5}.log`) |
+| Merge #27? | **Hold** — do not merge |
+
+---
+
+## 2026-11-12 — Phase 2 Step 3b: Android RoQ verification (#27) — hold fixes
+
+### RoQ noise bisect (T1–T6)
+
+| Stage | Result |
+|-------|--------|
+| T1 JNI LE unpack | **OK** (inject_verify corr=1.000; `JniPcmByteOrderTest` + host ramp test) |
+| T2 local Opus | **OK** (`roq_bisect_stages` / codec loopback) |
+| T3/T4 RTP/SRTP | **OK** (tamper=0, wrong_mode=0 when healthy) |
+| T5/T6 decoded dump | **First bad** |
+
+**Root causes (T5/T6):**
+1. RoQ `select!` starved recv/playout when capture stayed ready
+2. JB premature loss (`ahead>=8`) + 200 ms cap dropped bursted emulator datagrams (`played≈100` while peer `sent≈400`)
+3. Emulator `AudioRecord` returned immediately → inject burned WAV into a tiny capture queue
+
+**Fix:** tick-only media loop; silence/`Wait` before first decode; loss only after ~200 ms then jump-forward; capture paced to 20 ms; capture channel 512; peer `--wav-out` finalized on SIGTERM/Drop. JB cap later set to **300 ms** (see section above; briefly 1 s during diagnosis).
+
+### Metrics (superseded — see STOI + 300 ms section above)
+
+Earlier table reported STOI ≈0.14 due to unaligned pystoi; audio corr/SI-SNR were already ~0.960 / 10.7 dB.
+
+AudioRecord/AudioTrack logged 48 kHz mono PCM16, frame 960, `ByteOrder.nativeOrder()` (= LE).
+
+### Relay
+
+- Bind `0.0.0.0:3340`; advertise LAN URL via `lan-relay-url.sh` / `saga-peer relay-host`
+- E2E `push_iroh_relay_pref` generates LAN prefs (no `127.0.0.1` / `10.0.2.2` ads)
+
+### Gates (earlier hold)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27-rerun2.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-final-{1..5}.log`) |
+| CI | **green** https://github.com/Supermagnum/saga/actions/runs/43283426003 (`ba7946f`) |
+| Merge #27? | **Hold** — do not merge |
 
 ---
 

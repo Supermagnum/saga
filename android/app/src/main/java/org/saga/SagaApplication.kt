@@ -2,6 +2,7 @@ package org.saga
 
 import android.app.Application
 import android.util.Log
+import org.saga.audio.SagaPcmDebugReceiver
 import org.saga.contacts.TestContactSeeder
 import org.saga.iroh.DevIdentityStore
 import org.saga.iroh.IrohIncomingCallBridge
@@ -22,6 +23,7 @@ class SagaApplication : Application() {
         SagaPhoneAccountRegistrar.ensureEnabled(this)
         IrohIncomingCallBridge.init(this)
         IrohRelayStatus.registerQueryReceiver(this)
+        SagaPcmDebugReceiver.register(this)
         IrohRelayStore.getUrl(this)?.let { relayUrl ->
             Log.i(TAG, "Using custom Iroh relay url=[$relayUrl]")
             IrohNativeBridge.setRelayUrl(relayUrl)

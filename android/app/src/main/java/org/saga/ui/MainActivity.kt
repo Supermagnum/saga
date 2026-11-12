@@ -173,6 +173,20 @@ class MainActivity : AppCompatActivity() {
                 )
                 SagaMidCallRehandshakeController.trigger(this, callId, lookupKey, outcome)
             }
+            "org.saga.TEST_PCM_INJECT" -> {
+                val path = intent.getStringExtra("path")
+                org.saga.audio.SagaPcmDebug.setInjectWav(path)
+                Log.i(TAG, "TEST_PCM_INJECT path=[$path]")
+            }
+            "org.saga.TEST_PCM_DUMP" -> {
+                val path = intent.getStringExtra("path")
+                org.saga.audio.SagaPcmDebug.setDumpPath(path)
+                Log.i(TAG, "TEST_PCM_DUMP path=[$path]")
+            }
+            "org.saga.TEST_PCM_DUMP_FINISH" -> {
+                org.saga.audio.SagaPcmDebug.finishDump()
+                Log.i(TAG, "TEST_PCM_DUMP_FINISH")
+            }
             Intent.ACTION_DIAL, Intent.ACTION_VIEW, Intent.ACTION_CALL -> {
                 val data = intent.data
                 if (data?.scheme == "content") {

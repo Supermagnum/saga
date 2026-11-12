@@ -11,15 +11,11 @@ use iroh::tls::CaTlsConfig;
 use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
 use iroh_roq::{Session as RoqSession, ALPN as ROQ_ALPN};
 use log::{info, warn};
-use mock_token::{
-    decrypt_frame, encrypt_frame, run_initiator, run_responder, HandshakeOutcome, MockIdentity,
-    SYNTHETIC_PLAINTEXT,
-};
+use mock_token::{run_initiator, run_responder, HandshakeOutcome, MockIdentity};
 use saga_media::{
     CallRole, MediaCounters, MediaPipeline, SecurityResolution, FRAME_SAMPLES, SAMPLE_RATE,
 };
 use saga_session::HandshakeOutput;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 use crate::audio::{CaptureSource, PlayoutSink};
@@ -28,7 +24,30 @@ use crate::identity::{dev_secret_key, resolve_peer_label};
 /// Same ALPN as Android `saga-iroh-core`.
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 
-const DEFAULT_RELAY: &str = "http://127.0.0.1:3340";
+/// Fallback only when LAN advertise URL is unavailable. Prefer
+/// `/tmp/saga-iroh-relay-url.txt` or `--relay` so emulators never see 127.0.0.1.
+const DEFAULT_RELAY_FALLBACK: &str = "http://127.0.0.1:3340";
+
+/// Resolve the relay URL to advertise to peers (must be reachable from emulators).
+pub fn resolve_relay_url(explicit: Option<&str>) -> String {
+    if let Some(u) = explicit {
+        if !u.is_empty() {
+            return u.to_string();
+        }
+    }
+    if let Ok(u) = std::env::var("SAGA_IROH_RELAY_URL") {
+        if !u.is_empty() {
+            return u;
+        }
+    }
+    if let Ok(s) = std::fs::read_to_string("/tmp/saga-iroh-relay-url.txt") {
+        let t = s.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    DEFAULT_RELAY_FALLBACK.to_string()
+}
 
 #[derive(Clone, Debug)]
 pub struct CallOpts {
@@ -137,7 +156,6 @@ async fn drive_initiator(
             );
             #[cfg(not(debug_assertions))]
             eprintln!("Encrypted");
-            let _ = send_media_probe(&mut send, &output).await;
             let _ = send.finish();
             (Some(output), "Encrypted", Some(prefix))
         }
@@ -202,8 +220,6 @@ async fn drive_responder(
             );
             #[cfg(not(debug_assertions))]
             eprintln!("Encrypted");
-            let media_ok = read_media_probe(&mut recv, &output).await.unwrap_or(false);
-            info!("media probe ok={media_ok}");
             (Some(output), "Encrypted", Some(prefix))
         }
         HandshakeOutcome::Failed { reason } => {
@@ -282,10 +298,7 @@ pub async fn host_pair_roundtrip(
             )
             .await;
             let hs = match outcome {
-                HandshakeOutcome::Encrypted { output } => {
-                    let _ = read_media_probe(&mut recv, &output).await;
-                    Some(output)
-                }
+                HandshakeOutcome::Encrypted { output } => Some(output),
                 HandshakeOutcome::Failed { .. } => None,
             };
             let remote = incoming.remote_id();
@@ -321,7 +334,6 @@ pub async fn host_pair_roundtrip(
     .await;
     let hs_a = match outcome {
         HandshakeOutcome::Encrypted { output } => {
-            let _ = send_media_probe(&mut send, &output).await;
             let _ = send.finish();
             Some(output)
         }
@@ -509,10 +521,28 @@ async fn run_media(
                 }
             }
         });
+    }
+    // Always honor SIGINT/SIGTERM so --wav-out is finalized (Drop + loop break).
+    {
         let stop_c = stop.clone();
         let notify_c = notify.clone();
         tokio::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
+            stop_c.store(true, Ordering::SeqCst);
+            notify_c.notify_waiters();
+        });
+    }
+    #[cfg(unix)]
+    {
+        let stop_c = stop.clone();
+        let notify_c = notify.clone();
+        tokio::spawn(async move {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            let _ = sigterm.recv().await;
             stop_c.store(true, Ordering::SeqCst);
             notify_c.notify_waiters();
         });
@@ -556,10 +586,20 @@ async fn run_media(
             break;
         }
 
-        while tokio::time::timeout(Duration::from_millis(0), pipeline.recv_one_datagram())
-            .await
-            .is_ok()
-        {}
+        // Bounded drain — same policy as media_bridge_roq (avoid JB overflow jumps).
+        let mut drained = 0u32;
+        while drained < 5 {
+            if pipeline.jitter_len() + 1 >= pipeline.jitter_cap() {
+                break;
+            }
+            if tokio::time::timeout(Duration::from_millis(0), pipeline.recv_one_datagram())
+                .await
+                .is_err()
+            {
+                break;
+            }
+            drained = drained.saturating_add(1);
+        }
         let mut out = [0i16; FRAME_SAMPLES];
         if pipeline.playout_frame(&mut out).is_ok() {
             sink.push_frame(&out);
@@ -576,28 +616,33 @@ async fn run_media(
     Ok(PeerOutcome {
         security,
         session_key_prefix: prefix,
-        recorded: sink.recorded,
+        recorded: std::mem::take(&mut sink.recorded),
         counters,
     })
 }
 
 fn print_stats(counters: &MediaCounters, pipeline: &MediaPipeline) {
-    let sent = counters.sent.load(Ordering::Relaxed);
-    let played = counters.played.load(Ordering::Relaxed);
-    let plc = counters.plc_frames.load(Ordering::Relaxed);
-    let drop = counters.datagram_blocked_drops.load(Ordering::Relaxed);
-    let tamper = counters.tamper_or_auth_fail.load(Ordering::Relaxed);
-    let replay = counters.replay.load(Ordering::Relaxed);
-    let wrong = counters.wrong_media_mode.load(Ordering::Relaxed);
-    let loss = if sent + played == 0 {
+    let s = counters.snapshot();
+    let loss = if s.sent + s.played == 0 {
         0.0
     } else {
-        100.0 * plc as f64 / (played + plc).max(1) as f64
+        100.0 * s.plc_frames as f64 / (s.played + s.plc_frames).max(1) as f64
     };
     eprintln!(
-        "stats sent={sent} played={played} loss≈{loss:.1}% jb={}/{} drops={drop} tamper={tamper} replay={replay} wrong_mode={wrong}",
+        "stats sent={} played={} loss≈{loss:.1}% jb={}/{} late={} lost={} \
+         jb_med_ms={} jb_max_ms={} drops={} tamper={} replay={} wrong_mode={}",
+        s.sent,
+        s.played,
         pipeline.jitter_len(),
-        pipeline.jitter_cap()
+        pipeline.jitter_cap(),
+        s.late_arrivals,
+        s.lost_packets,
+        s.jb_depth_median_ms,
+        s.jb_depth_max_ms,
+        s.datagram_blocked_drops,
+        s.tamper_or_auth_fail,
+        s.replay,
+        s.wrong_media_mode
     );
 }
 
@@ -608,10 +653,8 @@ async fn bind_endpoint(identity: &str, opts: &CallOpts) -> Result<Endpoint> {
     if opts.public_relay {
         // N0 defaults.
     } else {
-        let url = opts
-            .relay
-            .clone()
-            .unwrap_or_else(|| DEFAULT_RELAY.to_string());
+        let url = resolve_relay_url(opts.relay.as_deref());
+        info!("using relay url=[{url}]");
         let relay_url: RelayUrl = url.parse().context("relay url")?;
         let map = RelayMap::from_iter([relay_url]);
         builder = builder
@@ -627,31 +670,4 @@ fn resolve_endpoint_id(peer: &str) -> Result<PublicKey> {
     }
     let label = resolve_peer_label(peer);
     Ok(dev_secret_key(&label).public())
-}
-
-async fn send_media_probe(
-    writer: &mut (impl AsyncWriteExt + Unpin),
-    output: &HandshakeOutput,
-) -> Result<bool> {
-    let key = *output.saga_session_key;
-    let frame = encrypt_frame(&key, SYNTHETIC_PLAINTEXT);
-    let len = (frame.len() as u32).to_be_bytes();
-    writer.write_all(&len).await?;
-    writer.write_all(&frame).await?;
-    writer.flush().await?;
-    Ok(true)
-}
-
-async fn read_media_probe(
-    reader: &mut (impl AsyncReadExt + Unpin),
-    output: &HandshakeOutput,
-) -> Result<bool> {
-    let key = *output.saga_session_key;
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut frame = vec![0u8; len];
-    reader.read_exact(&mut frame).await?;
-    let plain = decrypt_frame(&key, &frame).map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(plain == SYNTHETIC_PLAINTEXT)
 }
