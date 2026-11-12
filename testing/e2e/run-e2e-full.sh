@@ -132,8 +132,9 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case2-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\].*$PHONE_BOB_RG" "encrypted handshake" \
-   && check_log "$SERIAL_A" "Playing call_secure exactly once" \
-   && check_log "$SERIAL_B" "\[Saga Media\] start session=.*mode=" \
+   && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "\[Saga Media\] start session=.*mode=" "media bob" 30 \
+   && wait_for_handshake_log "$SERIAL_A" "\[Saga Media\] start session=.*mode=" "media alice" 30 \
    && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
   INIT_PREFIX="$(adb -s "$SERIAL_A" logcat -d 2>/dev/null | rg -o 'initiator session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
   RESP_PREFIX="$(adb -s "$SERIAL_B" logcat -d 2>/dev/null | rg -o 'responder session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
@@ -165,8 +166,9 @@ if contact_call "$SERIAL_B" "$CONTACT_ALICE" "$SERIAL_A" true \
    && capture_callee_screencap "$SERIAL_A" "/tmp/saga-case2b-alice-ringing.png" \
    && answer_incoming "$SERIAL_A" "15550100010" \
    && wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\].*$PHONE_ALICE_RG" "encrypted handshake" \
-   && check_log "$SERIAL_B" "Playing call_secure exactly once" \
-   && check_log "$SERIAL_A" "\[Saga Media\] start session=.*mode=" \
+   && wait_for_handshake_log "$SERIAL_B" "Playing call_secure exactly once" "secure cue" 30 \
+   && wait_for_handshake_log "$SERIAL_A" "\[Saga Media\] start session=.*mode=" "media alice" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "\[Saga Media\] start session=.*mode=" "media bob" 30 \
    && enc_flag "$SERIAL_B" "$PHONE_ALICE"; then
   record "CASE2b:PASS bob->alice secure cue + encrypted + inbound ring + media"
   record_handshake_budget "$SERIAL_B" "case2b bob->alice" || true
