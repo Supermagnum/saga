@@ -1,0 +1,42 @@
+[package]
+name = "saga-peer"
+version = "0.1.0"
+edition = "2021"
+description = "Linux CLI reference peer for Saga voice (dev/test; spec §8)"
+license = "AGPL-3.0-or-later"
+rust-version = "1.91"
+
+[[bin]]
+name = "saga-peer"
+path = "src/main.rs"
+
+[features]
+default = []
+# Optional host mic/speaker path. CI uses --wav-in/--wav-out only (no cpal).
+live-audio = ["dep:cpal", "dep:rubato"]
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+hound = "3.5"
+iroh = { version = "1.0", features = ["test-utils"] }
+iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "c9b02963a1c786f7ae2788ee4c39e44c9c76b01d" }
+log = "0.4"
+mock-token = { path = "../../testing/mock-token" }
+saga-media = { path = "../../saga-media" }
+saga-session = { path = "../../saga-session" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "signal"] }
+zeroize = { version = "1", features = ["derive"] }
+
+cpal = { version = "0.15", optional = true }
+# MIT OR Apache-2.0 — resample when device rate != 48 kHz.
+rubato = { version = "0.16", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[profile.test]
+opt-level = 2

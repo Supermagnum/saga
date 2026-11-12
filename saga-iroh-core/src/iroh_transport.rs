@@ -235,7 +235,7 @@ fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
 
 #[cfg(feature = "mock-token")]
 fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
-    for label in ["15550100010", "15550100011", "15550100012"] {
+    for label in ["15550100010", "15550100011", "15550100012", "15550100013"] {
         if dev_secret_key(label).public() == *remote {
             return Some(label.to_string());
         }

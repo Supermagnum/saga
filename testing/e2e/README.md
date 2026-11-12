@@ -34,7 +34,8 @@ Tests dial **contacts by display name** (`bob`, `alice`, `thor`), not raw Iroh p
 |---------|---------------|----------------------------|------|
 | bob | +15550100010 | `15550100010` | Encrypted callee on SERIAL_B |
 | alice | +15550100011 | `15550100011` | Encrypted callee on SERIAL_A (Case 2b) |
-| thor | +15550100012 | (none) | Cellular-only; cannot secure |
+| laptop | +15550100012 | `15550100012` | Linux saga-peer (encrypted) |
+| thor | +15550100013 | (none) | Cellular-only; cannot secure |
 
 Dev identity prefs (`saga_dev_identity.xml`) use the same phone-digit labels (`15550100010` for bob, `15550100011` for alice). Legacy labels such as `bobpeer12` are **not** used in the dial path.
 
