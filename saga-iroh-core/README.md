@@ -37,6 +37,7 @@ CI sets `CI=true` so Gradle builds **x86_64 only** with `[profile.ci]`; release 
 
 - **`saga-session`**: production Brainpool handshake, confirmation MAC (§12), channel binding, media AEAD. Always compiled into the `.so`.
 - **`testing/mock-token`**: debug-only Galdr FakeTrng + identity/media helpers. Linked only with `--features mock-token`.
+- **`iroh-roq`**: RoQ RTP-over-QUIC (datagrams); git-rev pin of the Saga fork ported to iroh 1.x (`docs/upstream/iroh-roq-port.md`). Wired with `iroh-transport`; media pipeline is Phase 2 Step 2+.
 
 `testing/mock-token` / `saga-session` pin Galdralag-firmware via git **rev**
 `b781bf6fa5ccf8700a5fb061583c31cfa00241a1` (**2026-10-22**), never a branch tip.
