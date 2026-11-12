@@ -78,7 +78,10 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # Do not request obsolete `tools` package (fails sdkmanager on current images).
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
 
       - name: Setup Android NDK (pinned r27c)
         uses: nttld/setup-ndk@v1
@@ -90,15 +93,8 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked --version 3.5.4
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: assembleDebug + unit tests (require native)
         working-directory: android
