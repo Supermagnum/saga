@@ -1,0 +1,35 @@
+[package]
+name = "saga-media"
+version = "0.1.0"
+edition = "2021"
+description = "Saga encrypted media pipeline: Opus + SRTP AEAD_AES_256_GCM over iroh-roq"
+license = "AGPL-3.0-or-later"
+rust-version = "1.91"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+hkdf = "0.12"
+iroh = { version = "1.0", default-features = false, features = ["tls-ring"] }
+iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "c9b02963a1c786f7ae2788ee4c39e44c9c76b01d" }
+opus = "0.3.1"
+rand = "0.8"
+rtp = "0.13"
+saga-session = { path = "../saga-session" }
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread"] }
+tracing = "0.1"
+webrtc-srtp = "0.17.3"
+webrtc-util = { version = "0.11", default-features = false, features = ["marshal"] }
+zeroize = { version = "1", features = ["derive", "zeroize_derive"] }
+
+[dev-dependencies]
+hound = "3.5"
+iroh = { version = "1.0", features = ["test-utils"] }
+rand = { version = "0.8", features = ["small_rng"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+# Audio round-trips are encode-heavy; opt-level 2 keeps CI wall time sane.
+[profile.test]
+opt-level = 2
