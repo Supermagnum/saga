@@ -586,10 +586,20 @@ async fn run_media(
             break;
         }
 
-        while tokio::time::timeout(Duration::from_millis(0), pipeline.recv_one_datagram())
-            .await
-            .is_ok()
-        {}
+        // Bounded drain — same policy as media_bridge_roq (avoid JB overflow jumps).
+        let mut drained = 0u32;
+        while drained < 5 {
+            if pipeline.jitter_len() + 1 >= pipeline.jitter_cap() {
+                break;
+            }
+            if tokio::time::timeout(Duration::from_millis(0), pipeline.recv_one_datagram())
+                .await
+                .is_err()
+            {
+                break;
+            }
+            drained = drained.saturating_add(1);
+        }
         let mut out = [0i16; FRAME_SAMPLES];
         if pipeline.playout_frame(&mut out).is_ok() {
             sink.push_frame(&out);
@@ -612,22 +622,27 @@ async fn run_media(
 }
 
 fn print_stats(counters: &MediaCounters, pipeline: &MediaPipeline) {
-    let sent = counters.sent.load(Ordering::Relaxed);
-    let played = counters.played.load(Ordering::Relaxed);
-    let plc = counters.plc_frames.load(Ordering::Relaxed);
-    let drop = counters.datagram_blocked_drops.load(Ordering::Relaxed);
-    let tamper = counters.tamper_or_auth_fail.load(Ordering::Relaxed);
-    let replay = counters.replay.load(Ordering::Relaxed);
-    let wrong = counters.wrong_media_mode.load(Ordering::Relaxed);
-    let loss = if sent + played == 0 {
+    let s = counters.snapshot();
+    let loss = if s.sent + s.played == 0 {
         0.0
     } else {
-        100.0 * plc as f64 / (played + plc).max(1) as f64
+        100.0 * s.plc_frames as f64 / (s.played + s.plc_frames).max(1) as f64
     };
     eprintln!(
-        "stats sent={sent} played={played} loss≈{loss:.1}% jb={}/{} drops={drop} tamper={tamper} replay={replay} wrong_mode={wrong}",
+        "stats sent={} played={} loss≈{loss:.1}% jb={}/{} late={} lost={} \
+         jb_med_ms={} jb_max_ms={} drops={} tamper={} replay={} wrong_mode={}",
+        s.sent,
+        s.played,
         pipeline.jitter_len(),
-        pipeline.jitter_cap()
+        pipeline.jitter_cap(),
+        s.late_arrivals,
+        s.lost_packets,
+        s.jb_depth_median_ms,
+        s.jb_depth_max_ms,
+        s.datagram_blocked_drops,
+        s.tamper_or_auth_fail,
+        s.replay,
+        s.wrong_media_mode
     );
 }
 

@@ -114,8 +114,10 @@ adb -s "$SERIAL_A" shell screencap -p /sdcard/saga_alice_active.png >/dev/null 2
 adb -s "$SERIAL_A" pull /sdcard/saga_alice_active.png "$OUT_DIR/alice-active-call.png" >/dev/null 2>&1 || true
 
 finish_dump "$SERIAL_B"
-adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -20 || true
-adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -20 || true
+adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/alice_to_bob_logcat_a.txt" | tail -20 || true
+adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -20 || true
+# Receiver JB stats (bob dumps alice→bob).
+rg 'counters session=\[inbound' "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -3 || true
 stop_caller "$SERIAL_A" || true
 stop_caller "$SERIAL_B" || true
 sleep 1
@@ -139,8 +141,9 @@ sleep 8
 capture_callee_screencap "$SERIAL_A" "$OUT_DIR/alice-active-call-b2a.png" || true
 
 finish_dump "$SERIAL_A"
-adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -25 || true
-adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -25 || true
+adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/bob_to_alice_logcat_b.txt" | tail -25 || true
+adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/bob_to_alice_logcat_a.txt" | tail -25 || true
+rg 'counters session=\[inbound' "$OUT_DIR/bob_to_alice_logcat_a.txt" | tail -3 || true
 stop_caller "$SERIAL_A" || true
 stop_caller "$SERIAL_B" || true
 sleep 1
