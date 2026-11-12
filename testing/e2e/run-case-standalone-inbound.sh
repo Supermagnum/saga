@@ -77,7 +77,7 @@ sleep 2
 
 if wait_for_handshake_log "$CALLER" "settled to \[Encrypted\].*$CALLER_PHONE_RG" "caller encrypted" \
    && check_log "$CALLER" "Playing call_secure exactly once" \
-   && check_log "$CALLEE" "[Saga Media] start session=.*mode=" \
+   && check_log "$CALLEE" "\[Saga Media\] start session=.*mode=" \
    && check_log "$CALLEE" "CHECKPOINT incoming Connection setActive"; then
   record "CASE${CASE}:PASS inbound ring + answer + encrypted + media"
   exit 0
