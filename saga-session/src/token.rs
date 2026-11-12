@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use ephemeral_session::{InitMessage, LongTermCert, ResponseMessage, SessionCurve};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-/// Log marker for mock-token handshake lines (E2E / debug).
-pub const MOCK_TOKEN_MARKER: &str = "MOCK_TOKEN";
+/// Log marker for production session handshake lines (debug builds).
+pub const SESSION_LOG_MARKER: &str = "SAGA_SESSION";
 
 /// Galdralag-firmware pin used by this crate (git rev, never a branch).
 pub const EPHEMERAL_SESSION_GIT_REV: &str = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1";
@@ -118,12 +118,36 @@ impl HandshakeOutput {
 /// Opaque initiator state between offer generation and response completion.
 ///
 /// Backends that keep ephemeral private keys on a USB device may store only a
-/// handle here; the mock keeps an in-process [`ephemeral_session::InitiatorSession`].
+/// handle here; the software mock keeps an in-process
+/// [`ephemeral_session::InitiatorSession`].
 pub struct InitiatorPending {
     pub(crate) inner: ephemeral_session::InitiatorSession,
     #[allow(dead_code)] // retained for USB backends that re-check curve on finish
     pub(crate) curve: SessionCurve,
     pub(crate) init_ephemeral_public_key: Vec<u8>,
+}
+
+impl InitiatorPending {
+    /// Construct pending state from an in-progress [`ephemeral_session::InitiatorSession`].
+    pub fn from_session(
+        inner: ephemeral_session::InitiatorSession,
+        curve: SessionCurve,
+        init_ephemeral_public_key: Vec<u8>,
+    ) -> Self {
+        Self {
+            inner,
+            curve,
+            init_ephemeral_public_key,
+        }
+    }
+
+    pub fn init_ephemeral_public_key(&self) -> &[u8] {
+        &self.init_ephemeral_public_key
+    }
+
+    pub fn take_inner(self) -> ephemeral_session::InitiatorSession {
+        self.inner
+    }
 }
 
 /// Produce / verify signed ephemeral offers and derive the shared secret.

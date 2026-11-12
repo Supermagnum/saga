@@ -1,20 +1,17 @@
-//! Mock Galdralag token: real `ephemeral-session` wire types over software Brainpool keys.
+//! Software mock Galdralag token for Saga E2E.
 //!
-//! Pinned firmware rev: see [`token::EPHEMERAL_SESSION_GIT_REV`].
+//! Production handshake types live in [`saga_session`]. This crate keeps
+//! [`MockSessionToken`], [`MockIdentity`], and the synthetic media probe
+//! (until Phase 2 real media lands).
 
-mod channel_bind;
-mod confirm;
 mod handshake_io;
 mod identity;
 mod media;
 mod mock_session;
-mod token;
 
-pub use channel_bind::{bind_iroh_endpoints, transcript_hash};
-pub use confirm::{
-    derive_confirmation_key, initiator_mac, responder_mac, verify_mac, ConfirmationKey,
-    CONFIRM_MAC_LEN,
-};
+/// Log marker for mock-token handshake lines (E2E / debug).
+pub const MOCK_TOKEN_MARKER: &str = "MOCK_TOKEN";
+
 pub use handshake_io::{
     perturb_endpoint_id, run_initiator, run_initiator_with_options, run_responder,
     run_responder_with_options, HandshakeOutcome,
@@ -22,10 +19,13 @@ pub use handshake_io::{
 pub use identity::MockIdentity;
 pub use media::{decrypt_frame, encrypt_frame, SYNTHETIC_PLAINTEXT};
 pub use mock_session::MockSessionToken;
-pub use token::{
-    HandshakeOutput, InitiatorPending, SessionToken, TokenError, DEFAULT_SESSION_CURVE,
-    EPHEMERAL_SESSION_GIT_DATE, EPHEMERAL_SESSION_GIT_REV, EPHEMERAL_SESSION_LICENCE,
-    HANDSHAKE_HARD_TIMEOUT, HANDSHAKE_TARGET_TIMEOUT, MOCK_TOKEN_MARKER,
+
+// Re-export production API so existing `use mock_token::{SessionToken, ...}` keeps working.
+pub use saga_session::{
+    bind_iroh_endpoints, derive_confirmation_key, initiator_mac, responder_mac, transcript_hash,
+    verify_mac, ConfirmationKey, HandshakeOutput, InitiatorPending, SessionToken, TokenError,
+    CONFIRM_MAC_LEN, DEFAULT_SESSION_CURVE, EPHEMERAL_SESSION_GIT_DATE, EPHEMERAL_SESSION_GIT_REV,
+    EPHEMERAL_SESSION_LICENCE, HANDSHAKE_HARD_TIMEOUT, HANDSHAKE_TARGET_TIMEOUT,
 };
 
 pub use ephemeral_session::{

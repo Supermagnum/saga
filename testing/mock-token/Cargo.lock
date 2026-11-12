@@ -711,12 +711,9 @@ dependencies = [
  "galdr-vault",
  "heapless",
  "hex",
- "hkdf 0.12.4",
- "hmac 0.12.1",
  "log",
+ "saga-session",
  "serde_json",
- "sha2 0.10.9",
- "subtle",
  "tokio",
  "zeroize",
 ]
@@ -974,6 +971,21 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "saga-session"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "ephemeral-session",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "log",
+ "sha2 0.10.9",
+ "subtle",
+ "tokio",
+ "zeroize",
+]
 
 [[package]]
 name = "sec1"

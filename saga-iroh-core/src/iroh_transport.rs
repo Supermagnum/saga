@@ -7,11 +7,13 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use iroh::endpoint::Connection;
+#[cfg(feature = "mock-token")]
 use iroh::tls::CaTlsConfig;
-use iroh::{
-    endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
-};
+#[cfg(feature = "mock-token")]
+use iroh::SecretKey;
+use iroh::{endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
 use log::{error, info, warn};
+#[cfg(feature = "mock-token")]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
@@ -32,6 +34,8 @@ const MAX_CONNECT_ATTEMPTS: u32 = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakePoll {
     Pending = 0,
+    /// Constructed when a SessionToken handshake succeeds (mock-token / future USB).
+    #[allow(dead_code)] // release builds have no token backend yet
     Encrypted = 1,
     Failed = 2,
 }
@@ -127,9 +131,16 @@ fn apply_relay_builder(
         .parse()
         .map_err(|e| format!("invalid relay url [{url}]: {e}"))?;
     let relay_map = RelayMap::from_iter([relay_url]);
-    Ok(builder
-        .relay_mode(RelayMode::Custom(relay_map))
-        .ca_tls_config(CaTlsConfig::insecure_skip_verify()))
+    let builder = builder.relay_mode(RelayMode::Custom(relay_map));
+    // Insecure local-relay TLS is debug/E2E only (mock-token / test-utils).
+    #[cfg(feature = "mock-token")]
+    {
+        Ok(builder.ca_tls_config(CaTlsConfig::insecure_skip_verify()))
+    }
+    #[cfg(not(feature = "mock-token"))]
+    {
+        Ok(builder)
+    }
 }
 
 /// Bind the shared endpoint and start accepting inbound Iroh connections.
@@ -151,14 +162,17 @@ pub fn set_force_binding_perturb(force: bool) {
     FORCE_BINDING_PERTURB.store(force, Ordering::SeqCst);
 }
 
+#[cfg(feature = "mock-token")]
 fn force_handshake_fail() -> bool {
     FORCE_HANDSHAKE_FAIL.load(Ordering::SeqCst)
 }
 
+#[cfg(feature = "mock-token")]
 fn force_binding_perturb() -> bool {
     FORCE_BINDING_PERTURB.load(Ordering::SeqCst)
 }
 
+#[cfg(feature = "mock-token")]
 fn local_identity_label() -> String {
     DEV_IDENTITY_LABEL
         .lock()
@@ -167,7 +181,9 @@ fn local_identity_label() -> String {
         .unwrap_or_else(|| "15550100011".to_string())
 }
 
+#[cfg(feature = "mock-token")]
 fn dev_secret_key(peer_label: &str) -> SecretKey {
+    // Literal kept only in mock-token builds (CI release .so greps for this prefix).
     let material = format!("saga-dev-v1:{peer_label}");
     let hash = blake3::hash(material.as_bytes());
     let bytes: [u8; 32] = *hash.as_bytes();
@@ -178,18 +194,27 @@ pub fn parse_peer_endpoint_id(peer_id: &str) -> Result<PublicKey, String> {
     if let Ok(pk) = PublicKey::from_str(peer_id) {
         return Ok(pk);
     }
-    let is_dev_label = peer_id.len() >= 8
-        && peer_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if is_dev_label {
-        let pk = dev_secret_key(peer_id).public();
-        info!("dev peer label [{peer_id}] -> endpoint id [{pk}]");
-        return Ok(pk);
+    #[cfg(feature = "mock-token")]
+    {
+        let is_dev_label = peer_id.len() >= 8
+            && peer_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if is_dev_label {
+            let pk = dev_secret_key(peer_id).public();
+            info!("dev peer label [{peer_id}] -> endpoint id [{pk}]");
+            return Ok(pk);
+        }
+        Err(format!(
+            "invalid iroh peer id [{peer_id}]: expected hex/base32 EndpointId or dev label (8+ alnum)"
+        ))
     }
-    Err(format!(
-        "invalid iroh peer id [{peer_id}]: expected hex/base32 EndpointId or dev label (8+ alnum)"
-    ))
+    #[cfg(not(feature = "mock-token"))]
+    {
+        Err(format!(
+            "invalid iroh peer id [{peer_id}]: expected hex/base32 EndpointId"
+        ))
+    }
 }
 
 fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
@@ -205,12 +230,18 @@ fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
     Ok(&SHARED_ENDPOINT.get().expect("just set").endpoint)
 }
 
+#[cfg(feature = "mock-token")]
 fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
     for label in ["15550100010", "15550100011", "15550100012"] {
         if dev_secret_key(label).public() == *remote {
             return Some(label.to_string());
         }
     }
+    None
+}
+
+#[cfg(not(feature = "mock-token"))]
+fn dev_label_for_endpoint(_remote: &PublicKey) -> Option<String> {
     None
 }
 
@@ -325,8 +356,9 @@ async fn handle_inbound_connection(conn: Connection) {
         }
     };
 
+    // Release builds have no SessionToken backend yet → not encrypted (expected).
     #[cfg(not(feature = "mock-token"))]
-    let (handshake, session_key, media_round_trip_ok) = (HandshakePoll::Encrypted, None, false);
+    let (handshake, session_key, media_round_trip_ok) = (HandshakePoll::Failed, None, false);
 
     if let Ok(mut sessions) = SESSIONS.lock() {
         sessions.insert(
@@ -389,16 +421,19 @@ async fn send_media_round_trip<W: AsyncWriteExt + Unpin>(
 
 async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
-    let dev_label = DEV_IDENTITY_LABEL.lock().ok().and_then(|g| g.clone());
     let mut builder = Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec()]);
     builder = apply_relay_builder(builder)?;
-    if let Some(label) = dev_label {
-        let sk = dev_secret_key(&label);
-        info!(
-            "binding iroh endpoint with dev identity label [{label}] id=[{}]",
-            sk.public()
-        );
-        builder = builder.secret_key(sk);
+    #[cfg(feature = "mock-token")]
+    {
+        let dev_label = DEV_IDENTITY_LABEL.lock().ok().and_then(|g| g.clone());
+        if let Some(label) = dev_label {
+            let sk = dev_secret_key(&label);
+            info!(
+                "binding iroh endpoint with dev identity label [{label}] id=[{}]",
+                sk.public()
+            );
+            builder = builder.secret_key(sk);
+        }
     }
     let endpoint = builder.bind().await.map_err(|e| format!("{e}"))?;
     info!("iroh endpoint bound, local id=[{}]", endpoint.id());
@@ -543,6 +578,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         }
     };
 
+    // No production SessionToken yet: Iroh connects but handshake fails → not encrypted.
     #[cfg(not(feature = "mock-token"))]
     let (handshake, session_key, media_round_trip_ok) = {
         let (mut send, _recv) = connection
@@ -553,7 +589,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("iroh probe write: {e}"))?;
         let _ = send.finish();
-        (HandshakePoll::Encrypted, None, false)
+        (HandshakePoll::Failed, None, false)
     };
 
     info!(

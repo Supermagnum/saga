@@ -4,11 +4,12 @@ use ephemeral_session::{InitMessage, LongTermCert, ResponseMessage, MAX_HANDSHAK
 use log::{info, warn};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::confirm::{initiator_mac, responder_mac, verify_mac, ConfirmationKey, CONFIRM_MAC_LEN};
 use crate::identity::MockIdentity;
 use crate::mock_session::MockSessionToken;
-use crate::token::{
-    HandshakeOutput, SessionToken, TokenError, HANDSHAKE_HARD_TIMEOUT, MOCK_TOKEN_MARKER,
+use crate::MOCK_TOKEN_MARKER;
+use saga_session::{
+    initiator_mac, responder_mac, verify_mac, ConfirmationKey, HandshakeOutput, SessionToken,
+    TokenError, CONFIRM_MAC_LEN, HANDSHAKE_HARD_TIMEOUT,
 };
 
 pub enum HandshakeOutcome {
