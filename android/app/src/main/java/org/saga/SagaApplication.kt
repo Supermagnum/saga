@@ -33,6 +33,9 @@ class SagaApplication : Application() {
         IrohNativeBridge.setForceHandshakeFail(
             org.saga.handshake.SagaTestFlags.isForceHandshakeFail(this)
         )
+        IrohNativeBridge.setForceBindingPerturb(
+            org.saga.handshake.SagaTestFlags.isForceBindingPerturb(this)
+        )
         TestContactSeeder.seedIfMissing(this)
     }
 }

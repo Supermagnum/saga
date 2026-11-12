@@ -103,7 +103,7 @@ async fn vector_p384_init_response_shared_secret_byte_equal() {
 }
 
 #[tokio::test]
-async fn vector_p256_round_trip_both_curves_supported() {
+async fn vector_p256_init_response_shared_secret_byte_equal() {
     let curve = SessionCurve::BrainpoolP256r1;
     let alice = MockIdentity::from_label_curve("vector-alice", curve);
     let bob = MockIdentity::from_label_curve("vector-bob", curve);
@@ -114,9 +114,10 @@ async fn vector_p256_round_trip_both_curves_supported() {
         .initiator_offer(curve, HANDSHAKE_HARD_TIMEOUT)
         .await
         .expect("offer");
+    let init_bytes = init.serialise().expect("ser init").as_slice().to_vec();
     let (resp, out_r) = resp_token
         .responder_reply(
-            init,
+            InitMessage::parse(&init_bytes).expect("parse init"),
             alice.long_term_cert(),
             ENDPOINT_B,
             ENDPOINT_A,
@@ -124,10 +125,11 @@ async fn vector_p256_round_trip_both_curves_supported() {
         )
         .await
         .expect("respond");
+    let resp_bytes = resp.serialise().expect("ser resp").as_slice().to_vec();
     let out_i = init_token
         .initiator_finish(
             pending,
-            resp,
+            ResponseMessage::parse(&resp_bytes).expect("parse resp"),
             bob.long_term_cert(),
             ENDPOINT_A,
             ENDPOINT_B,
@@ -138,5 +140,28 @@ async fn vector_p256_round_trip_both_curves_supported() {
     assert_eq!(
         out_i.saga_session_key.as_slice(),
         out_r.saga_session_key.as_slice()
+    );
+
+    let expected = include_str!("fixtures/p256_vector_c0_d0.json");
+    let v: serde_json::Value = serde_json::from_str(expected).expect("fixture json");
+    assert_eq!(
+        hex::encode(&init_bytes),
+        v["init_message_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(&resp_bytes),
+        v["response_message_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(out_i.shared_secret.as_slice()),
+        v["shared_secret_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(out_i.transcript_hash),
+        v["transcript_hash_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(out_i.saga_session_key.as_slice()),
+        v["saga_session_key_hex"].as_str().unwrap()
     );
 }
