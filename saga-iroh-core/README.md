@@ -57,10 +57,13 @@ token fingerprint (64 hex), not the Iroh key.
 
 Current E2E uses **phone-digit labels** for Iroh identity:
 
-| Emulator | `peer_label` in `saga_dev_identity.xml` |
-|----------|----------------------------------------|
+| Emulator / peer | `peer_label` |
+|-----------------|-------------|
 | bob (5556) | `15550100010` |
 | alice (5554) | `15550100011` |
+| laptop (saga-peer) | `15550100020` |
+
+Cellular-only **thor** (`+15550100012`) has no Saga key and is **not** mapped to an Iroh identity.
 
 `SagaApplication` calls `nativeSetDevIdentity` on start, which binds the shared endpoint and spawns `endpoint.online()` for relay registration.
 

@@ -235,7 +235,9 @@ fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
 
 #[cfg(feature = "mock-token")]
 fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
-    for label in ["15550100010", "15550100011", "15550100012"] {
+    // Only encrypted Iroh peers. Never include cellular-only labels (thor
+    // +15550100012) — those must not resolve to an Iroh identity.
+    for label in ["15550100010", "15550100011", "15550100020"] {
         if dev_secret_key(label).public() == *remote {
             return Some(label.to_string());
         }
