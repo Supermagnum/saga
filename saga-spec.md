@@ -523,21 +523,35 @@ cue code in `org.saga.security.connect`).
 **Canonical:** Galdralag `ephemeral-session` over Iroh after QUIC
 establishment — `InitMessage` / `ResponseMessage` as specified in
 Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4), framed as
-`u16 BE length || serialised message` on the Saga bi-stream. Only the
-transport framing and the post-handshake EndpointId channel binding (§6)
-are Saga-specific; message bytes are crate-identical to firmware.
+`u16 BE length || serialised message` on the Saga bi-stream. Message
+bytes are crate-identical to firmware.
 
-The historical draft table below is **retired** (kept only so old notes
-remain searchable). Do not implement it:
+**Saga-only addition (allowed by §7.4):** after both sides derive
+`HandshakeOutput` (including EndpointId channel binding, §6), they exchange
+confirmation MACs on the same bi-stream so a relayed/swapped-path handshake
+cannot report Encrypted:
+
+| # | Direction | Fields | Purpose |
+|---|---|---|---|
+| 1 | A → B | `u16 BE len \|\| InitMessage` | ephemeral-session offer |
+| 2 | B → A | `u16 BE len \|\| ResponseMessage` | ephemeral-session response |
+| 3 | A → B | `confirm_mac_a:32B` | HMAC-SHA256(`confirm_key`, `saga-confirm-initiator-v1` \|\| `transcript_hash`) |
+| 4 | B → A | `confirm_mac_b:32B` | HMAC-SHA256(`confirm_key`, `saga-confirm-responder-v1` \|\| `transcript_hash`) |
+
+`confirm_key` = HKDF-Expand(`profile_prk`, info =
+`saga-iroh-confirm-v1` \|\| min(EndpointId)\|\|max(EndpointId)) — dedicated
+output, **not** the media/`saga_session_key`. Compare with `subtle`
+constant-time equality. Security state may only resolve to Encrypted after
+both MACs verify, inside the §8 2 s / 4 s budget. Mismatch → handshake
+failure → key-not-found or §5a as usual.
+
+The historical draft CBOR/X25519 table below is **retired**:
 
 | # | Direction | Fields | Purpose |
 |---|---|---|---|
 | ~~1~~ | ~~A -> B~~ | ~~`version:u8`, `ephemeral_pubkey`, `signature`, `nonce_a:16B`~~ | ~~Offer~~ |
 | ~~2~~ | ~~B -> A~~ | ~~`ephemeral_pubkey`, `signature`, `nonce_b:16B`, `profile_choice:u8`~~ | ~~Counter-offer~~ |
 | ~~3~~ | ~~A -> B~~ | ~~`transcript_mac:32B`~~ | ~~Mutual confirmation~~ |
-
-Mismatch or timeout → unencrypted outcome per §5 step 4 (with universal
-audio cue; §5a modal if prior encrypted history).
 
 ## 13. Call-state icon (padlock)
 

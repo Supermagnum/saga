@@ -1,0 +1,36 @@
+NOTICE — third-party licences for Saga
+======================================
+
+Saga itself is licensed under the GNU Affero General Public License v3.0
+or later (see LICENSE). This file lists third-party components distributed
+with or linked into the project. The in-app licences screen is deferred to
+Phase 6.
+
+Galdralag-firmware crates (ephemeral-session, galdr-core, galdr-vault, cess,
+pin-policy, and their in-tree companions)
+  Source: https://github.com/Supermagnum/Galdralag-firmware
+  Pinned rev: b781bf6fa5ccf8700a5fb061583c31cfa00241a1 (2026-10-22)
+  Licence: GPL-3.0
+  Note: GPL-3.0 is treated as compatible with Saga's AGPL-3.0 as a stronger
+  copyleft peer for this dependency. Do not replace the pin with a branch tip.
+
+iroh and related n0 crates (iroh, iroh-base, iroh-relay, iroh-dns, …)
+  Licence: MIT OR Apache-2.0 (per crate)
+
+RustCrypto and related cryptographic crates used via Galdralag / Saga
+  (including but not limited to sha2, hmac, hkdf, aes-gcm, chacha20poly1305,
+  elliptic-curve, ecdsa, bp256, bp384, zeroize, subtle, digest, …)
+  Licence: typically MIT OR Apache-2.0 (see each crate on crates.io)
+
+blake3
+  Licence: Apache-2.0 OR CC0-1.0
+
+Call-state icons (icons/)
+  Licence: AGPL — see icons/readme.md
+
+Android / Google / Jetpack libraries
+  Licence: Apache-2.0 (per artifact)
+
+Other Rust and Android dependencies
+  See Cargo.lock and Gradle dependency reports for the exact set and licence
+  metadata of transitive crates and AARs.

@@ -1,8 +1,84 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 1.5 ephemeral-session mock)
+**Last updated:** 2026-11-12 (Phase 1.5 confirmation MAC + pre-merge #16)
 
-**Status:** Phase 1.5 — mock-token speaks real `ephemeral-session` (Brainpool + ECDSA) via git-pinned firmware rev. Host test vectors + negatives **PASS**. Emulator E2E re-run tracked below. Not ready to ship — needs real audio (Phase 2), release hygiene, physical Galdralag (blocked on xous-core#937).
+**Status:** Phase 1.5 — mock-token + Saga confirmation MAC after channel binding. Host vectors/negatives/confirm **PASS**. Emulator E2E (incl. Case 4b binding perturb) tracked below. Not ready to ship — needs real audio (Phase 2), release hygiene, physical Galdralag (blocked on xous-core#937).
+
+---
+
+## 2026-11-12 — Pre-merge #16 (confirmation MAC, deps, NOTICE)
+
+### Confirmation MAC (spec §12)
+
+After ephemeral-session key derivation + EndpointId channel binding, both sides exchange HMAC-SHA256 confirmation MACs on the Iroh bi-stream (`confirm_key` from dedicated HKDF info `saga-iroh-confirm-v1`, role labels `saga-confirm-initiator-v1` / `saga-confirm-responder-v1`). Compare with `subtle` constant-time. Security state reaches Encrypted only after both MACs verify (inside §8 2 s / 4 s). Mismatch → `TokenError::ConfirmationFailed` → key-not-found / §5a.
+
+| Host test | Result |
+|-----------|--------|
+| Same handshake, different EndpointId sets | confirmation fails |
+| Tampered MAC / wrong role | `ConfirmationFailed` |
+| `force_binding_perturb` on one side | both fail |
+
+Emulator Case 4b: debug-only `force_binding_perturb` SharedPreferences → NOT Encrypted, `call_unsecure` once, §5a for previously-encrypted contact.
+
+### Zeroize + debug-only hash-prefix logs
+
+- `HandshakeOutput` / `ConfirmationKey`: `Zeroize` + `ZeroizeOnDrop` (confirmation key zeroised after successful exchange).
+- Hash-prefix logs are compiled only under `#[cfg(debug_assertions)]` — sites in `testing/mock-token/src/handshake_io.rs`, `mock_session.rs`, and `saga-iroh-core/src/iroh_transport.rs`. Release/`ci` profiles omit them; E2E relies on media round-trip.
+
+### Contact-key migration
+
+No Room schema. Debug builds: `TestContactSeeder` delete+reinsert bob/alice/thor on launch (replaces legacy phone-label DATA1 with 64-hex fingerprints). Documented on `ContactKeyRepository`. Production: wipe app data / clear Contacts manually if upgrading a debug install with label rows.
+
+### Dependencies (galdr-vault / galdr-core)
+
+Not type-only helpers. `ephemeral-session` alone is insufficient for the software mock: `InitiatorSession`/`ResponderSession` need `HardwareTrng` + `VaultStorage`, and LT Brainpool key gen uses `galdr-vault`. `galdr-core` with `test-hal` supplies `FakeTrng` / `FakeVaultStorage` (not re-exported by `ephemeral-session`). Keep both direct deps on `mock-token`.
+
+`cargo tree -e normal --features iroh-transport` (production-shaped; no `mock-token`):
+
+```
+saga-iroh-core
+├── blake3 …
+├── iroh …
+├── jni …
+├── log …
+└── tokio …
+```
+
+**`vsss-rs` is not in that tree.** It appears only when `--features mock-token` pulls `galdr-vault` (E2E / current Android build still enables `mock-token` until Phase 6 hygiene).
+
+### arm64-v8a release link
+
+```bash
+cd saga-iroh-core && cargo ndk -o /tmp/saga-ndk-release -t arm64-v8a \
+  build --release --features iroh-transport,mock-token
+```
+
+Result: `libsaga_iroh_core.so` — ELF aarch64 shared object, links (`liblog`/`libdl`/`libm`/`libc`), exports JNI including `nativeSetForceBindingPerturb`.
+
+### NOTICE
+
+Root `NOTICE` lists Galdralag GPL-3.0, iroh, RustCrypto, blake3, icons AGPL, Android/Jetpack. In-app licences screen deferred to Phase 6.
+
+### Onboarding / guard suite (API 35 re-run)
+
+```bash
+SERIAL_PA=emulator-5558 SERIAL_PEER=emulator-5556 \
+  bash testing/e2e/run-e2e-phone-account-onboarding.sh
+```
+
+Log: `/tmp/e2e-pa-api35-rerun.log`. **PASS** — BLOCK / SETTINGS_UI enable / CASEB / URI `tel:,` / inbound reject while disabled / caller not Encrypted.
+
+### P256r1 vector
+
+Committed: `testing/mock-token/tests/fixtures/p256_vector_c0_d0.json` (FakeTrng `0xC0`/`0xD0`) alongside `p384_vector_c1_d1.json`. Host `vectors.rs` covers both.
+
+### Full E2E (API 35, with Case 4b)
+
+```bash
+SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
+```
+
+Log: `/tmp/e2e-phase15-confirm2.log` — **PASS** Cases 1–6 + Case 4b + Phase 3. Case 4b: binding perturb → confirmation MAC failed → not Encrypted → `call_unsecure` once → §5a downgrade event.
 
 ---
 

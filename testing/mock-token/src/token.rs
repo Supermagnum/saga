@@ -48,6 +48,8 @@ pub enum TokenError {
     TruncatedMessage,
     /// The same InitMessage serialisation was seen again (replay).
     Replay,
+    /// Saga confirmation MAC mismatch (channel-binding / EndpointId disagreement).
+    ConfirmationFailed,
     /// Underlying ephemeral-session / vault failure.
     Protocol(String),
 }
@@ -63,6 +65,7 @@ impl std::fmt::Display for TokenError {
             TokenError::CurveMismatch => write!(f, "handshake curve mismatch"),
             TokenError::TruncatedMessage => write!(f, "truncated handshake message"),
             TokenError::Replay => write!(f, "replayed InitMessage"),
+            TokenError::ConfirmationFailed => write!(f, "confirmation MAC failed"),
             TokenError::Protocol(s) => write!(f, "protocol error: {s}"),
         }
     }
@@ -85,8 +88,9 @@ impl From<ephemeral_session::EphemeralSessionError> for TokenError {
 
 /// Handshake output consumed by Phase 2 (SRTP key derivation).
 ///
-/// Secrets implement [`ZeroizeOnDrop`]. Do not log secret bytes; debug builds
-/// may log a short hash prefix of [`Self::saga_session_key`] only.
+/// Secrets implement [`ZeroizeOnDrop`]. Do not log secret bytes;
+/// `#[cfg(debug_assertions)]` builds may log a short hash prefix of
+/// [`Self::saga_session_key`] only.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct HandshakeOutput {
     /// Classical ECDH shared secret (packed x-coordinate) from ephemeral-session.
@@ -96,8 +100,10 @@ pub struct HandshakeOutput {
     pub transcript_hash: [u8; 32],
     /// HKDF-Extract PRK from ephemeral-session (`SessionKeys::profile_prk`).
     pub profile_prk: Zeroizing<[u8; 32]>,
-    /// Saga media/session key after optional Iroh EndpointId channel binding.
+    /// Saga media/session key after Iroh EndpointId channel binding.
     pub saga_session_key: Zeroizing<[u8; 32]>,
+    /// Dedicated confirmation HMAC key (not the media key); zeroised on drop.
+    pub confirmation_key: Zeroizing<[u8; 32]>,
 }
 
 impl HandshakeOutput {

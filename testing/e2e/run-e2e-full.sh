@@ -137,10 +137,15 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
   INIT_PREFIX="$(adb -s "$SERIAL_A" logcat -d 2>/dev/null | rg -o 'initiator session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
   RESP_PREFIX="$(adb -s "$SERIAL_B" logcat -d 2>/dev/null | rg -o 'responder session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
-  if [[ -n "$INIT_PREFIX" && "$INIT_PREFIX" == "$RESP_PREFIX" ]]; then
-    record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag + session_key_hash_prefix=$INIT_PREFIX"
+  # Hash-prefix logs are #[cfg(debug_assertions)] only; ci/release APKs rely on media round-trip.
+  if [[ -n "$INIT_PREFIX" || -n "$RESP_PREFIX" ]]; then
+    if [[ -n "$INIT_PREFIX" && "$INIT_PREFIX" == "$RESP_PREFIX" ]]; then
+      record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag + session_key_hash_prefix=$INIT_PREFIX"
+    else
+      record "CASE2:FAIL session key hash prefix mismatch initiator=[$INIT_PREFIX] responder=[$RESP_PREFIX]"
+    fi
   else
-    record "CASE2:FAIL session key hash prefix mismatch initiator=[$INIT_PREFIX] responder=[$RESP_PREFIX]"
+    record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag (no debug hash-prefix logs)"
   fi
 else
   record "CASE2:FAIL"
@@ -237,6 +242,37 @@ stop_caller "$SERIAL_A"
 # Case 4 leaves bob InCall / Connection state; force-stop so Case 5 gets a clean listener.
 stop_caller "$SERIAL_B"
 sleep 1
+
+echo ""
+echo "=== Case 4b: Binding perturb → confirmation fail (known contact) ==="
+# Case 4 force-stopped both sides; restart bob cleanly before dial (avoid listen/logcat races).
+adb -s "$SERIAL_A" shell am force-stop org.saga
+adb -s "$SERIAL_B" shell am force-stop org.saga
+sleep 2
+clear_prefs "$SERIAL_A"
+push_pref "$SERIAL_A" "$E2E_DIR/saga_encryption_peer.xml" saga_encryption_established.xml
+push_pref "$SERIAL_B" "$E2E_DIR/saga_encryption_peer_bob.xml" saga_encryption_established.xml
+push_pref "$SERIAL_A" "$E2E_DIR/saga_test_binding_perturb.xml" saga_test.xml
+push_pref "$SERIAL_B" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+wait_for_fresh_relay_online "$SERIAL_B" "bob (binding-perturb)"
+if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
+   && wait_for_incoming_ringing "$SERIAL_B" "bob (binding-perturb)" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
+   && wait_for_handshake_log "$SERIAL_A" "settled to \[Downgraded\]" "binding-perturb downgrade" \
+   && check_log "$SERIAL_A" "Playing call_unsecure exactly once" \
+   && check_log "$SERIAL_A" "Saga Downgrade Event.*recorded downgrade" \
+   && check_log "$SERIAL_A" "confirmation MAC failed" \
+   && ! check_log "$SERIAL_A" "settled to \[Encrypted\]"; then
+  record "CASE4b:PASS binding perturb → confirmation fail + not Encrypted + call_unsecure once + §5a"
+else
+  record "CASE4b:FAIL"
+  adb -s "$SERIAL_A" logcat -d | rg "Downgrade|Handshake|settled|confirm|MOCK_TOKEN|Encrypted|call_unsecure" | tail -24 || true
+  adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|confirm|Handshake|settled" | tail -12 || true
+fi
+stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
+push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
 
 echo ""
 echo "=== Case 5: Mid-call rehandshake (alice calls bob) ==="
