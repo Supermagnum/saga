@@ -16,6 +16,7 @@ import org.saga.handshake.EncryptionEstablishedStore
 import org.saga.handshake.SagaHandshakeCoordinator
 import org.saga.handshake.SagaHandshakeState
 import org.saga.handshake.SagaTestFlags
+import org.saga.audio.SagaCallMediaController
 import org.saga.security.DowngradeEventLog
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallSecurityAudioWarning
@@ -139,10 +140,25 @@ class IrohDialManager private constructor(context: Context) {
     }
 
     fun endCall(telecomCallKey: String) {
-        sessions.remove(telecomCallKey)?.disconnect()
+        val session = sessions.remove(telecomCallKey)
+        val sessionId = session?.sessionId
+        SagaCallMediaController.stop(telecomCallKey, sessionId)
+        session?.disconnect()
         lookupKeys.remove(telecomCallKey)
         incomingConnections.remove(telecomCallKey)
         pendingIncomingActivation.remove(telecomCallKey)
+    }
+
+    fun continueUnencryptedMedia(telecomCallKey: String, lookupKey: String) {
+        val sessionId = sessions[telecomCallKey]?.sessionId
+        SagaCallMediaController.onSecurityResolved(
+            context = appContext,
+            telecomCallId = telecomCallKey,
+            rustSessionId = sessionId,
+            state = SagaHandshakeState.Downgraded,
+            userContinuedPast5a = true
+        )
+        Log.i(TAG, "§5a continue → plain RTP media call=[$telecomCallKey] lookup=[$lookupKey]")
     }
 
     fun sessionIdForCall(telecomCallKey: String): String? = sessions[telecomCallKey]?.sessionId
@@ -150,10 +166,21 @@ class IrohDialManager private constructor(context: Context) {
     fun lookupKeyForCall(telecomCallKey: String): String? = lookupKeys[telecomCallKey]
 
     fun findTelecomCallKey(lookupKey: String): String? {
+        if (sessions.containsKey(lookupKey)) return lookupKey
         lookupKeys.entries.firstOrNull { it.value == lookupKey }?.key?.let { return it }
-        val peerUri = SagaCallUri.forPeer(IrohNodeId.parse(lookupKey) ?: return null).toString()
-        if (sessions.containsKey(peerUri)) return peerUri
+        val digits = lookupKey.filter { it.isDigit() }
+        if (digits.isNotEmpty()) {
+            lookupKeys.entries.firstOrNull { it.value.filter { ch -> ch.isDigit() } == digits }
+                ?.key
+                ?.let { return it }
+            sessions.keys.firstOrNull { it.filter { ch -> ch.isDigit() } == digits }?.let { return it }
+        }
+        IrohNodeId.parse(lookupKey)?.let { id ->
+            val peerUri = SagaCallUri.forPeer(id).toString()
+            if (sessions.containsKey(peerUri)) return peerUri
+        }
         return sessions.keys.firstOrNull { it.contains(lookupKey) }
+            ?: sessions.keys.singleOrNull()
     }
 
     fun handleMidCallRehandshake(
@@ -182,7 +209,11 @@ class IrohDialManager private constructor(context: Context) {
                     delay(300)
                     val poll = IrohNativeBridge.pollHandshake(sessionId)
                     if (poll == IrohNativeBridge.HANDSHAKE_ENCRYPTED) {
-                        Log.i(TAG, "Mid-call re-handshake succeeded — no interruption")
+                        val us = IrohNativeBridge.rekeyMedia(sessionId)
+                        Log.i(
+                            TAG,
+                            "Mid-call re-handshake succeeded — rekey_swap_us=$us (budget <100000)"
+                        )
                     } else {
                         Log.w(TAG, "Mid-call re-handshake expected success but poll=[$poll]")
                     }
@@ -269,6 +300,17 @@ class IrohDialManager private constructor(context: Context) {
                     "CHECKPOINT Connection setActive key=[$telecomCallKey] handshake=[$state] telecomState=[${connection.state}]"
                 )
             }
+        }
+        // Media only after security resolves. Downgraded waits for §5a Continue.
+        if (state == SagaHandshakeState.Encrypted || state == SagaHandshakeState.NeverEncrypted) {
+            val sessionId = sessions[telecomCallKey]?.sessionId
+            SagaCallMediaController.onSecurityResolved(
+                context = appContext,
+                telecomCallId = telecomCallKey,
+                rustSessionId = sessionId,
+                state = state,
+                userContinuedPast5a = false
+            )
         }
     }
 

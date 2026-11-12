@@ -74,10 +74,16 @@
 
         <activity
             android:name=".ui.SagaInCallActivity"
-            android:exported="false"
+            android:exported="true"
             android:launchMode="singleTask"
             android:showOnLockScreen="true"
-            android:turnScreenOn="true" />
+            android:turnScreenOn="true">
+            <!-- Debug / screenshot entry (same pattern as TEST_* intents). -->
+            <intent-filter>
+                <action android:name="org.saga.TEST_IN_CALL_UI" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".telecom.SagaInCallService"

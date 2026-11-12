@@ -1,6 +1,7 @@
 package org.saga.iroh
 
 import android.util.Log
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 object IrohNativeBridge {
@@ -54,6 +55,39 @@ object IrohNativeBridge {
     fun pollHandshake(sessionId: String): Int {
         if (!ensureLoaded()) return HANDSHAKE_ENCRYPTED
         return nativePollHandshake(sessionId)
+    }
+
+    /** mode: 1 = SRTP (encrypted), 2 = plain RTP (not-encrypted Iroh). */
+    fun startMedia(sessionId: String, mode: Int): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeStartMedia(sessionId, mode)
+    }
+
+    fun stopMedia(sessionId: String) {
+        if (libraryLoaded) nativeStopMedia(sessionId)
+    }
+
+    fun pushCapturePcm(sessionId: String, frame: ByteBuffer) {
+        if (libraryLoaded) nativePushCapturePcm(sessionId, frame)
+    }
+
+    fun pullPlaybackPcm(sessionId: String, frame: ByteBuffer): Int {
+        if (!libraryLoaded) return 0
+        return nativePullPlaybackPcm(sessionId, frame)
+    }
+
+    fun setMediaMuted(sessionId: String, muted: Boolean) {
+        if (libraryLoaded) nativeSetMediaMuted(sessionId, muted)
+    }
+
+    fun setMediaHeld(sessionId: String, held: Boolean) {
+        if (libraryLoaded) nativeSetMediaHeld(sessionId, held)
+    }
+
+    /** §5b re-key; returns swap duration in microseconds, or -1 on failure. */
+    fun rekeyMedia(sessionId: String): Long {
+        if (!ensureLoaded()) return -1L
+        return nativeRekeyMedia(sessionId)
     }
 
     fun connect(sessionId: String, peerId: String) {
@@ -117,4 +151,11 @@ object IrohNativeBridge {
     private external fun nativeSetForceHandshakeFail(force: Boolean)
     private external fun nativeSetForceBindingPerturb(force: Boolean)
     private external fun nativePollHandshake(sessionId: String): Int
+    private external fun nativeStartMedia(sessionId: String, mode: Int): Boolean
+    private external fun nativeStopMedia(sessionId: String)
+    private external fun nativePushCapturePcm(sessionId: String, frame: ByteBuffer)
+    private external fun nativePullPlaybackPcm(sessionId: String, frame: ByteBuffer): Int
+    private external fun nativeSetMediaMuted(sessionId: String, muted: Boolean)
+    private external fun nativeSetMediaHeld(sessionId: String, held: Boolean)
+    private external fun nativeRekeyMedia(sessionId: String): Long
 }

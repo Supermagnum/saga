@@ -1,5 +1,6 @@
 package org.saga.telecom
 
+import android.telecom.CallAudioState
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
@@ -7,6 +8,7 @@ import android.telecom.DisconnectCause
 import android.telecom.PhoneAccountHandle
 import android.os.Bundle
 import android.util.Log
+import org.saga.audio.SagaCallMediaController
 import org.saga.iroh.IrohDialManager
 import org.saga.iroh.IrohNodeId
 import org.saga.iroh.PendingDialLookup
@@ -140,6 +142,24 @@ class SagaIrohConnection(
         IrohDialManager.get(appContext).endCall(telecomCallKey)
         setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
         destroy()
+    }
+
+    override fun onHold() {
+        Log.i(TAG, "onHold key=[$telecomCallKey]")
+        val sessionId = IrohDialManager.get(appContext).sessionIdForCall(telecomCallKey)
+        SagaCallMediaController.setHeld(telecomCallKey, sessionId, true)
+        setOnHold()
+    }
+
+    override fun onUnhold() {
+        Log.i(TAG, "onUnhold key=[$telecomCallKey]")
+        val sessionId = IrohDialManager.get(appContext).sessionIdForCall(telecomCallKey)
+        SagaCallMediaController.setHeld(telecomCallKey, sessionId, false)
+        setActive()
+    }
+
+    override fun onCallAudioStateChanged(state: CallAudioState) {
+        SagaCallMediaController.logAudioRoute(state)
     }
 
     companion object {
