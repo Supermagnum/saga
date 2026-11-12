@@ -1,20 +1,22 @@
 //! Dev identity labels (phone-digit keys) shared with Android mock-token builds.
+//!
+//! Cellular-only contacts (thor) must never appear here — they must not resolve
+//! to an Iroh secret or MockIdentity.
 
 use iroh::SecretKey;
 
 pub const LABEL_BOB: &str = "15550100010";
 pub const LABEL_ALICE: &str = "15550100011";
 /// Laptop Linux peer (MockIdentity fingerprint seeded as contact "laptop").
-pub const LABEL_LAPTOP: &str = "15550100012";
-/// Cellular-only contact (no Saga key); moved off 15550100012 so laptop can use it.
-pub const LABEL_THOR: &str = "15550100013";
+/// Distinct from thor's cellular number (+15550100012).
+pub const LABEL_LAPTOP: &str = "15550100020";
 
 /// BrainpoolP384r1 MockIdentity fingerprint for [`LABEL_LAPTOP`].
 pub const FINGERPRINT_LAPTOP: &str =
-    "f14a880d1afcae8a645f9c770a1af38a4c57521d5241d7f48d65324421631928";
+    "43676d156721e149e722ad891a441287df5dcbe66f8daf155f1ba0168274d471";
 
 pub fn known_dev_labels() -> &'static [&'static str] {
-    &[LABEL_BOB, LABEL_ALICE, LABEL_LAPTOP, LABEL_THOR]
+    &[LABEL_BOB, LABEL_ALICE, LABEL_LAPTOP]
 }
 
 /// Same BLAKE3 material as `saga-iroh-core` mock-token builds.

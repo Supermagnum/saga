@@ -420,11 +420,11 @@ where
 
 fn resolve_peer_cert_from_init(init: &InitMessage) -> Result<LongTermCert, TokenError> {
     let wire_fp = init.long_term_fingerprint.as_slice();
+    // Encrypted Iroh peers only — never cellular-only labels (thor +15550100012).
     for label in [
         "15550100010",
         "15550100011",
-        "15550100012",
-        "15550100013",
+        "15550100020",
         "alicepeer1",
         "bobpeer12",
         "vector-alice",
