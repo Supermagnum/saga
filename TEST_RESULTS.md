@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-12 (Phase 2 Step 3b — Android RoQ / PR #27 verification)
 
-**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge until CI green). Root cause of emulator dump noise: RoQ task `select!` starved recv/playout when capture was ready, plus JB underrun clock skip / premature Opus PLC. LAN relay advertises `http://<LAN-IP>:3340` for peer + emulators. Onboarding INBOUND_REJECT 5/5 after harness + 1s reject window.
+**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge). First-bad stage T5/T6; root causes below. CI must stay green.
 
 ---
 
@@ -15,17 +15,23 @@
 | T1 JNI LE unpack | **OK** (inject_verify corr=1.000; `JniPcmByteOrderTest` + host ramp test) |
 | T2 local Opus | **OK** (`roq_bisect_stages` / codec loopback) |
 | T3/T4 RTP/SRTP | **OK** (tamper=0, wrong_mode=0 when healthy) |
-| T5/T6 decoded dump | **First bad** was playout: capture `select!` starvation + JB `advance_on_underrun` / premature PLC before first decode |
+| T5/T6 decoded dump | **First bad** |
 
-**Fix:** tick-only media loop (one send + recv drain + one playout per 20 ms); silence until first decode / on Wait; `PopOutcome::{Packet,Wait,Lost}` with ~200 ms loss timer (not depth-only skip).
+**Root causes (T5/T6):**
+1. RoQ `select!` starved recv/playout when capture stayed ready
+2. JB premature loss (`ahead>=8`) + 200 ms cap dropped bursted emulator datagrams (`played≈100` while peer `sent≈400`)
+3. Emulator `AudioRecord` returned immediately → inject burned WAV into a tiny capture queue
 
-### Metrics (API 35, LAN relay `http://192.168.1.191:3340`)
+**Fix:** tick-only media loop; silence/`Wait` before first decode; loss only after ~200 ms then jump-forward; JB cap 1 s; capture paced to 20 ms; capture channel 512; peer `--wav-out` finalized on SIGTERM/Drop.
+
+### Metrics (API 35, LAN relay `http://192.168.1.191:3340`) — `/tmp/pcm-jb-cap.log`, `/tmp/peer-wav-final.log`
 
 | Path | corr | SI-SNR | STOI |
 |------|------|--------|------|
 | alice→bob (emulator RoQ) | **0.960** | **10.7 dB** | 0.14 |
-| bob→alice | intermittent under load (force-stop between dirs); cold uplink healthy | — | — |
-| peer→alice (saga-peer WAV) | **0.960** | **10.8 dB** | 0.13 |
+| bob→alice | **0.960** | **10.7 dB** | 0.14 |
+| alice→peer (saga-peer WAV) | **0.960** | **10.7 dB** | 0.14 |
+| peer→alice | **0.960** | **10.7–10.8 dB** | 0.13 |
 | inject_verify | **1.000** | — | — |
 | Host speech baseline | 0.961 | 11.1 dB | — |
 
@@ -41,8 +47,8 @@ AudioRecord/AudioTrack logged 48 kHz mono PCM16, frame 960, `ByteOrder.nativeOrd
 | Gate | Result |
 |------|--------|
 | Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27.log`) |
-| Onboarding INBOUND_REJECT | **5/5 PASS** (wait for relay before dial; 1s Rust reject window) |
-| Merge #27? | **Hold** — push and stop on CI green; do not merge |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-run-{1..5}.log`) |
+| Merge #27? | **Hold** — do not merge |
 
 ---
 

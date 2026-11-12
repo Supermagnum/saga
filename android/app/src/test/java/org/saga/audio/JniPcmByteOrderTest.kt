@@ -39,4 +39,12 @@ class JniPcmByteOrderTest {
         assertEquals(960, SagaVoiceAudioEngine.FRAME_SAMPLES)
         assertEquals(48_000, SagaVoiceAudioEngine.SAMPLE_RATE)
     }
+
+    @Test
+    fun frameDuration_is20msAt48k() {
+        // Capture loop paces inject to this period; regressions here re-break B→A.
+        val frameMs =
+            1000L * SagaVoiceAudioEngine.FRAME_SAMPLES / SagaVoiceAudioEngine.SAMPLE_RATE
+        assertEquals(20L, frameMs)
+    }
 }

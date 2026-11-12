@@ -233,14 +233,22 @@ class SagaVoiceAudioEngine(
 
     private fun captureLoop() {
         val rec = record ?: return
+        // Pace to one frame per 20 ms. Emulator AudioRecord can return
+        // immediately; without pacing, debug PCM inject burns the whole WAV
+        // into a small Rust capture queue and most speech is dropped.
+        val frameNs = 1_000_000_000L * FRAME_SAMPLES / SAMPLE_RATE
         try {
             while (running.get()) {
+                val t0 = System.nanoTime()
                 if (held.get()) {
-                    Thread.sleep(20)
+                    sleepFrameRemainder(t0, frameNs)
                     continue
                 }
                 val n = rec.read(captureShorts, 0, FRAME_SAMPLES)
-                if (n <= 0) continue
+                if (n <= 0) {
+                    sleepFrameRemainder(t0, frameNs)
+                    continue
+                }
                 captureBuf.clear()
                 for (i in 0 until n) {
                     captureBuf.putShort(captureShorts[i])
@@ -250,12 +258,26 @@ class SagaVoiceAudioEngine(
                 }
                 captureBuf.flip()
                 if (!muted.get()) {
+                    // Inject (if armed) overwrites mic PCM inside onCaptureFrame.
                     onCaptureFrame(captureBuf)
                 }
+                sleepFrameRemainder(t0, frameNs)
             }
         } catch (t: Throwable) {
             Log.e(TAG, "captureLoop crashed: ${t.message}", t)
             running.set(false)
+        }
+    }
+
+    private fun sleepFrameRemainder(t0: Long, frameNs: Long) {
+        val elapsed = System.nanoTime() - t0
+        val remain = frameNs - elapsed
+        if (remain >= 1_000_000L) {
+            try {
+                Thread.sleep(remain / 1_000_000L, (remain % 1_000_000L).toInt())
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
     }
 
