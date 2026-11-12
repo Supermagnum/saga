@@ -44,7 +44,17 @@ Engine still starts on `VOICE_COMMUNICATION` and logs attach results at runtime.
 
 ### §5b re-key
 
-`MediaPipeline::rekey_srtp` keeps previous decrypt briefly. Host test `tests/rekey.rs`: **rekey_swap_us ≈ 6–12 µs** (≪ 100 ms budget).
+Media **keeps flowing** during §5b re-handshake: the call is not paused for the
+crypto round-trip. On successful re-key, `rekey_srtp` installs new send/receive
+SRTP contexts immediately and keeps the previous **receive** context
+(`decrypt_prev`) briefly so in-flight packets on the old keys still decrypt.
+Send switches to the new keys at the swap; there is no “hold media until
+handshake completes” gate.
+
+Host test `tests/rekey.rs` measures only the **key-swap** duration
+(**rekey_swap_us ≈ 6–12 µs**). That is not the audible gap. **Step 5 Case 8**
+must measure the gap in **decoded PCM at the receiver** across the re-key
+(target under ~100 ms), not the key-swap timer.
 
 ### §16 disguise
 

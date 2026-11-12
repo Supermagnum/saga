@@ -42,7 +42,12 @@ E2E (two emulators, local relay recommended): [`../testing/e2e/README.md`](../te
 
 ## Section 13 icons
 
-`app/src/main/res/drawable/ic_saga_*.xml` — simplified from [`../icons/`](../icons/) (AGPL).
+`app/src/main/res/drawable/ic_saga_padlock_open.xml`, `ic_saga_padlock_locked.xml`, and
+`ic_saga_key_error.xml` are faithful VectorDrawable conversions of
+[`../icons/open.svg`](../icons/open.svg), [`locked.svg`](../icons/locked.svg), and
+[`key-error.svg`](../icons/key-error.svg) (same paths, shapes, and colours; AGPL).
+`ic_saga_padlock_downgraded.xml` is Android-only (no source SVG under `icons/`).
+Do not edit files under [`../icons/`](../icons/).
 
 ## Audio cues
 
