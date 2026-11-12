@@ -21,6 +21,13 @@ Implementation runs on two Android emulators with contact-based dialing and encr
 
 See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
 
+## Recommended OS
+
+[GrapheneOS](https://grapheneos.org/) is the preferred Android OS for running Saga.
+It provides a hardened security model relative to typical Android builds, and it
+includes a duress PIN/password feature. Saga does not require GrapheneOS, but it
+is the recommended environment when choosing a device OS.
+
 ## Testing approach (summary)
 
 E2E uses **two AVDs** (`emulator-5554` = alice, `emulator-5556` = bob), `adb`, and the scripts under `testing/e2e/`. Calls are placed by **contact display name** (`bob`, `alice`, `thor`), not raw peer labels.
