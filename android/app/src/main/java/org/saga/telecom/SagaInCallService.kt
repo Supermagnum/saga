@@ -56,7 +56,7 @@ class SagaInCallService : InCallService() {
         val peerId = SagaCallRegistry.peerIdFromCall(call)
         val displayName = SagaCallRegistry.displayNameFromCall(call)
         val callId = SagaCallRegistry.telecomCallId(call)
-        val snapshot = SagaCallRegistry.initialSnapshot(origin, peerId)
+        val snapshot = SagaCallRegistry.initialSnapshot(origin, peerId, applicationContext)
         SagaCallRegistry.put(
             org.saga.call.ActiveCallContext(
                 telecomCallId = callId,

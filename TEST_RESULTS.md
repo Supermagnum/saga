@@ -1,8 +1,8 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (PhoneAccount SSP forensics + API 29/35 onboarding E2E — PR #15)
+**Last updated:** 2026-11-12 (Full E2E Cases 1–6 with `tel:,` on API 35 — PR #15)
 
-**Status:** Emulator E2E Cases 1–6 **PASS**. PhoneAccount onboarding security fix (#2) **PASS** on API 35 and API 29 (local one-off). Modem forensics: legacy `tel:iroh` → `ATD4764`; production SSP is `tel:,` (PAUSE; no dialable digits, no ATD). Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
+**Status:** Emulator E2E Cases 1–6 **PASS** with production `tel:,` SSP (API 35 Alice/Bob). PhoneAccount onboarding security fix (#2) **PASS** on API 35 and API 29 (local one-off). Modem forensics: legacy `tel:iroh` → `ATD4764`; production SSP is `tel:,` (PAUSE; no dialable digits, no ATD). Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices.
 
 ---
 
@@ -43,6 +43,17 @@ Harness: `testing/e2e/run-e2e-phone-account-onboarding.sh` (blocked dial, Settin
 | `Saga_PA_API29` | `emulator-5554` | 29 | **PASS** — same checks (All calling accounts → Saga switch; `tel:,` placeCall) |
 
 Logs: `/tmp/e2e-pa-api35.log`, `/tmp/e2e-pa-api29.log`. Screenshots: `/tmp/saga-phone-account-screens/onboarding.png`, `banner.png`, `bob-ringing-after-enable.png`.
+
+### Full E2E Cases 1–6 with `tel:,` (API 35, local one-off)
+
+AVDs: `Saga_Alice` / `Saga_Bob` (`emulator-5554` / `emulator-5556`). Log: `/tmp/e2e-full-api35-tel-comma.log`.
+
+```
+CASE1:PASS … CASE2:PASS … CASE2b:PASS … CASE2c:PASS …
+CASE3:PASS … CASE4:PASS … CASE5:PASS … CASE6:PASS … PHASE3:PASS
+```
+
+Also fixed: `initialSnapshot` now uses Contacts-aware key lookup (avoids premature `call_unsecure` on phone lookup keys); InCallActivity defers Iroh KEY_NOT_FOUND connect cue until handshake settles; harness polls callee `setActive` and force-stops bob after Case 4/5 for clean mid-suite state.
 
 ---
 
@@ -127,6 +138,7 @@ First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled 
 
 - Real phones, Galdralag token, Nitrokey USB
 - Production relay TLS (still `test-utils` / insecure path in debug)
+- OEM Telecom/telephony handling of `tel:,` (PAUSE SSP): vendor stacks may reject it or behave differently than the emulator RIL; re-verify on a physical device that no `ATD` / USSD is emitted on a real modem if SIM substitution ever occurs
 
 ### Known gaps before Phase 2
 

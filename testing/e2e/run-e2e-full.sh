@@ -195,8 +195,8 @@ else
      && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case3-bob-ringing.png" \
      && answer_incoming "$SERIAL_B" "15550100011" \
      && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted handshake" \
-     && check_log "$SERIAL_A" "Playing call_secure exactly once" \
-     && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" \
+     && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" 30 \
+     && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30 \
      && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
     record "CASE3:PASS first-trust ring + answer + encrypted + flag set"
   else
@@ -228,6 +228,9 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|Downgrade|setActive|Handshake" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+# Case 4 leaves bob InCall / Connection state; force-stop so Case 5 gets a clean listener.
+stop_caller "$SERIAL_B"
+sleep 1
 
 echo ""
 echo "=== Case 5: Mid-call rehandshake (alice calls bob) ==="
@@ -240,7 +243,7 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case5-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted baseline" \
-   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
+   && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30; then
   adb -s "$SERIAL_A" logcat -c
   midcall_test "$SERIAL_A" "$PHONE_BOB" true
   sleep 5
@@ -271,6 +274,8 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|Incoming" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
 
 echo ""
 echo "=== Case 6: Encrypted call with carrier props (emulator keeps WiFi for Iroh relay) ==="
@@ -284,8 +289,8 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case6-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" \
-   && check_log "$SERIAL_A" "settled to \[Encrypted\]" \
-   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
+   && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30; then
   record "CASE6:PASS ring + answer + encrypted with carrier props (WiFi kept for relay)"
 else
   record "CASE6:FAIL"
