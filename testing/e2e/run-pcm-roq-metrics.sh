@@ -106,11 +106,9 @@ wait_for_incoming_ringing "$SERIAL_B" "bob-pcm" \
   && wait_for_handshake_log "$SERIAL_B" "\\[Saga Media\\] start session=" "media-b" 30 \
   && wait_for_handshake_log "$SERIAL_A" "\\[Saga Media\\] start session=" "media-a" 30
 
-# Do NOT re-arm mid-call (would truncate dump / reset inject / steal focus).
-# Bring in-call UI forward for screencap, then wait for speech to finish (~4.7s clip + margin).
 adb -s "$SERIAL_B" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
-sleep 6
+sleep 7
 capture_callee_screencap "$SERIAL_B" "$OUT_DIR/bob-active-call.png" || true
 adb -s "$SERIAL_A" shell screencap -p /sdcard/saga_alice_active.png >/dev/null 2>&1 || true
 adb -s "$SERIAL_A" pull /sdcard/saga_alice_active.png "$OUT_DIR/alice-active-call.png" >/dev/null 2>&1 || true
@@ -128,7 +126,7 @@ echo "=== Direction B→A: bob inject, alice dump ==="
 # Hard reset so stale dump/inject/Telecom state cannot poison the reverse path.
 adb -s "$SERIAL_A" shell am force-stop org.saga
 adb -s "$SERIAL_B" shell am force-stop org.saga
-sleep 1
+sleep 3
 encrypted_call_armed "$SERIAL_B" alice "$SERIAL_A" "$SERIAL_B" "$SERIAL_A" "$APP_DUMP_A"
 wait_for_incoming_ringing "$SERIAL_A" "alice-pcm" \
   && answer_incoming "$SERIAL_A" "15550100010" \
@@ -136,12 +134,13 @@ wait_for_incoming_ringing "$SERIAL_A" "alice-pcm" \
   && wait_for_handshake_log "$SERIAL_A" "\\[Saga Media\\] start session=" "media-a2" 45 \
   && wait_for_handshake_log "$SERIAL_B" "\\[Saga Media\\] start session=" "media-b2" 30
 
-# Do not re-open dump mid-call (truncates). Wait for speech after media is up.
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 sleep 8
 capture_callee_screencap "$SERIAL_A" "$OUT_DIR/alice-active-call-b2a.png" || true
 
 finish_dump "$SERIAL_A"
+adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -25 || true
+adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tail -25 || true
 stop_caller "$SERIAL_A" || true
 stop_caller "$SERIAL_B" || true
 sleep 1

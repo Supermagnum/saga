@@ -521,10 +521,28 @@ async fn run_media(
                 }
             }
         });
+    }
+    // Always honor SIGINT/SIGTERM so --wav-out is finalized (Drop + loop break).
+    {
         let stop_c = stop.clone();
         let notify_c = notify.clone();
         tokio::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
+            stop_c.store(true, Ordering::SeqCst);
+            notify_c.notify_waiters();
+        });
+    }
+    #[cfg(unix)]
+    {
+        let stop_c = stop.clone();
+        let notify_c = notify.clone();
+        tokio::spawn(async move {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            let _ = sigterm.recv().await;
             stop_c.store(true, Ordering::SeqCst);
             notify_c.notify_waiters();
         });
@@ -588,7 +606,7 @@ async fn run_media(
     Ok(PeerOutcome {
         security,
         session_key_prefix: prefix,
-        recorded: sink.recorded,
+        recorded: std::mem::take(&mut sink.recorded),
         counters,
     })
 }

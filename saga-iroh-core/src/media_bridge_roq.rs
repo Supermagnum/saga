@@ -69,7 +69,9 @@ pub fn start_media(
             }
         };
 
-    let (capture_tx, mut capture_rx) = mpsc::channel::<Vec<i16>>(8);
+    // ≥ speech-clip length at 20 ms/frame so paced inject cannot overrun when
+    // the RoQ tick briefly stalls (was 8 → dump noise on reverse path).
+    let (capture_tx, mut capture_rx) = mpsc::channel::<Vec<i16>>(512);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     let playback_ring = Arc::new(StdMutex::new(VecDeque::with_capacity(RING_FRAMES)));
     let pipeline = Arc::new(TokioMutex::new(Some(pipeline)));
@@ -90,8 +92,7 @@ pub fn start_media(
                 _ = shutdown_rx.recv() => break,
                 // Capture must NOT share this select as a peer branch: when the
                 // audio thread feeds every 20 ms, capture_rx.recv() stays ready
-                // and starves the tick (recv+playout), leaving the dump as
-                // near-silence with a short speech burst (corr~0.5, STOI~0).
+                // and starves the tick (recv+playout).
                 _ = tick.tick() => {
                     let mut guard = pipeline_task.lock().await;
                     if let Some(p) = guard.as_mut() {
@@ -103,8 +104,7 @@ pub fn start_media(
                         .await
                         .is_ok()
                         {}
-                        // Exactly one send per 20 ms tick. Leave backlog queued
-                        // (do not drain/drop — that skips inject WAV samples).
+                        // Exactly one send per 20 ms tick.
                         match capture_rx.try_recv() {
                             Ok(mut pcm) => {
                                 if let Err(e) = p.send_pcm_frame(&mut pcm) {
@@ -130,7 +130,6 @@ pub fn start_media(
                             }
                         }
                         ticks = ticks.wrapping_add(1);
-                        // ~2 s @ 20 ms: surface SRTP/PLC health for RoQ bisect.
                         if ticks.is_multiple_of(100) {
                             let s = p.counters.snapshot();
                             info!(

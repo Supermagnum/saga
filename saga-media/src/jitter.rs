@@ -6,7 +6,9 @@ use crate::codec::FRAME_MS;
 
 const TARGET_MS_LOW: u32 = 40;
 const TARGET_MS_HIGH: u32 = 60;
-const CAP_MS: u32 = 200;
+// Emulator RoQ can deliver a burst after a stall; a 200 ms cap dropped
+// still-useful packets (played stuck ~100 while peer sent ~400).
+const CAP_MS: u32 = 1000;
 
 /// Packet held in the jitter buffer.
 #[derive(Debug, Clone)]
@@ -128,27 +130,30 @@ impl JitterBuffer {
             self.wait_ticks = 0;
             return PopOutcome::Wait;
         }
-        // Later packets exist but `next` is missing: allow a short reorder
-        // window, then declare loss so we do not freeze on a permanent hole
-        // (B→A emulator: played stuck at 10 while plc climbed).
+        // Later packets exist but `next` is missing: wait ~200 ms (10 ticks)
+        // for reorder/slow-recv, then declare loss. Do NOT loss on "ahead>=N"
+        // alone — that skipped still-arriving seqs under paced inject and left
+        // played≈20 / plc climbing on emulator RoQ.
         self.wait_ticks = self.wait_ticks.saturating_add(1);
-        let ahead = self
-            .packets
-            .keys()
-            .next()
-            .map(|e| e.wrapping_sub(next))
-            .unwrap_or(0);
-        // Allow ~200 ms reorder/slow-recv before declaring loss. Too-short
-        // windows skipped still-arriving seqs on loaded emulators.
-        let lost = self.wait_ticks >= 10
-            || ((8u16..0x8000).contains(&ahead) && self.packets.len() as u32 >= self.target_frames);
-        if lost {
-            self.next_seq = Some(next.wrapping_add(1));
-            self.wait_ticks = 0;
-            self.adapt_after_miss();
-            return PopOutcome::Lost;
+        if self.wait_ticks < 10 {
+            return PopOutcome::Wait;
         }
-        PopOutcome::Wait
+        let oldest = self.packets.keys().next().copied();
+        // If the hole is permanent and the buffer already holds a much later
+        // seq, jump forward so we do not PLC one-by-one across a large gap.
+        if let Some(oldest) = oldest {
+            let ahead = oldest.wrapping_sub(next);
+            if (2u16..0x8000).contains(&ahead) {
+                self.next_seq = Some(oldest);
+                self.wait_ticks = 0;
+                self.adapt_after_miss();
+                return PopOutcome::Lost;
+            }
+        }
+        self.next_seq = Some(next.wrapping_add(1));
+        self.wait_ticks = 0;
+        self.adapt_after_miss();
+        PopOutcome::Lost
     }
 
     /// Compatibility: packet or none (treats Wait/Lost as none).
@@ -213,5 +218,42 @@ mod tests {
             jb.push(i, vec![0]);
         }
         assert!(jb.len() <= jb.max_packets());
+    }
+
+    #[test]
+    fn does_not_prematurely_loss_when_ahead_buffered() {
+        let mut jb = JitterBuffer::new();
+        jb.push(10, vec![10]);
+        // Pop first so next=11, then buffer later packets while 11 is in flight.
+        assert!(matches!(jb.pop_ready(), PopOutcome::Packet(_)));
+        jb.push(12, vec![12]);
+        jb.push(13, vec![13]);
+        // Former bug: ahead>=8 && depth fired immediately — here ahead is small,
+        // but even with depth we must Wait for the reorder window.
+        for _ in 0..9 {
+            assert!(matches!(jb.pop_ready(), PopOutcome::Wait));
+        }
+        // Deliver the missing packet before the 10th wait tick.
+        jb.push(11, vec![11]);
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected packet 11 after late arrival");
+        };
+        assert_eq!(p.seq, 11);
+    }
+
+    #[test]
+    fn jumps_forward_after_reorder_window_on_large_gap() {
+        let mut jb = JitterBuffer::new();
+        jb.push(0, vec![0]);
+        assert!(matches!(jb.pop_ready(), PopOutcome::Packet(_)));
+        jb.push(50, vec![50]);
+        for _ in 0..9 {
+            assert!(matches!(jb.pop_ready(), PopOutcome::Wait));
+        }
+        assert!(matches!(jb.pop_ready(), PopOutcome::Lost));
+        let PopOutcome::Packet(p) = jb.pop_ready() else {
+            panic!("expected jump to seq 50");
+        };
+        assert_eq!(p.seq, 50);
     }
 }

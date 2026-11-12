@@ -128,10 +128,17 @@ impl PlayoutSink {
     }
 
     pub fn finalize(&mut self) -> Result<()> {
-        if let Some(path) = &self.wav_out {
-            write_wav_mono_48k(path, &self.recorded)?;
+        if let Some(path) = self.wav_out.take() {
+            write_wav_mono_48k(&path, &self.recorded)?;
         }
         Ok(())
+    }
+}
+
+impl Drop for PlayoutSink {
+    fn drop(&mut self) {
+        // Harness may SIGTERM the peer; still flush --wav-out.
+        let _ = self.finalize();
     }
 }
 
