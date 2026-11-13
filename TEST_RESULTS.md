@@ -47,6 +47,13 @@ Log: `/tmp/saga-conference-e2e3.log`. Screenshots: `/tmp/saga-conference-screenc
 - Dual-SIM multi-call edge cases
 - Reliable public N0 discovery soak on device (emulator public relay flaky)
 
+### Suites
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (1–10 + 4b + C1–C5 + onboarding) | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api35-phase4.log` (~10m) |
+| API 29 Step5 once | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api29-phase4.log` (~9m) |
+
 ### Open decisions
 
 - Whether to keep public-relay soak as optional nightly only (local remains default)
