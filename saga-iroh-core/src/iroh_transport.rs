@@ -11,7 +11,9 @@ use iroh::endpoint::Connection;
 use iroh::tls::CaTlsConfig;
 #[cfg(feature = "mock-token")]
 use iroh::SecretKey;
-use iroh::{endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
+use iroh::{
+    endpoint::presets, Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, Watcher,
+};
 use iroh_roq::ALPN as ROQ_ALPN;
 use log::{error, info, warn};
 use tokio::runtime::Runtime;
@@ -111,14 +113,37 @@ pub fn set_relay_url(url: &str) {
     }
 }
 
+/// True when at least one home relay is currently connected (live sample, not latched).
+fn sample_relay_connected(endpoint: &Endpoint) -> bool {
+    let mut watcher = endpoint.home_relay_status();
+    watcher.get().into_iter().any(|s| s.is_connected())
+}
+
+/// Exposes live home-relay connectivity to JNI / the E2E harness.
+///
+/// Important: do **not** latch Ready forever after the first `online()`. Emulator and
+/// local-relay churn can drop the relay after bind; a latched Ready caused the harness
+/// to dial while the callee could no longer accept inbound (RING flake, first missing
+/// checkpoint = `inbound_accepted`).
 pub fn poll_relay_ready() -> RelayPoll {
-    if SHARED_ENDPOINT.get().is_none() {
+    let Some(holder) = SHARED_ENDPOINT.get() else {
         return RelayPoll::Pending;
+    };
+    if RELAY_POLL.load(Ordering::SeqCst) == RelayPoll::Failed as u8 {
+        return RelayPoll::Failed;
     }
-    match RELAY_POLL.load(Ordering::SeqCst) {
-        1 => RelayPoll::Ready,
-        2 => RelayPoll::Failed,
-        _ => RelayPoll::Pending,
+    if sample_relay_connected(&holder.endpoint) {
+        RELAY_POLL.store(RelayPoll::Ready as u8, Ordering::SeqCst);
+        RelayPoll::Ready
+    } else {
+        let prev = RELAY_POLL.swap(RelayPoll::Pending as u8, Ordering::SeqCst);
+        if prev == RelayPoll::Ready as u8 {
+            warn!(
+                "[Saga Iroh Listen] relay no longer connected — poll returns pending local id=[{}]",
+                holder.endpoint.id()
+            );
+        }
+        RelayPoll::Pending
     }
 }
 
@@ -428,6 +453,28 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
             "[Saga Iroh Listen] relay online, local id=[{}]",
             ep_for_online.id()
         );
+        // Keep RELAY_POLL aligned with live home-relay status (reconnect / drop).
+        let mut watcher = ep_for_online.home_relay_status();
+        while let Ok(statuses) = watcher.updated().await {
+            let connected = statuses.iter().any(|s| s.is_connected());
+            if connected {
+                let prev = RELAY_POLL.swap(RelayPoll::Ready as u8, Ordering::SeqCst);
+                if prev != RelayPoll::Ready as u8 {
+                    info!(
+                        "[Saga Iroh Listen] relay reconnected, local id=[{}]",
+                        ep_for_online.id()
+                    );
+                }
+            } else {
+                let prev = RELAY_POLL.swap(RelayPoll::Pending as u8, Ordering::SeqCst);
+                if prev == RelayPoll::Ready as u8 {
+                    warn!(
+                        "[Saga Iroh Listen] relay disconnected — awaiting reconnect local id=[{}]",
+                        ep_for_online.id()
+                    );
+                }
+            }
+        }
     });
 
     let accept_ep = endpoint.clone();
@@ -440,6 +487,7 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                     match incoming {
                         Some(connecting) => {
                             tokio::spawn(async move {
+                                info!("[Saga Iroh Listen] inbound connecting (QUIC handshake)");
                                 match connecting.await {
                                     Ok(conn) => {
                                         if conn.alpn() == ROQ_ALPN {
@@ -472,6 +520,33 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     })
 }
 
+/// Build a dial address that does not depend solely on pkarr/DNS discovery.
+///
+/// Emulators often fail pkarr (`dns.iroh.link` timeouts). With a custom/local relay
+/// both peers already share, hinting that relay URL on `EndpointAddr` avoids
+/// `No addressing information available` connect flakes (RING first_missing=inbound_accepted).
+fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint) -> EndpointAddr {
+    let addr = EndpointAddr::new(remote);
+    if let Some(url) = relay_url_override() {
+        match url.parse::<RelayUrl>() {
+            Ok(relay_url) => {
+                info!("connect EndpointAddr hints custom relay [{url}]");
+                return addr.with_relay_url(relay_url);
+            }
+            Err(e) => warn!("custom relay url parse failed [{url}]: {e}"),
+        }
+    }
+    let mut watcher = endpoint.home_relay_status();
+    for status in watcher.get() {
+        if status.is_connected() {
+            info!("connect EndpointAddr hints home relay [{}]", status.url());
+            return addr.with_relay_url(status.url().clone());
+        }
+    }
+    warn!("connect EndpointAddr has no relay hint — discovery-only");
+    addr
+}
+
 async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
     let remote = parse_peer_endpoint_id(peer_id)?;
     let endpoint = bind_shared_endpoint()?;
@@ -486,7 +561,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         info!("initiator relay online before connect to [{peer_id}]");
     }
 
-    let addr = EndpointAddr::from(remote);
+    let addr = endpoint_addr_for_peer(remote, endpoint);
     let mut connection = None;
     let mut last_err = String::new();
     for attempt in 1..=MAX_CONNECT_ATTEMPTS {
@@ -562,11 +637,9 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
                 let _ = send.finish();
                 let remote_pk = connection.remote_id();
                 let mut roq = None;
+                let roq_addr = endpoint_addr_for_peer(remote_pk, endpoint);
                 for attempt in 1..=8 {
-                    match endpoint
-                        .connect(EndpointAddr::from(remote_pk), ROQ_ALPN)
-                        .await
-                    {
+                    match endpoint.connect(roq_addr.clone(), ROQ_ALPN).await {
                         Ok(c) => {
                             info!(
                                 "[Saga Media] initiator RoQ connected to {remote_pk} attempt={attempt}"
