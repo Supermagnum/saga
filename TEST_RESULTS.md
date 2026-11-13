@@ -88,8 +88,9 @@ cue WAV played twice. Dedupe skips duplicate `playOnce` within 2.5 s.
 | API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; Case4b RING flake once; Case10 RING flake once (`/tmp/e2e-closeout-api35-step5.log`) |
 | API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold path) |
 | API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35.log`) |
-| API 29 cold Cases 1–6 + 4b + 8 | Case1 **PASS** (cue once); 2–6,2b,4b,8 **PASS**; Case9/10 RING flake (`/tmp/e2e-closeout-api29-cold.log`) |
-| API 29 onboarding + INBOUND_REJECT | see `/tmp/onboard-api29.log` |
+| API 29 cold Cases 1–6 + 4b + 8 | Case1 **PASS** (`cue_count=1`); 2–6,2b,4b,8 **PASS**; Case9/10 RING flake (`/tmp/e2e-closeout-api29-cold.log`) |
+| API 29 onboarding + INBOUND_REJECT | Case A + Settings enable **PASS**; Case B/C **incomplete** — native relay poll hung on `adb shell run-as … cat files/relay_status.txt` (`/tmp/onboard-api29.log`, `/tmp/onboard-api29-2.log`) |
+| CI (PR #31) | **green** — https://github.com/Supermagnum/saga/actions/runs/43371091213 (android ~4m10s, rust ~6m25s) |
 
 ### Needs real hardware
 
