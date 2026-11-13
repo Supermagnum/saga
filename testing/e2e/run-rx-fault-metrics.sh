@@ -5,6 +5,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
+record() { echo "$1"; }
 # shellcheck source=e2e-common.sh
 source "$E2E_DIR/e2e-common.sh"
 
