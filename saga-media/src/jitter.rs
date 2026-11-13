@@ -118,6 +118,8 @@ pub struct JitterBuffer<C: Clock = WallClock> {
     /// Absolute inter-arrival deviation samples (ms).
     jitter_samples: Vec<u32>,
     hits_since_adapt: u32,
+    /// Packets accepted into the buffer (startup gating for loss / grow).
+    received_count: u32,
     late_or_loss_recent: bool,
 }
 
@@ -149,6 +151,7 @@ impl<C: Clock> JitterBuffer<C> {
             last_arrival: None,
             jitter_samples: Vec::with_capacity(JITTER_HIST),
             hits_since_adapt: 0,
+            received_count: 0,
             late_or_loss_recent: false,
         }
     }
@@ -218,6 +221,7 @@ impl<C: Clock> JitterBuffer<C> {
             }
         }
         self.packets.insert(seq, payload);
+        self.received_count = self.received_count.saturating_add(1);
         self.enforce_cap();
         self.recompute_target_from_jitter();
         true
@@ -313,11 +317,20 @@ impl<C: Clock> JitterBuffer<C> {
 
         // Empty buffer / network stall: silence without advancing the cursor so
         // a late-but-still-useful packet is not marked already_played. Grow the
-        // target so the next burst is absorbed. This is underrun, not loss.
+        // target so the next burst is absorbed — but not before the first real
+        // packet (caller often sends before callee JB exists; underrun then
+        // must not inflate the target to the cap).
         if self.packets.is_empty() {
-            if self.playout_started {
+            if self.playout_started && self.received_count > 0 {
                 self.grow_from_late();
             }
+            return PopOutcome::Wait;
+        }
+
+        // Startup: wait out holes until we have primed at least one target of
+        // arrivals — avoids declaring 20–30 "lost" while the peer's send path
+        // is still catching up after media start.
+        if self.received_count < self.target_frames {
             return PopOutcome::Wait;
         }
 
@@ -416,10 +429,29 @@ impl<C: Clock> JitterBuffer<C> {
             return;
         }
         let min_frames = TARGET_MS_MIN / FRAME_MS;
-        if self.target_frames > min_frames.max(2) {
+        // When measured jitter is calm, converge faster than one frame/sec so a
+        // startup spike to the cap does not linger for the whole call.
+        let measured = self.measured_target_frames().unwrap_or(min_frames.max(2));
+        let floor = measured.max(min_frames.max(2));
+        if self.target_frames > floor {
+            let step = ((self.target_frames - floor) / 2).max(1);
+            self.target_frames -= step;
+        } else if self.target_frames > min_frames.max(2) {
             self.target_frames -= 1;
         }
         self.hits_since_adapt = 0;
+    }
+
+    fn measured_target_frames(&self) -> Option<u32> {
+        if self.jitter_samples.len() < 8 {
+            return None;
+        }
+        let mut sorted = self.jitter_samples.clone();
+        sorted.sort_unstable();
+        let idx = (sorted.len() * JITTER_PERCENTILE / 100).min(sorted.len() - 1);
+        let p = sorted[idx];
+        let desired_ms = (p + JITTER_MARGIN_MS).clamp(TARGET_MS_MIN, CAP_MS);
+        Some((desired_ms / FRAME_MS).max(2))
     }
 
     /// When depth sits well above the target, drop one excess future frame so
