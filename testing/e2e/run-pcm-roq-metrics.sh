@@ -102,9 +102,7 @@ echo "=== Direction A→B: alice inject, bob dump ==="
 encrypted_call_armed "$SERIAL_A" bob "$SERIAL_B" "$SERIAL_A" "$SERIAL_B" "$APP_DUMP_B"
 wait_for_incoming_ringing "$SERIAL_B" "bob-pcm" \
   && answer_incoming "$SERIAL_B" "15550100011" \
-  && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted-a" 45 \
-  && wait_for_handshake_log "$SERIAL_B" "\\[Saga Media\\] start session=" "media-b" 30 \
-  && wait_for_handshake_log "$SERIAL_A" "\\[Saga Media\\] start session=" "media-a" 30
+  && wait_for_media_answered "$SERIAL_B" "$SERIAL_A" "alice-bob" 45
 
 adb -s "$SERIAL_B" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
@@ -142,9 +140,7 @@ sleep 3
 encrypted_call_armed "$SERIAL_B" alice "$SERIAL_A" "$SERIAL_B" "$SERIAL_A" "$APP_DUMP_A"
 wait_for_incoming_ringing "$SERIAL_A" "alice-pcm" \
   && answer_incoming "$SERIAL_A" "15550100010" \
-  && wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\]" "encrypted-b" 45 \
-  && wait_for_handshake_log "$SERIAL_A" "\\[Saga Media\\] start session=" "media-a2" 45 \
-  && wait_for_handshake_log "$SERIAL_B" "\\[Saga Media\\] start session=" "media-b2" 30
+  && wait_for_media_answered "$SERIAL_A" "$SERIAL_B" "bob-alice" 45
 
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 sleep 5
