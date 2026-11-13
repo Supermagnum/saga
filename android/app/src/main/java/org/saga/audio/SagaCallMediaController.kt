@@ -11,12 +11,18 @@ import java.util.concurrent.ConcurrentHashMap
  * Starts/stops voice I/O after security resolves; mute/hold/routing via Telecom.
  *
  * Encrypted → SRTP media; not-encrypted → plain RTP (after §5a continue when required).
+ *
+ * Incoming calls may start the native RoQ receive path at handshake Encrypted while
+ * still RINGING so early RTP is not lost before answer; AudioRecord/AudioTrack attach
+ * only when [startAudioIo] runs (typically on answer).
  */
 object SagaCallMediaController {
     private const val TAG = "[Saga CallMedia]"
 
     private val engines = ConcurrentHashMap<String, SagaVoiceAudioEngine>()
-    private val mediaStarted = ConcurrentHashMap<String, Boolean>()
+    private val nativeStarted = ConcurrentHashMap<String, Boolean>()
+    private val audioStarted = ConcurrentHashMap<String, Boolean>()
+    private val rustSessions = ConcurrentHashMap<String, String>()
 
     fun onSecurityResolved(
         context: Context,
@@ -25,7 +31,23 @@ object SagaCallMediaController {
         state: SagaHandshakeState,
         userContinuedPast5a: Boolean
     ) {
-        if (mediaStarted[telecomCallId] == true) return
+        if (!startNativeReceive(telecomCallId, rustSessionId, state, userContinuedPast5a)) {
+            return
+        }
+        startAudioIo(context, telecomCallId)
+    }
+
+    /**
+     * Open SRTP/RoQ ReceiveFlow + JB + tick without AudioRecord/AudioTrack.
+     * Safe to call while RINGING so the callee can ingest before answer.
+     */
+    fun startNativeReceive(
+        telecomCallId: String,
+        rustSessionId: String?,
+        state: SagaHandshakeState,
+        userContinuedPast5a: Boolean = false
+    ): Boolean {
+        if (nativeStarted[telecomCallId] == true) return true
         val encrypted = state == SagaHandshakeState.Encrypted
         val allowPlain = when (state) {
             SagaHandshakeState.NeverEncrypted -> true
@@ -35,16 +57,37 @@ object SagaCallMediaController {
         }
         if (!encrypted && !allowPlain) {
             Log.i(TAG, "media declined call=[$telecomCallId] state=[$state] continued=$userContinuedPast5a")
-            return
+            return false
         }
         if (rustSessionId.isNullOrBlank()) {
             Log.w(TAG, "no rust session for media call=[$telecomCallId]")
-            return
+            return false
         }
         val mode = if (encrypted) 1 else 2 // 1=SRTP, 2=plain
         val started = IrohNativeBridge.startMedia(rustSessionId, mode)
         if (!started) {
             Log.e(TAG, "native startMedia failed call=[$telecomCallId]")
+            return false
+        }
+        nativeStarted[telecomCallId] = true
+        rustSessions[telecomCallId] = rustSessionId
+        Log.i(
+            TAG,
+            "native receive started call=[$telecomCallId] encrypted=$encrypted (audio I/O deferred)"
+        )
+        return true
+    }
+
+    /** Attach mic/speaker once the call is answered / active. */
+    fun startAudioIo(context: Context, telecomCallId: String) {
+        if (audioStarted[telecomCallId] == true) return
+        val rustSessionId = rustSessions[telecomCallId]
+        if (rustSessionId.isNullOrBlank()) {
+            Log.w(TAG, "startAudioIo: no native session call=[$telecomCallId]")
+            return
+        }
+        if (nativeStarted[telecomCallId] != true) {
+            Log.w(TAG, "startAudioIo: native receive not started call=[$telecomCallId]")
             return
         }
         val engine = SagaVoiceAudioEngine(
@@ -65,11 +108,11 @@ object SagaCallMediaController {
             }
         )
         engines[telecomCallId] = engine
-        mediaStarted[telecomCallId] = true
+        audioStarted[telecomCallId] = true
         engine.start()
         Log.i(
             TAG,
-            "media started call=[$telecomCallId] encrypted=$encrypted " +
+            "audio I/O started call=[$telecomCallId] " +
                 "aec=${engine.aecAttached} ns=${engine.nsAttached} agc=${engine.agcAttached}"
         )
     }
@@ -99,7 +142,9 @@ object SagaCallMediaController {
 
     fun stop(telecomCallId: String, rustSessionId: String?) {
         engines.remove(telecomCallId)?.stop()
-        mediaStarted.remove(telecomCallId)
+        audioStarted.remove(telecomCallId)
+        nativeStarted.remove(telecomCallId)
+        rustSessions.remove(telecomCallId)
         if (!rustSessionId.isNullOrBlank()) {
             IrohNativeBridge.stopMedia(rustSessionId)
         }

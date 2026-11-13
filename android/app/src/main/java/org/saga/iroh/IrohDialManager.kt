@@ -101,10 +101,27 @@ class IrohDialManager private constructor(context: Context) {
         if (connection.state == Connection.STATE_RINGING) {
             pendingIncomingActivation[telecomCallKey] = state
             connection.onHandshakeState(state)
-            Log.i(
-                TAG,
-                "Incoming handshake settled to [$state] while RINGING — waiting for answer"
-            )
+            // Open RoQ ReceiveFlow + JB now so caller RTP is not lost before answer.
+            // AudioRecord/AudioTrack attach in publishHandshakeState on answer.
+            if (state == SagaHandshakeState.Encrypted ||
+                state == SagaHandshakeState.NeverEncrypted
+            ) {
+                SagaCallMediaController.startNativeReceive(
+                    telecomCallId = telecomCallKey,
+                    rustSessionId = sessions[telecomCallKey]?.sessionId,
+                    state = state,
+                    userContinuedPast5a = false
+                )
+                Log.i(
+                    TAG,
+                    "Incoming handshake settled to [$state] while RINGING — RX media armed, waiting for answer"
+                )
+            } else {
+                Log.i(
+                    TAG,
+                    "Incoming handshake settled to [$state] while RINGING — waiting for answer"
+                )
+            }
             return
         }
         publishHandshakeState(lookupKey, telecomCallKey, state, connection, activateConnection = true)
