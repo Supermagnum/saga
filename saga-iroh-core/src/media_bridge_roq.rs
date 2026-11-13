@@ -4,9 +4,9 @@
 //! A tokio task owns [`MediaPipeline`] (Opus + SRTP/plain + RoQ datagrams).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 #[cfg(feature = "mock-token")]
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
