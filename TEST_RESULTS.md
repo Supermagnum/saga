@@ -1,8 +1,103 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 Step 5 verification complete)
+**Last updated:** 2026-11-13 (Phase 2 close-out — open items)
 
-**Status:** Step 5 verification finished on PR #28. CI must stay green.
+**Status:** Phase 2 close-out — open items (startup-path audio asymmetry still
+flaky; see close-out section). Items 1, 3, 4, 5 largely done on
+`phase-2-closeout`.
+
+---
+
+## 2026-11-13 — Phase 2 close-out (open items)
+
+Branch: `phase-2-closeout`. Logs under `/tmp/saga-*`, `/tmp/pcm-*`,
+`/tmp/echo-*`, `/tmp/rx-fault*`, `/tmp/e2e-closeout-*`.
+
+### 1. Release randomness and dependencies
+
+- `cargo tree -e features --features iroh-transport` (saga-iroh-core):
+  `galdr-core` **default only** — no `test-hal`. Host test
+  `production_trng_two_handshakes_differ_ephemeral_pubkeys` **PASS**.
+- Production HAL: `OsTrng` (getrandom/OsRng) + `MemoryVaultStorage` in
+  `saga-session` (`hal_os.rs`). FakeTrng / FakeVaultStorage stay in
+  `testing/mock-token` only.
+- **galdr-vault / vsss-rs** remain via `ephemeral-session` (LT cert signing /
+  vault traits). Not mock-only; phone loads LT material into MemoryVault for
+  the handshake. Not behind a feature (required for real sessions).
+- `scripts/check-release-so.sh`: adds FakeTrng, FakeVaultStorage,
+  FakeMonotonicCounter, FakeZeroiseController, FakeRebootController,
+  `test-hal`, `fake_hal`, `saga-echo-mode`, `saga-rx-fault`.
+- Before/after tree: after OsTrng commit, release-shaped tree still pulls
+  galdr-vault/vsss-rs through ephemeral-session; **test-hal absent**.
+
+### 2. alice→bob asymmetry (OPEN)
+
+Root cause: **intermittent startup loss** on the inbound dump path, not a
+stable alice-only codepath. Across close-out runs either direction can land
+corr **0.960 / 10.7 dB / lost=0 / jb≈40** or **0.860 / 4.5 dB / lost≈22–35 /
+jb 260–280**. Send-hold and JB catch-up experiments were flaky/regressive and
+were reverted to Step 5 JB behavior. Open: media-ready peer signal or a
+proven startup catch-up that does not break the healthy path.
+
+| Path (close-out samples) | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
+|--------------------------|------|--------|------|------------|------|------|-----|
+| alice→bob (best) | 0.960 | 10.7 | 0.994 | 40/60 | 0 | 0 | `/tmp/saga-roq-pcm-closeout4`, `/tmp/saga-roq-baseline` |
+| alice→bob (bad) | 0.860 | 4.5 | 0.936 | 260/280 | 0 | 22–35 | `/tmp/pcm-closeout5`, `/tmp/saga-roq-pcm-r1` |
+| bob→alice (best) | 0.960 | 10.7 | 0.994 | 20/40 | 0 | 0 | `/tmp/saga-roq-pcm-closeout5`, `/tmp/pcm-final1` |
+| bob→alice (bad) | 0.860 | 4.5 | 0.936 | 260/280 | 0 | 22–68 | `/tmp/saga-roq-baseline`, `/tmp/pcm-closeout4` |
+
+### 3. Echo mouth-to-ear (one clock, emulator only)
+
+Debug echo mode (`mock-token` / ci APK only; `saga-echo-mode` hygiene).
+Callee re-injects decoded PCM; caller click+dump on one clock.
+
+| Path | RTT | RTT/2 | JB target at RTT | Log |
+|------|-----|-------|------------------|-----|
+| alice↔bob | 817.3 ms | 408.6 ms | ~40–80 ms | `/tmp/echo-rtt2.log`, `/tmp/saga-echo-rtt2/` |
+| bob↔alice | 937.3 ms | 468.6 ms | ~40 ms | same |
+
+Per-stage (order of magnitude): capture ~20 + Opus ~20 + net few + JB target +
+decode ~20 + AudioTrack tens + echo path same again ≈ RTT. **Not
+representative of phones.**
+
+### 4. Loss test without sudo (Rx fault injector)
+
+Debug receive-side drop N% + delay jitter (`saga-rx-fault`; not in release).
+5% drop + ~30 ms jitter:
+
+| Path | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
+|------|------|--------|------|------------|------|------|-----|
+| alice→bob | 0.850 | 4.2 | 0.967 | 40–60 / 100 | 0 | 3–13 | `/tmp/rx-fault.log`, `/tmp/saga-rx-fault/` |
+| bob→alice | 0.305 | -9.9 | 0.428 | 260/280 | 0 | 17–20 | same (short dump + startup flake) |
+
+### 5. Connect-cue dedupe (API 29 Case 1)
+
+Committed on main via #28 / this branch:
+`SagaConnectSecurityCuePlayer` **2.5 s dedupe** (`DEDUPE_MS`). Root cause:
+API 29 could double-fire connect SecurityUpdate / activity resume so the same
+cue WAV played twice. Dedupe skips duplicate `playOnce` within 2.5 s.
+
+- API 35 Case 1: **PASS** `call_unsecure once` (`/tmp/e2e-closeout-api35.log`,
+  `/tmp/e2e-closeout-api35-step5.log`).
+- API 29 cold suite: see close-out suite table below (cue_count=1 required).
+
+### Suites (close-out)
+
+| Gate | Result |
+|------|--------|
+| API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; Case4b RING flake once; Case10 RING flake once (`/tmp/e2e-closeout-api35-step5.log`) |
+| API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold path) |
+| API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35.log`) |
+| API 29 cold Cases 1–6 + 4b + 8 | Case1 **PASS** (cue once); 2–6,2b,4b,8 **PASS**; Case9/10 RING flake (`/tmp/e2e-closeout-api29-cold.log`) |
+| API 29 onboarding + INBOUND_REJECT | see `/tmp/onboard-api29.log` |
+
+### Needs real hardware
+
+- Phone mouth-to-ear with AEC/NS/AGC
+- Speaker / earpiece acoustics
+- Cellular hold on a real modem / dual-SIM
+- Sustained loss/jitter on real mobile networks
+- xous-core#937 items (unchanged)
 
 ---
 
@@ -98,7 +193,6 @@ Harness fixes for API 29: `enable_saga_phone_account` (Settings UI fallback —
 - Speaker / earpiece acoustic quality
 - Cellular hold while Iroh active on dual-SIM / real modem
 - Sustained 5% loss + jitter on mobile networks (`tc netem` / field)
-- Confirm API 29 Case 1 after cue dedupe in a full cold suite pass
 
 ---
 
