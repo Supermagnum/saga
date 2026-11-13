@@ -98,10 +98,10 @@ mod tests {
     fn production_trng_two_handshakes_differ_ephemeral_pubkeys() {
         let mut a = OsTrng::new();
         let mut b = OsTrng::new();
-        let ka = EphemeralKeyPair::generate(SessionCurve::BrainpoolP384r1, &mut a)
-            .expect("ephemeral a");
-        let kb = EphemeralKeyPair::generate(SessionCurve::BrainpoolP384r1, &mut b)
-            .expect("ephemeral b");
+        let ka =
+            EphemeralKeyPair::generate(SessionCurve::BrainpoolP384r1, &mut a).expect("ephemeral a");
+        let kb =
+            EphemeralKeyPair::generate(SessionCurve::BrainpoolP384r1, &mut b).expect("ephemeral b");
         assert_ne!(
             ka.public_key_bytes(),
             kb.public_key_bytes(),
