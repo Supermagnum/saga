@@ -98,6 +98,20 @@ object IrohNativeBridge {
         if (libraryLoaded) nativeSetMediaHeld(sessionId, held)
     }
 
+    /**
+     * Callee answer: flush pre-answer JB, arm send/playout, emit answered signal to peer.
+     */
+    fun onLocalAnswered(sessionId: String): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeOnLocalAnswered(sessionId)
+    }
+
+    /** True once local answer (callee) or remote answered signal (caller) armed send. */
+    fun isSendArmed(sessionId: String): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeIsSendArmed(sessionId)
+    }
+
     /** §5b re-key; returns swap duration in microseconds, or -1 on failure. */
     fun rekeyMedia(sessionId: String): Long {
         if (!ensureLoaded()) return -1L
@@ -174,5 +188,7 @@ object IrohNativeBridge {
     private external fun nativeSetMediaMuted(sessionId: String, muted: Boolean)
     private external fun nativeSetMediaMutedAll(muted: Boolean)
     private external fun nativeSetMediaHeld(sessionId: String, held: Boolean)
+    private external fun nativeOnLocalAnswered(sessionId: String): Boolean
+    private external fun nativeIsSendArmed(sessionId: String): Boolean
     private external fun nativeRekeyMedia(sessionId: String): Long
 }

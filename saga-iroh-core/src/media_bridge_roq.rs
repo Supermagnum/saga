@@ -95,6 +95,10 @@ struct MediaSession {
     mode: AtomicU8,
     muted: AtomicBool,
     held: AtomicBool,
+    /// False until local answer (callee) or remote answered signal (caller).
+    send_armed: Arc<AtomicBool>,
+    /// False until answer — playout must not reach AudioTrack with pre-answer audio.
+    playout_armed: Arc<AtomicBool>,
     capture_tx: mpsc::Sender<Vec<i16>>,
     playback_ring: Arc<StdMutex<VecDeque<Vec<u8>>>>,
     counters: Arc<MediaCounters>,
@@ -102,6 +106,22 @@ struct MediaSession {
     role: CallRole,
     last_rekey_us: StdMutex<u128>,
     _shutdown: mpsc::Sender<()>,
+}
+
+fn arm_on_answered_signal(
+    sid: &str,
+    send_armed: &AtomicBool,
+    playout_armed: &AtomicBool,
+    playback_ring: &StdMutex<VecDeque<Vec<u8>>>,
+) {
+    if send_armed.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    playout_armed.store(true, Ordering::Relaxed);
+    if let Ok(mut ring) = playback_ring.lock() {
+        ring.clear();
+    }
+    info!("[Saga Media] answered signal received session=[{sid}] — send+playout armed");
 }
 
 static MEDIA: std::sync::LazyLock<StdMutex<HashMap<String, MediaSession>>> =
@@ -142,6 +162,10 @@ pub fn start_media(
     let pipeline = Arc::new(TokioMutex::new(Some(pipeline)));
     let pipeline_task = pipeline.clone();
     let playback_task = playback_ring.clone();
+    let send_armed = Arc::new(AtomicBool::new(false));
+    let playout_armed = Arc::new(AtomicBool::new(false));
+    let send_armed_tick = send_armed.clone();
+    let playout_armed_tick = playout_armed.clone();
     let sid = session_id.to_string();
     let _role = role;
 
@@ -151,7 +175,7 @@ pub fn start_media(
             std::time::Duration::from_millis(1000 * FRAME_SAMPLES as u64 / SAMPLE_RATE as u64);
         let mut tick = tokio::time::interval(frame_dur);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        info!("[Saga Media] RoQ task running session=[{sid}]");
+        info!("[Saga Media] RoQ task running session=[{sid}] (send/playout gated until answered)");
         let mut ticks: u64 = 0;
         #[cfg(feature = "mock-token")]
         let mut rx_delayed: VecDeque<(Instant, bytes::Bytes)> = VecDeque::new();
@@ -180,7 +204,16 @@ pub fn start_media(
                                     break;
                                 }
                                 if let Some((_, bytes)) = rx_delayed.pop_front() {
-                                    p.ingest_datagram(&bytes);
+                                    if MediaPipeline::is_answered_signal(&bytes) {
+                                        arm_on_answered_signal(
+                                            &sid,
+                                            &send_armed_tick,
+                                            &playout_armed_tick,
+                                            &playback_task,
+                                        );
+                                    } else {
+                                        p.ingest_datagram(&bytes);
+                                    }
                                 }
                             }
                         }
@@ -194,16 +227,24 @@ pub fn start_media(
                                 || RX_FAULT_JITTER_MS.load(Ordering::Relaxed) > 0;
                             #[cfg(not(feature = "mock-token"))]
                             let fault_on = false;
-                            let got = if fault_on {
-                                #[cfg(feature = "mock-token")]
-                                {
-                                    match tokio::time::timeout(
-                                        std::time::Duration::from_millis(0),
-                                        p.read_datagram_bytes(),
-                                    )
-                                    .await
-                                    {
-                                        Ok(Ok(bytes)) => {
+                            let got = match tokio::time::timeout(
+                                std::time::Duration::from_millis(0),
+                                p.read_datagram_bytes(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(bytes)) => {
+                                    if MediaPipeline::is_answered_signal(&bytes) {
+                                        arm_on_answered_signal(
+                                            &sid,
+                                            &send_armed_tick,
+                                            &playout_armed_tick,
+                                            &playback_task,
+                                        );
+                                        true
+                                    } else if fault_on {
+                                        #[cfg(feature = "mock-token")]
+                                        {
                                             let drop_pct =
                                                 RX_FAULT_DROP_PCT.load(Ordering::Relaxed);
                                             let jitter_ms =
@@ -234,20 +275,17 @@ pub fn start_media(
                                             }
                                             true
                                         }
-                                        _ => false,
+                                        #[cfg(not(feature = "mock-token"))]
+                                        {
+                                            p.ingest_datagram(&bytes);
+                                            true
+                                        }
+                                    } else {
+                                        p.ingest_datagram(&bytes);
+                                        true
                                     }
                                 }
-                                #[cfg(not(feature = "mock-token"))]
-                                {
-                                    false
-                                }
-                            } else {
-                                tokio::time::timeout(
-                                    std::time::Duration::from_millis(0),
-                                    p.recv_one_datagram(),
-                                )
-                                .await
-                                .is_ok()
+                                _ => false,
                             };
                             if !got {
                                 break;
@@ -258,45 +296,55 @@ pub fn start_media(
                         let echo_on = ECHO_MODE.load(Ordering::Relaxed);
                         #[cfg(not(feature = "mock-token"))]
                         let echo_on = false;
-                        // Exactly one send per 20 ms tick.
+                        let may_send = send_armed_tick.load(Ordering::Relaxed);
+                        // Exactly one send per 20 ms tick once answered.
                         // Echo mode replaces mic capture with decoded PCM.
                         if !echo_on {
                             match capture_rx.try_recv() {
                                 Ok(mut pcm) => {
-                                    if let Err(e) = p.send_pcm_frame(&mut pcm) {
-                                        warn!("[Saga Media] send: {e}");
+                                    if may_send {
+                                        if let Err(e) = p.send_pcm_frame(&mut pcm) {
+                                            warn!("[Saga Media] send: {e}");
+                                        }
+                                    } else {
+                                        // Pre-answer: drop capture; do not emit media.
                                     }
                                 }
                                 Err(mpsc::error::TryRecvError::Empty) => {}
                                 Err(mpsc::error::TryRecvError::Disconnected) => break,
                             }
-                        } else {
+                        } else if may_send {
                             // Drain mic so the channel does not back up under echo.
                             while capture_rx.try_recv().is_ok() {}
+                        } else {
+                            while capture_rx.try_recv().is_ok() {}
                         }
-                        let mut out = vec![0i16; FRAME_SAMPLES];
-                        if p.playout_frame(&mut out).is_ok() {
-                            #[cfg(feature = "mock-token")]
-                            if echo_on {
-                                if !ECHO_ARMED_LOG.swap(true, Ordering::Relaxed) {
-                                    info!("saga-echo-mode looping decoded PCM to send");
+                        // Pre-answer: ingest only — never push decoded PCM to the ring.
+                        if playout_armed_tick.load(Ordering::Relaxed) {
+                            let mut out = vec![0i16; FRAME_SAMPLES];
+                            if p.playout_frame(&mut out).is_ok() {
+                                #[cfg(feature = "mock-token")]
+                                if echo_on && may_send {
+                                    if !ECHO_ARMED_LOG.swap(true, Ordering::Relaxed) {
+                                        info!("saga-echo-mode looping decoded PCM to send");
+                                    }
+                                    let mut echo = out.clone();
+                                    if let Err(e) = p.send_pcm_frame(&mut echo) {
+                                        warn!("[Saga Media] echo send: {e}");
+                                    }
                                 }
-                                let mut echo = out.clone();
-                                if let Err(e) = p.send_pcm_frame(&mut echo) {
-                                    warn!("[Saga Media] echo send: {e}");
+                                let mut bytes = vec![0u8; FRAME_BYTES];
+                                for (i, s) in out.iter().enumerate() {
+                                    let b = s.to_le_bytes();
+                                    bytes[i * 2] = b[0];
+                                    bytes[i * 2 + 1] = b[1];
                                 }
-                            }
-                            let mut bytes = vec![0u8; FRAME_BYTES];
-                            for (i, s) in out.iter().enumerate() {
-                                let b = s.to_le_bytes();
-                                bytes[i * 2] = b[0];
-                                bytes[i * 2 + 1] = b[1];
-                            }
-                            if let Ok(mut ring) = playback_task.lock() {
-                                if ring.len() >= RING_FRAMES {
-                                    ring.pop_front();
+                                if let Ok(mut ring) = playback_task.lock() {
+                                    if ring.len() >= RING_FRAMES {
+                                        ring.pop_front();
+                                    }
+                                    ring.push_back(bytes);
                                 }
-                                ring.push_back(bytes);
                             }
                         }
                         ticks = ticks.wrapping_add(1);
@@ -305,7 +353,7 @@ pub fn start_media(
                             info!(
                                 "[Saga Media] counters session=[{sid}] sent={} played={} plc={} \
                                  late={} lost={} jb_med_ms={} jb_max_ms={} jb_target_ms={} \
-                                 tamper={} wrong_mode={} blocked={}",
+                                 tamper={} wrong_mode={} blocked={} send_armed={} playout_armed={}",
                                 s.sent,
                                 s.played,
                                 s.plc_frames,
@@ -316,7 +364,9 @@ pub fn start_media(
                                 s.jb_target_ms,
                                 s.tamper_or_auth_fail,
                                 s.wrong_media_mode,
-                                s.datagram_blocked_drops
+                                s.datagram_blocked_drops,
+                                may_send,
+                                playout_armed_tick.load(Ordering::Relaxed)
                             );
                         }
                     }
@@ -331,6 +381,8 @@ pub fn start_media(
         mode: AtomicU8::new(mode as u8),
         muted: AtomicBool::new(false),
         held: AtomicBool::new(false),
+        send_armed,
+        playout_armed,
         capture_tx,
         playback_ring,
         counters,
@@ -343,13 +395,60 @@ pub fn start_media(
     if let Ok(mut map) = MEDIA.lock() {
         map.insert(session_id.to_string(), session);
         info!(
-            "[Saga Media] start session=[{session_id}] mode={} (RoQ/saga-media)",
+            "[Saga Media] start session=[{session_id}] mode={} (RoQ/saga-media, gated until answered)",
             mode as u8 as i32
         );
         true
     } else {
         false
     }
+}
+
+/// Callee answer: flush pre-answer JB, arm local send/playout, signal peer.
+pub fn on_local_answered(session_id: &str) -> bool {
+    let Ok(map) = MEDIA.lock() else {
+        return false;
+    };
+    let Some(s) = map.get(session_id) else {
+        return false;
+    };
+    let pipeline = s.pipeline.clone();
+    let playback = s.playback_ring.clone();
+    let send_armed = s.send_armed.clone();
+    let playout_armed = s.playout_armed.clone();
+    drop(map);
+
+    let ok = crate::iroh_transport::runtime().block_on(async {
+        let mut guard = pipeline.lock().await;
+        let Some(p) = guard.as_mut() else {
+            return false;
+        };
+        p.flush_pre_answer();
+        if let Err(e) = p.send_answered_signal() {
+            warn!("[Saga Media] answered signal send failed session=[{session_id}]: {e}");
+            return false;
+        }
+        true
+    });
+    if !ok {
+        return false;
+    }
+    if let Ok(mut ring) = playback.lock() {
+        ring.clear();
+    }
+    send_armed.store(true, Ordering::Relaxed);
+    playout_armed.store(true, Ordering::Relaxed);
+    info!("[Saga Media] local answered session=[{session_id}] — JB flushed, signal sent, armed");
+    true
+}
+
+pub fn is_send_armed(session_id: &str) -> bool {
+    let Ok(map) = MEDIA.lock() else {
+        return false;
+    };
+    map.get(session_id)
+        .map(|s| s.send_armed.load(Ordering::Relaxed))
+        .unwrap_or(false)
 }
 
 pub fn stop_media(session_id: &str) {
@@ -403,6 +502,9 @@ pub fn push_capture(session_id: &str, pcm: &[u8]) {
     let Some(s) = map.get(session_id) else {
         return;
     };
+    if !s.send_armed.load(Ordering::Relaxed) {
+        return;
+    }
     if s.muted.load(Ordering::Relaxed) || s.held.load(Ordering::Relaxed) {
         return;
     }

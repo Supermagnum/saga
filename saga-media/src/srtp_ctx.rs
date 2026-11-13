@@ -62,3 +62,6 @@ pub const MAX_MEDIA_DATAGRAM_BYTES: usize = 1 + 12 + 200 + 16 + 8;
 /// First byte of every Saga media datagram (after RoQ flow-id).
 pub const MEDIA_TAG_SRTP: u8 = 1;
 pub const MEDIA_TAG_PLAIN: u8 = 2;
+/// Explicit "callee answered" control datagram (not RTP). Payload: [`ANSWERED_SIGNAL_PAYLOAD`].
+pub const MEDIA_TAG_ANSWERED: u8 = 3;
+pub const ANSWERED_SIGNAL_PAYLOAD: &[u8] = b"SAGAANS1";

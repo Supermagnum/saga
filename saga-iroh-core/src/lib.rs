@@ -591,6 +591,38 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetRxFault(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeOnLocalAnswered(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) -> jboolean {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return jni::sys::JNI_FALSE;
+    };
+    if media_bridge::on_local_answered(&session) {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeIsSendArmed(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) -> jboolean {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return jni::sys::JNI_FALSE;
+    };
+    if media_bridge::is_send_armed(&session) {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId(
     env: JNIEnv,
     _thiz: JObject,

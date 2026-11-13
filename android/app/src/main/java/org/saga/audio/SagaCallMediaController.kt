@@ -6,23 +6,35 @@ import android.util.Log
 import org.saga.handshake.SagaHandshakeState
 import org.saga.iroh.IrohNativeBridge
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Starts/stops voice I/O after security resolves; mute/hold/routing via Telecom.
  *
  * Encrypted → SRTP media; not-encrypted → plain RTP (after §5a continue when required).
  *
- * Incoming calls may start the native RoQ receive path at handshake Encrypted while
- * still RINGING so early RTP is not lost before answer; AudioRecord/AudioTrack attach
- * only when [startAudioIo] runs (typically on answer).
+ * Media is gated until the call is answered:
+ * - Native RoQ receive may start at Encrypted while RINGING (callee) or at Encrypted
+ *   (caller) so the ReceiveFlow exists, but send/playout stay disarmed.
+ * - Callee [onLocalAnswered] flushes the JB, emits an answered signal, and arms I/O.
+ * - Caller arms send/playout only after receiving that signal (no mic media before answer).
  */
 object SagaCallMediaController {
     private const val TAG = "[Saga CallMedia]"
+    private const val ANSWER_POLL_MS = 50L
+    private const val ANSWER_WAIT_MS = 120_000L
 
     private val engines = ConcurrentHashMap<String, SagaVoiceAudioEngine>()
     private val nativeStarted = ConcurrentHashMap<String, Boolean>()
     private val audioStarted = ConcurrentHashMap<String, Boolean>()
     private val rustSessions = ConcurrentHashMap<String, String>()
+    private val answerWaiters = ConcurrentHashMap<String, Future<*>>()
+    private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "saga-media-answer-wait").apply { isDaemon = true }
+    }
 
     fun onSecurityResolved(
         context: Context,
@@ -34,12 +46,17 @@ object SagaCallMediaController {
         if (!startNativeReceive(telecomCallId, rustSessionId, state, userContinuedPast5a)) {
             return
         }
-        startAudioIo(context, telecomCallId)
+        val sid = rustSessions[telecomCallId] ?: return
+        if (IrohNativeBridge.isSendArmed(sid)) {
+            startAudioIo(context, telecomCallId)
+        } else {
+            awaitAnsweredThenStartAudio(context.applicationContext, telecomCallId, sid)
+        }
     }
 
     /**
      * Open SRTP/RoQ ReceiveFlow + JB + tick without AudioRecord/AudioTrack.
-     * Safe to call while RINGING so the callee can ingest before answer.
+     * Send/playout remain gated until [onLocalAnswered] or the peer answered signal.
      */
     fun startNativeReceive(
         telecomCallId: String,
@@ -73,12 +90,31 @@ object SagaCallMediaController {
         rustSessions[telecomCallId] = rustSessionId
         Log.i(
             TAG,
-            "native receive started call=[$telecomCallId] encrypted=$encrypted (audio I/O deferred)"
+            "native receive started call=[$telecomCallId] encrypted=$encrypted " +
+                "(send/playout gated until answered)"
         )
         return true
     }
 
-    /** Attach mic/speaker once the call is answered / active. */
+    /**
+     * Callee answer path: flush pre-answer JB, signal peer, arm send/playout, start Audio I/O.
+     */
+    fun onLocalAnswered(context: Context, telecomCallId: String, rustSessionId: String?) {
+        val sid = rustSessionId ?: rustSessions[telecomCallId]
+        if (sid.isNullOrBlank()) {
+            Log.w(TAG, "onLocalAnswered: no session call=[$telecomCallId]")
+            return
+        }
+        if (nativeStarted[telecomCallId] != true) {
+            Log.w(TAG, "onLocalAnswered: native not started call=[$telecomCallId]")
+        }
+        val ok = IrohNativeBridge.onLocalAnswered(sid)
+        Log.i(TAG, "onLocalAnswered call=[$telecomCallId] nativeOk=$ok")
+        cancelAnswerWait(telecomCallId)
+        startAudioIo(context, telecomCallId)
+    }
+
+    /** Attach mic/speaker once send is armed (answered). */
     fun startAudioIo(context: Context, telecomCallId: String) {
         if (audioStarted[telecomCallId] == true) return
         val rustSessionId = rustSessions[telecomCallId]
@@ -90,10 +126,13 @@ object SagaCallMediaController {
             Log.w(TAG, "startAudioIo: native receive not started call=[$telecomCallId]")
             return
         }
+        if (!IrohNativeBridge.isSendArmed(rustSessionId)) {
+            Log.w(TAG, "startAudioIo: send not armed yet call=[$telecomCallId]")
+            return
+        }
         val engine = SagaVoiceAudioEngine(
             context = context.applicationContext,
             onCaptureFrame = { buf ->
-                // Debug inject replaces mic PCM when armed (RoQ metrics).
                 if (SagaPcmDebug.injectActive()) {
                     SagaPcmDebug.fillInjectFrame(buf)
                 }
@@ -115,6 +154,41 @@ object SagaCallMediaController {
             "audio I/O started call=[$telecomCallId] " +
                 "aec=${engine.aecAttached} ns=${engine.nsAttached} agc=${engine.agcAttached}"
         )
+    }
+
+    private fun awaitAnsweredThenStartAudio(
+        appContext: Context,
+        telecomCallId: String,
+        rustSessionId: String
+    ) {
+        cancelAnswerWait(telecomCallId)
+        val done = AtomicBoolean(false)
+        val future = scheduler.scheduleWithFixedDelay({
+            if (done.get()) return@scheduleWithFixedDelay
+            if (audioStarted[telecomCallId] == true) {
+                done.set(true)
+                cancelAnswerWait(telecomCallId)
+                return@scheduleWithFixedDelay
+            }
+            if (IrohNativeBridge.isSendArmed(rustSessionId)) {
+                if (done.compareAndSet(false, true)) {
+                    Log.i(TAG, "peer answered signal observed call=[$telecomCallId]")
+                    startAudioIo(appContext, telecomCallId)
+                    cancelAnswerWait(telecomCallId)
+                }
+            }
+        }, ANSWER_POLL_MS, ANSWER_POLL_MS, TimeUnit.MILLISECONDS)
+        answerWaiters[telecomCallId] = future
+        scheduler.schedule({
+            if (done.compareAndSet(false, true)) {
+                Log.w(TAG, "answered wait timed out call=[$telecomCallId]")
+                cancelAnswerWait(telecomCallId)
+            }
+        }, ANSWER_WAIT_MS, TimeUnit.MILLISECONDS)
+    }
+
+    private fun cancelAnswerWait(telecomCallId: String) {
+        answerWaiters.remove(telecomCallId)?.cancel(false)
     }
 
     fun setMuted(telecomCallId: String, rustSessionId: String?, muted: Boolean) {
@@ -141,6 +215,7 @@ object SagaCallMediaController {
     }
 
     fun stop(telecomCallId: String, rustSessionId: String?) {
+        cancelAnswerWait(telecomCallId)
         engines.remove(telecomCallId)?.stop()
         audioStarted.remove(telecomCallId)
         nativeStarted.remove(telecomCallId)
