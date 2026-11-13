@@ -31,13 +31,15 @@ Branch: `phase-4-conference`.
 Script: `testing/e2e/run-e2e-conference.sh`. Screenshots under
 `/tmp/saga-conference-screencaps/`.
 
-| Case | Intent | Emulator expectation |
-|------|--------|----------------------|
-| C1 | Second incoming / answer / swap / end | GSM path; soft PASS if multi-call logs |
-| C2 | Merge → children → split | **Often NEEDS_HARDWARE** (no conferenceableCalls) |
-| C3 | Carrier during Iroh hold/resume + Encrypted kept | Local relay + GSM |
-| C4 | Iroh+carrier: Merge hidden / refuse | UI dump + `REFUSE_IROH_CARRIER_MERGE` |
-| C5 | Add call → dialer for second carrier | Intent path |
+| Case | Result | Notes |
+|------|--------|-------|
+| C1 | **NEEDS_HARDWARE** | GSM second-incoming not confirmed on emulator RIL |
+| C2 | **NEEDS_HARDWARE** | Merge not offered (no conferenceableCalls/children) |
+| C3 | **PASS** | Iroh + GSM hold path (`held=` in logcat); screencap c3 |
+| C4 | **PASS** | Merge absent from UI dump with Iroh+carrier |
+| C5 | **PASS** | Add call → dialer intent |
+
+Log: `/tmp/saga-conference-e2e3.log`. Screenshots: `/tmp/saga-conference-screencaps/`.
 
 ### Needs real hardware
 
