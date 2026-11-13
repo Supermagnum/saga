@@ -1,96 +1,88 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 complete)
+**Last updated:** 2026-11-13 (Phase 2 close-out — open items)
 
-**Status:** Phase 2 complete (asymmetry fixed via callee RX-at-Encrypted while
-RINGING; see close-out section). Branch `phase-2-closeout` / PR #31.
+**Status:** Phase 2 close-out — open items (API 29 cold suite / Case4b+10
+RING flakes still open). Branch `phase-2-closeout` / PR #31.
 
 ---
 
-## 2026-11-13 — Phase 2 close-out (complete)
+## 2026-11-13 — Phase 2 close-out (open items)
 
-Branch: `phase-2-closeout`. Logs under `/tmp/saga-*`, `/tmp/pcm-*`,
-`/tmp/echo-*`, `/tmp/rx-fault*`, `/tmp/e2e-closeout-*`, `/tmp/saga-roq-rxfirst2`.
+Branch: `phase-2-closeout`. Logs: `/tmp/preanswer-gate.log`,
+`/tmp/pcm-preanswer-metrics2.log`, `/tmp/echo-rtt3.log`, `/tmp/rx-fault2.log`,
+`/tmp/e2e-api35-final.log`, `/tmp/onboard-api35-final.log`, `/tmp/tree-release-shaped.txt`.
+
+### A. Pre-answer media (follow-up to item 2)
+
+Confirmed: before this change the caller started AudioRecord/send at Encrypted
+(while callee still RINGING). Fix:
+
+- Caller: native RX at Encrypted; **send/playout gated** until explicit
+  answered signal (`MEDIA_TAG_ANSWERED` / `SAGAANS1`).
+- Callee: RX at Encrypted while RINGING; on answer **flush JB + playback ring**,
+  send answered signal, then arm send/playout + Audio I/O.
+- Callee capture stays off until answer (**PASS**).
+
+| Check | Result | Log |
+|-------|--------|-----|
+| caller sent=0 while RINGING (both dirs) | **PASS** | `/tmp/preanswer-gate.log` |
+| callee audio I/O off while RINGING | **PASS** | same |
+| flush + answered signal on answer | **PASS** | same |
+| post-answer metrics alice→bob / bob→alice | corr **0.960** / 10.7 dB / STOI 0.994 / lost=0 / jb≈20–60 | `/tmp/pcm-preanswer-metrics2.log` |
 
 ### 1. Release randomness and dependencies
 
-- `cargo tree -e features --features iroh-transport` (saga-iroh-core):
-  `galdr-core` **default only** — no `test-hal`. Host test
-  `production_trng_two_handshakes_differ_ephemeral_pubkeys` **PASS**.
-- Production HAL: `OsTrng` (getrandom/OsRng) + `MemoryVaultStorage` in
-  `saga-session` (`hal_os.rs`). FakeTrng / FakeVaultStorage stay in
-  `testing/mock-token` only.
-- **galdr-vault / vsss-rs** remain via `ephemeral-session` (LT cert signing /
-  vault traits). Not mock-only; phone loads LT material into MemoryVault for
-  the handshake. Not behind a feature (required for real sessions).
-- `scripts/check-release-so.sh`: adds FakeTrng, FakeVaultStorage,
-  FakeMonotonicCounter, FakeZeroiseController, FakeRebootController,
-  `test-hal`, `fake_hal`, `saga-echo-mode`, `saga-rx-fault`.
-- Before/after tree: after OsTrng commit, release-shaped tree still pulls
-  galdr-vault/vsss-rs through ephemeral-session; **test-hal absent**.
+- Release-shaped `cargo tree -e features --features iroh-transport`:
+  `galdr-core` **default only** — **no `test-hal`** (`/tmp/tree-release-shaped.txt`).
+- Host test `production_trng_two_handshakes_differ_ephemeral_pubkeys` **PASS**.
+- Production: `OsTrng` + `MemoryVaultStorage` in `saga-session`. Fake* only in
+  `testing/mock-token`.
+- **galdr-vault / vsss-rs**: required via `ephemeral-session` for LT/vault
+  handshake material — kept (not mock-only).
+- `scripts/check-release-so.sh`: FakeTrng, FakeVaultStorage, test-hal,
+  saga-echo-mode, saga-rx-fault.
 
-### 2. alice→bob asymmetry (FIXED)
+### 2. alice→bob asymmetry (FIXED) + pre-answer gate above
 
-Root cause ([Investigate alice→bob RoQ media asymmetry](7b7ba061-f02f-480e-8ee5-da7651a19e42)):
-caller started RoQ send at Encrypted while callee deferred ReceiveFlow until
-answer if still RINGING (~1+s of lost packets → JB grew to ~260–300 ms).
+Root cause: caller sent before callee ReceiveFlow existed. RX-at-Encrypted while
+RINGING + answered-signal send gate. Steady metrics unchanged at 0.960 / 10.7.
 
-Fix: `startNativeReceive` at Encrypted while RINGING (SRTP + ReceiveFlow + JB);
-`startAudioIo` only on answer. Before: corr 0.860 / 4.5 dB / lost 22–35 /
-jb 260–280. After (`/tmp/pcm-rxfirst2.log`, `/tmp/saga-roq-rxfirst2`):
+### 3. Echo mouth-to-ear (emulator only; not phone-representative)
 
-| Path | corr | SI-SNR | STOI | JB med/max | late | lost |
-|------|------|--------|------|------------|------|------|
-| alice→bob | 0.960 | 10.7 | 0.994 | 20/40 | 0 | 0 |
-| bob→alice | 0.960 | 10.7 | 0.994 | 40/60 | 0 | 0 |
+| Path | RTT | RTT/2 | JB target | Log |
+|------|-----|-------|-----------|-----|
+| alice↔bob | 117.8 ms | 58.9 ms | 40 ms | `/tmp/echo-rtt3.log` |
+| bob↔alice | 91.8 ms | 45.9 ms | 40 ms | same |
 
-`jb_target_ms` stays **40** throughout both directions.
+Hygiene: `saga-echo-mode` in `check-release-so.sh`.
 
-### 3. Echo mouth-to-ear (one clock, emulator only)
-
-Debug echo mode (`mock-token` / ci APK only; `saga-echo-mode` hygiene).
-Callee re-injects decoded PCM; caller click+dump on one clock.
-
-| Path | RTT | RTT/2 | JB target at RTT | Log |
-|------|-----|-------|------------------|-----|
-| alice↔bob | 817.3 ms | 408.6 ms | ~40–80 ms | `/tmp/echo-rtt2.log`, `/tmp/saga-echo-rtt2/` |
-| bob↔alice | 937.3 ms | 468.6 ms | ~40 ms | same |
-
-Per-stage (order of magnitude): capture ~20 + Opus ~20 + net few + JB target +
-decode ~20 + AudioTrack tens + echo path same again ≈ RTT. **Not
-representative of phones.**
-
-### 4. Loss test without sudo (Rx fault injector)
-
-Debug receive-side drop N% + delay jitter (`saga-rx-fault`; not in release).
-5% drop + ~30 ms jitter:
+### 4. Receive-side fault injector (5% + ~30 ms)
 
 | Path | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
 |------|------|--------|------|------------|------|------|-----|
-| alice→bob | 0.850 | 4.2 | 0.967 | 40–60 / 100 | 0 | 3–13 | `/tmp/rx-fault.log`, `/tmp/saga-rx-fault/` |
-| bob→alice | 0.305 | -9.9 | 0.428 | 260/280 | 0 | 17–20 | same (short dump + startup flake) |
+| alice→bob | 0.850 | 4.2 | 0.967 | 60/100 | 0 | ~14 | `/tmp/rx-fault2.log` |
+| bob→alice | 0.845 | 4.0 | 0.968 | 60/100 | 0 | ~14 | same |
 
-### 5. Connect-cue dedupe (API 29 Case 1)
+### 5. Connect-cue dedupe
 
-Committed on main via #28 / this branch:
-`SagaConnectSecurityCuePlayer` **2.5 s dedupe** (`DEDUPE_MS`). Root cause:
-API 29 could double-fire connect SecurityUpdate / activity resume so the same
-cue WAV played twice. Dedupe skips duplicate `playOnce` within 2.5 s.
+Committed (`DEDUPE_MS=2500`). Root cause: API 29 double-fired connect
+SecurityUpdate / resume → same cue twice.
 
-- API 35 Case 1: **PASS** `call_unsecure once` (`/tmp/e2e-closeout-api35.log`,
-  `/tmp/e2e-closeout-api35-step5.log`).
-- API 29 cold suite: see close-out suite table below (cue_count=1 required).
+- API 35 Case 1: **PASS** cue once (`/tmp/e2e-api35-final.log`).
+- API 29 Case 1: previously **PASS** cue once on cold suite
+  (`/tmp/e2e-closeout-api29-cold.log`); **re-run blocked** this session — API 29
+  emulators wedged on `adb`/`run-as` (timeout added to relay poll).
 
-### Suites (close-out)
+### Suites (this session)
 
 | Gate | Result |
 |------|--------|
-| API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; Case4b RING flake once; Case10 RING flake once (`/tmp/e2e-closeout-api35-step5.log`) |
-| API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold path) |
-| API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35.log`) |
-| API 29 cold Cases 1–6 + 4b + 8 | Case1 **PASS** (`cue_count=1`); 2–6,2b,4b,8 **PASS**; Case9/10 RING flake (`/tmp/e2e-closeout-api29-cold.log`) |
-| API 29 onboarding + INBOUND_REJECT | Case A + Settings enable **PASS**; Case B/C **incomplete** — native relay poll hung on `adb shell run-as … cat files/relay_status.txt` (`/tmp/onboard-api29.log`, `/tmp/onboard-api29-2.log`) |
-| CI (PR #31) | **green** — https://github.com/Supermagnum/saga/actions/runs/43371091213 (android ~4m10s, rust ~6m25s) |
+| API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; **Case4b RING flake**; (`/tmp/e2e-api35-final.log`) |
+| API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold) |
+| API 35 Case 10 | **RING flake** (`/tmp/e2e-case10.log`) |
+| API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35-final.log`) |
+| API 29 cold + onboard | **not re-verified this session** (emulator adb hang) |
 
 ### Needs real hardware
 
