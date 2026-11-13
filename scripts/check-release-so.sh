@@ -26,6 +26,17 @@ check_absent "MockSessionToken"
 check_absent "saga-dev-v1"
 check_absent "insecure_skip_verify"
 check_absent "saga-synthetic-audio-v1"
+# Fake HAL / test-hal must never ship in release (production uses OsTrng).
+check_absent "FakeTrng"
+check_absent "FakeVaultStorage"
+check_absent "FakeMonotonicCounter"
+check_absent "FakeZeroiseController"
+check_absent "FakeRebootController"
+check_absent "test-hal"
+check_absent "fake_hal"
+# Debug-only media helpers (Phase 2 close-out).
+check_absent "saga-echo-mode"
+check_absent "saga-rx-fault"
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

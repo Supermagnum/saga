@@ -10,6 +10,9 @@ async-trait = "0.1"
 hkdf = "0.12"
 hmac = "0.12"
 log = "0.4"
+# OS CSPRNG for production [`OsTrng`] (no FakeTrng / test-hal).
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng", "getrandom"] }
+rand_core = "0.6"
 sha2 = "0.10"
 subtle = "2"
 tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }
@@ -17,7 +20,12 @@ zeroize = { version = "1", features = ["derive"] }
 
 # Pinned Galdralag-firmware ephemeral-session (never a branch tip).
 # Rev b781bf6fa5ccf8700a5fb061583c31cfa00241a1 — 2026-10-22. Licence: GPL-3.0.
+# Pulls galdr-core (default, NO test-hal) + galdr-vault + vsss-rs: required to
+# load/sign with long-term Brainpool keys during the handshake. Not optional;
+# phone never enables galdr-core/test-hal here (Fake* stay in mock-token only).
 ephemeral-session = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1" }
+# HAL traits only (HardwareTrng / VaultStorage). Do NOT enable feature test-hal.
+galdr-core = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-core", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util", "time"] }
