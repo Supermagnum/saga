@@ -75,15 +75,18 @@ E2E local default: `http://10.0.2.2:3340` (host `iroh-relay --dev`, port 3340).
 
 ## Relay readiness
 
-`nativePollRelayReady()` returns:
+`nativePollRelayReady()` returns a **live** sample of home-relay connectivity (via
+`Endpoint::home_relay_status`), not a one-shot latch after the first `online()`:
 
 | Value | Meaning |
 |-------|---------|
-| `0` | Pending — endpoint not bound or `online()` not complete |
-| `1` | Ready — `endpoint.online().await` finished |
+| `0` | Pending — endpoint not bound, or no home relay currently connected |
+| `1` | Ready — at least one home relay is connected right now |
 | `2` | Failed (reserved) |
 
-The E2E harness polls this via `TEST_RELAY_QUERY` (writes `files/relay_status.txt`), not logcat markers.
+A background watcher also logs `relay disconnected` / `relay reconnected` and keeps
+the same atomic in sync. The E2E harness polls via `TEST_RELAY_QUERY`
+(`files/relay_status.txt`), not logcat markers, and re-checks immediately before dial.
 
 ## JNI surface
 
