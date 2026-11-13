@@ -37,13 +37,20 @@ measure_path() {
   wait_for_relay_online "$callee" "callee" || return 1
   warm_encrypted_caller "$caller" || return 1
   sleep 1
+  # Inject must be armed on caller so click-marker can splice a frame.
+  local speech="/data/data/org.saga/files/speech_clip_48k.wav"
+  adb -s "$caller" push "$REPO_ROOT/saga-media/fixtures/speech_clip_48k.wav" \
+    /data/local/tmp/speech_clip_48k.wav >/dev/null
+  adb -s "$caller" shell run-as org.saga cp /data/local/tmp/speech_clip_48k.wav files/speech_clip_48k.wav
   pcm_broadcast "$callee" org.saga.TEST_ECHO_MODE --ez enabled true
   pcm_broadcast "$caller" org.saga.TEST_ECHO_MODE --ez enabled false
   pcm_broadcast "$caller" org.saga.TEST_PCM_DUMP --es path /data/data/org.saga/files/echo_rtt.pcm
+  pcm_broadcast "$caller" org.saga.TEST_PCM_INJECT --es path "$speech"
   adb -s "$caller" logcat -c 2>/dev/null || true
   adb -s "$callee" logcat -c 2>/dev/null || true
   pcm_broadcast "$callee" org.saga.TEST_ECHO_MODE --ez enabled true
   pcm_broadcast "$caller" org.saga.TEST_PCM_DUMP --es path /data/data/org.saga/files/echo_rtt.pcm
+  pcm_broadcast "$caller" org.saga.TEST_PCM_INJECT --es path "$speech"
   adb -s "$caller" shell am start -n org.saga/.ui.MainActivity \
     -a org.saga.TEST_CONTACT_CALL --es contact_name "$contact"
   wait_for_incoming_ringing "$callee" "echo-$label" \
