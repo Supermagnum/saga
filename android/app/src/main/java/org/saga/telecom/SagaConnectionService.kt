@@ -104,6 +104,17 @@ class SagaConnectionService : ConnectionService() {
         Log.i(TAG, "CHECKPOINT startIncoming completed for [$contactName]")
         return connection
     }
+
+    override fun onCreateIncomingConnectionFailed(
+        connectionManagerPhoneAccount: PhoneAccountHandle?,
+        request: ConnectionRequest
+    ) {
+        Log.e(
+            TAG,
+            "CHECKPOINT FAIL onCreateIncomingConnectionFailed address=[${request.address}] " +
+                "account=[$connectionManagerPhoneAccount] — Telecom rejected incoming Saga call"
+        )
+    }
 }
 
 class SagaIrohConnection(

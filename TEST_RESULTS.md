@@ -1,13 +1,64 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 close-out — open items)
+**Last updated:** 2026-11-13 (Phase 2 complete)
 
-**Status:** Phase 2 close-out — open items (API 29 cold suite / Case4b+10
-RING flakes still open). Branch `phase-2-closeout` / PR #31.
+**Status:** Phase 2 complete. Branch `fix/ring-flake` (RING root cause +
+API 29/35 cold suites).
 
 ---
 
-## 2026-11-13 — Phase 2 close-out (open items)
+## 2026-11-13 — RING flake root cause (issue #20) + Phase 2 complete
+
+Branch: `fix/ring-flake`. Extends #20 to Cases 6, 4b, 10.
+
+### Root cause (app)
+
+Failed runs always missed **`inbound_accepted` first** (then every later
+Telecom checkpoint). Captures (`dump_ring_failure`): logcat both devices,
+`dumpsys telecom`, ordered checkpoint timestamps.
+
+Two app bugs:
+
+1. **`RELAY_POLL` latched Ready** after the first `endpoint.online()`. Callee
+   could lose the home relay (`Lost connection to relay` / reconnect deadlines)
+   while the harness still saw Ready and dialed → no inbound accept.
+2. **Connect used `EndpointAddr::from(PublicKey)` only**, so dial depended on
+   pkarr/DNS. Emulators often hit `No addressing information available` (pkarr
+   to `dns.iroh.link` times out) even when both peers shared the local relay.
+
+Harness (not the ring miss itself): RING wait already required the right
+checkpoints; on fail it now dumps artifacts. Also bounded API 29 `adb logcat -d`
+/ `cleanup-stuck-calls` (those hung the cold suite), and re-check callee relay
++ clear callee logcat immediately before dial.
+
+### Fix
+
+- Live `home_relay_status` sample in `poll_relay_ready()` + disconnect/reconnect
+  watcher logs.
+- `endpoint_addr_for_peer`: hint custom/home relay URL on connect (and RoQ).
+- `wait_for_incoming_ringing` → `dump_ring_failure` on FAIL.
+- `testing/e2e/run-ring-flake-regression.sh` (Cases 6/4b/10 × N cold).
+
+### 20/20 cold RING (API 35 Alice/Bob)
+
+| Case | Result | Log |
+|------|--------|-----|
+| 4b | **20/20** | `/tmp/ring-flake-regression2-full.log` |
+| 6 | **20/20** | same |
+| 10 | **20/20** | same |
+
+### Suites after wipe / unwedge
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (1–10 + 4b + onboarding / INBOUND_REJECT) | **ALL PASS**; Case1 cue once | `/tmp/e2e-api35-ringfix-full.log` |
+| API 29 cold Step5 (wipe-data AVDs; same cases) | **ALL PASS**; Case1 cue once | `/tmp/e2e-api29-ringfix-full3.log` |
+
+Issue #20 closed with this fix.
+
+---
+
+## 2026-11-13 — Phase 2 close-out (historical; open items at time of writing)
 
 Branch: `phase-2-closeout`. Logs: `/tmp/preanswer-gate.log`,
 `/tmp/pcm-preanswer-metrics2.log`, `/tmp/echo-rtt3.log`, `/tmp/rx-fault2.log`,
