@@ -34,6 +34,8 @@ pub struct MediaCounters {
     pub jb_depth_n: AtomicU64,
     /// Depth histogram (packets → count); used for median.
     pub jb_depth_hist: [AtomicU64; JB_DEPTH_HIST_BINS],
+    /// Latest adaptive JB target (ms).
+    pub jb_target_ms: AtomicU64,
 }
 
 impl Default for MediaCounters {
@@ -52,6 +54,7 @@ impl Default for MediaCounters {
             jb_depth_sum: AtomicU64::new(0),
             jb_depth_n: AtomicU64::new(0),
             jb_depth_hist: [const { AtomicU64::new(0) }; JB_DEPTH_HIST_BINS],
+            jb_target_ms: AtomicU64::new(0),
         }
     }
 }
@@ -64,6 +67,11 @@ impl MediaCounters {
         self.jb_depth_n.fetch_add(1, Ordering::Relaxed);
         let idx = depth_packets.min(JB_DEPTH_HIST_BINS - 1);
         self.jb_depth_hist[idx].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_jb_target_ms(&self, target_ms: u32) {
+        self.jb_target_ms
+            .store(u64::from(target_ms), Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> MediaCountersSnapshot {
@@ -89,6 +97,7 @@ impl MediaCounters {
                 (sum * u64::from(FRAME_MS)) / n
             },
             jb_depth_samples: n,
+            jb_target_ms: self.jb_target_ms.load(Ordering::Relaxed),
         }
     }
 
@@ -124,4 +133,5 @@ pub struct MediaCountersSnapshot {
     pub jb_depth_median_ms: u64,
     pub jb_depth_mean_ms: u64,
     pub jb_depth_samples: u64,
+    pub jb_target_ms: u64,
 }

@@ -439,6 +439,7 @@ impl MediaPipeline {
         if out.len() < FRAME_SAMPLES {
             return Err(MediaError::Failed("short playout buffer".into()));
         }
+        self.counters.record_jb_target_ms(self.jb.target_ms());
         match self.jb.pop_ready() {
             PopOutcome::Packet(pkt) => {
                 let n = self.decoder.decode_frame(&pkt.payload, out, false)?;
@@ -448,13 +449,13 @@ impl MediaPipeline {
                 Ok(n)
             }
             PopOutcome::Wait => {
-                // Startup / reorder window / empty: silence, do not advance.
+                // Priming / empty underrun / before deadline: silence, no advance.
                 out[..FRAME_SAMPLES].fill(0);
                 self.counters.record_jb_depth(self.jb.depth());
                 Ok(FRAME_SAMPLES)
             }
             PopOutcome::Lost => {
-                // Confirmed gap (wait_ticks / ahead threshold). Conceal once.
+                // Hole past playout deadline. Conceal once.
                 self.counters.lost_packets.fetch_add(1, Ordering::Relaxed);
                 if !self.jb.playout_started() {
                     out[..FRAME_SAMPLES].fill(0);

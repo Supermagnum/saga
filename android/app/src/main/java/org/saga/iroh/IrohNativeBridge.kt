@@ -80,6 +80,10 @@ object IrohNativeBridge {
         if (libraryLoaded) nativeSetMediaMuted(sessionId, muted)
     }
 
+    fun setMediaMutedAll(muted: Boolean) {
+        if (libraryLoaded) nativeSetMediaMutedAll(muted)
+    }
+
     fun setMediaHeld(sessionId: String, held: Boolean) {
         if (libraryLoaded) nativeSetMediaHeld(sessionId, held)
     }
@@ -156,6 +160,7 @@ object IrohNativeBridge {
     private external fun nativePushCapturePcm(sessionId: String, frame: ByteBuffer)
     private external fun nativePullPlaybackPcm(sessionId: String, frame: ByteBuffer): Int
     private external fun nativeSetMediaMuted(sessionId: String, muted: Boolean)
+    private external fun nativeSetMediaMutedAll(muted: Boolean)
     private external fun nativeSetMediaHeld(sessionId: String, held: Boolean)
     private external fun nativeRekeyMedia(sessionId: String): Long
 }

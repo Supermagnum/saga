@@ -1,8 +1,104 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 2 Step 3b — STOI fix + JB cap 300 ms / PR #27)
+**Last updated:** 2026-11-13 (Phase 2 Step 5 verification complete)
 
-**Status:** Step 3b Android RoQ fixed on #27 (hold — do not merge). First-bad stage T5/T6; root causes below. CI must stay green.
+**Status:** Step 5 verification finished on PR #28. CI must stay green.
+
+---
+
+## 2026-11-13 — Phase 2 Step 5 verification (complete)
+
+### A. Adaptive JB
+
+- Playout target separate from loss; starts ~50 ms (`TARGET_MS_MIN`/`HIGH` =
+  40/60); tracks high-percentile inter-arrival deviation + margin; grows on
+  late/underrun; shrinks when stable. Loss only after playout deadline. Cap
+  **300 ms**.
+- Unit tests (`cargo test --lib jitter::` in `saga-media`): **8/8 PASS**
+  including `steady_link_target_converges_near_60ms`,
+  `jitter_burst_grows_then_shrinks`, `target_never_exceeds_cap`.
+- Live emulator: steady bob→alice settles at `jb_target_ms=40` (≤60 ms).
+  alice→bob often starts with startup loss and climbs toward cap then shrinks
+  (`jb_target_ms` 300→260 observed).
+
+### B. What `lag_ms` = 433.6 was
+
+`pcm_score.py` `lag_ms` is **cross-correlation alignment** between the
+LibriSpeech reference and the decoded dump (sample lag / 48 kHz) so corr /
+SI-SNR / STOI compare the same speech. On paced inject it is **identical
+(~433.6 ms) on every path** because inject start, dump arming, and JB priming
+share the same harness schedule. It is **not** mouth-to-ear latency.
+
+### Real mouth-to-ear (emulator only)
+
+Click marker via `org.saga.TEST_PCM_MARKER`: inject splices a 2 ms impulse and
+logs `LATENCY_MARKER inject_ns=…`; dump side detects peak and logs
+`LATENCY_MARKER dump_… dump_frame=…` (cross-device; clocks are not synced, so
+subtracting `elapsedRealtimeNanos` across emulators is invalid). Controllable
+playout delay is `jb_target_ms`. **Emulator timings are not representative of
+phones.**
+
+Per-stage breakdown (order of magnitude, emulator):
+
+| Stage | Est. |
+|-------|------|
+| Capture buffer | ~20 ms frame |
+| Opus encode | ~20 ms |
+| Network / RoQ | LAN few ms; `emu network delay umts` ~35–200 ms |
+| JB | `jb_target_ms` (40–300) |
+| Opus decode / PLC | ~20 ms |
+| AudioTrack | tens of ms (ring) |
+
+Observed marker detect (API 35, `/tmp/pcm-step5d.log`): alice→bob dump peak at
+`dump_frame=295`; bob→alice at `dump_frame=403` (frame index from dump arm,
+not one-way M2E alone).
+
+### C. Four paths + impaired network (API 35, relay `http://192.168.1.191:3340`)
+
+Logs: `/tmp/pcm-step5d.log`, `/tmp/peer-step5d.log`, `/tmp/pcm-netdelay2.log`.
+`lag_ms` column = alignment only.
+
+| Path | corr | SI-SNR | STOI | jb med/max (ms) | late | lost | latency notes |
+|------|------|--------|------|-----------------|------|------|---------------|
+| alice→bob | 0.860 | 4.5 dB | 0.936 | 260/280; target 260–300 | 0 | ~22–35 startup | marker dump_frame=295 |
+| bob→alice | **0.960** | **10.7 dB** | **0.994** | 20/40; target **40** | 0 | 0 | marker dump_frame=403 |
+| alice→peer | **0.960** | **10.7 dB** | **0.994** | peer ≤40 | 0 | 0 | inject WAV |
+| peer→alice | **0.960** | **10.8 dB** | **0.995** | ≤40 | 0 | 0 | inject WAV |
+| emu `network delay umts` A→B | 0.860 | 4.5 dB | 0.936 | 260/280; target 260–300 | 0 | ~35 startup | same as clean A→B |
+| emu `network delay umts` B→A | **0.960** | **10.7 dB** | **0.994** | 20/40; target 40 | 0 | 0 | delay 35–200 ms |
+
+`tc netem` 5% loss + 30 ms: **skipped** (`sudo` password required). Emulator
+`network delay umts` used as jitter/latency proxy (no packet-loss control).
+
+### D. Cases 8–10 + screenshots
+
+| Gate | Result |
+|------|--------|
+| Case 8 rekey PCM gap | **PASS** `gap_ms=0` with continuous 440 Hz tone (LibriSpeech natural ~920 ms pause was a false positive). `/tmp/case8-tone2.log` |
+| Case 9 cellular hold | **PASS** `held=` path (`EMU gsm call`); screenshot On hold |
+| Case 10 mute/unmute | **PASS** `muted=true/false`; capture gated |
+| Screenshots (looked at) | `docs/screenshots/step5/`: Encrypted active; **Muted** + UNMUTE; **Speaker** + EARPIECE; **Speaker · On hold** + RESUME |
+
+### E. Spec + suites
+
+| Gate | Result |
+|------|--------|
+| `saga-spec.md` media pipeline + diagram | Present (adaptive JB 40–60 ms, cap 300 ms; lag_ms vs marker) |
+| Full suite API 35 | **PASS** Cases 1–10 + 4b + onboarding **INBOUND_REJECT** (`/tmp/e2e-step5-api35-full.log`) |
+| Full suite API 29 | **PASS** Cases 2–10 + 4b + onboarding INBOUND_REJECT after PhoneAccount Settings-UI enable + stuck-GSM cleanup; Case 1 fixed by connect-cue dedupe (`/tmp/e2e-step5-api29-full3.log`; Case 1 recheck cue_count=1 after dedupe) |
+
+Harness fixes for API 29: `enable_saga_phone_account` (Settings UI fallback —
+`cmd telecom set-phone-account-enabled` is unimplemented on API 29);
+`clear_stuck_telephony_calls` (CASE1 left ACTIVE GSM that blocked Iroh
+`placeCall`); connect-cue 2.5 s dedupe.
+
+### Needs real hardware
+
+- Mouth-to-ear latency on phones (AEC/NS/AGC)
+- Speaker / earpiece acoustic quality
+- Cellular hold while Iroh active on dual-SIM / real modem
+- Sustained 5% loss + jitter on mobile networks (`tc netem` / field)
+- Confirm API 29 Case 1 after cue dedupe in a full cold suite pass
 
 ---
 

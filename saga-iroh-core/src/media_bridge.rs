@@ -11,6 +11,7 @@ pub use imp::*;
 mod stub {
     pub fn stop_media(_session_id: &str) {}
     pub fn set_muted(_session_id: &str, _muted: bool) {}
+    pub fn set_muted_all(_muted: bool) {}
     pub fn set_held(_session_id: &str, _held: bool) {}
     pub fn push_capture(_session_id: &str, _pcm: &[u8]) {}
     pub fn pull_playback(_session_id: &str, out: &mut [u8]) -> usize {
