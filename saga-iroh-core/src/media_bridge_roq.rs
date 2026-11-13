@@ -87,6 +87,11 @@ pub fn start_media(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         info!("[Saga Media] RoQ task running session=[{sid}]");
         let mut ticks: u64 = 0;
+        // Gate outbound until we have seen peer media (or a short timeout) so the
+        // callee's JB/SRTP/AudioTrack can come up before the caller's burst.
+        let media_start = Instant::now();
+        let mut peer_rx_seen = false;
+        const SEND_HOLD_MS: u128 = 200;
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => break,
@@ -115,13 +120,18 @@ pub fn start_media(
                             {
                                 break;
                             }
+                            peer_rx_seen = true;
                             drained = drained.saturating_add(1);
                         }
-                        // Exactly one send per 20 ms tick.
+                        let send_ok = peer_rx_seen
+                            || media_start.elapsed().as_millis() >= SEND_HOLD_MS;
+                        // Exactly one send per 20 ms tick (after peer-ready gate).
                         match capture_rx.try_recv() {
                             Ok(mut pcm) => {
-                                if let Err(e) = p.send_pcm_frame(&mut pcm) {
-                                    warn!("[Saga Media] send: {e}");
+                                if send_ok {
+                                    if let Err(e) = p.send_pcm_frame(&mut pcm) {
+                                        warn!("[Saga Media] send: {e}");
+                                    }
                                 }
                             }
                             Err(mpsc::error::TryRecvError::Empty) => {}
