@@ -190,6 +190,22 @@ impl<C: Clock> JitterBuffer<C> {
         self.target_frames
     }
 
+    /// Drop every buffered packet and reset playout anchors (pre-answer discard).
+    /// Target delay returns to the default mid-band so a post-answer start is clean.
+    pub fn flush_pre_answer(&mut self) {
+        self.packets.clear();
+        self.first_seq = None;
+        self.next_seq = None;
+        self.playout_started = false;
+        self.playout_anchor = None;
+        self.last_arrival = None;
+        self.jitter_samples.clear();
+        self.hits_since_adapt = 0;
+        self.late_or_loss_recent = false;
+        self.target_frames = ((TARGET_MS_MIN + TARGET_MS_HIGH) / 2) / FRAME_MS;
+        self.target_frames = self.target_frames.max(2);
+    }
+
     /// Insert a packet. Returns whether it was accepted (false = late / already played).
     pub fn push(&mut self, seq: u16, payload: Vec<u8>) -> bool {
         let now = self.clock.now();
@@ -580,6 +596,21 @@ mod tests {
             after < peak,
             "target should shrink after stable period ({peak} → {after})"
         );
+    }
+
+    #[test]
+    fn flush_pre_answer_drops_buffered_and_resets() {
+        let mut jb = JitterBuffer::with_clock(ManualClock::default());
+        jb.push(0, vec![1]);
+        jb.push(1, vec![2]);
+        let prime = jb.target_ms() as u64;
+        jb.clock_mut().advance_ms(prime);
+        assert!(!jb.is_empty());
+        jb.flush_pre_answer();
+        assert!(jb.is_empty());
+        assert!(jb.awaiting_first_packet());
+        assert!(!jb.playout_started());
+        assert!(jb.target_ms() >= TARGET_MS_MIN && jb.target_ms() <= TARGET_MS_HIGH);
     }
 
     #[test]

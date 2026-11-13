@@ -82,7 +82,8 @@ query_relay_ready_native() {
   adb -s "$serial" shell am start -a org.saga.TEST_RELAY_QUERY \
     -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
   sleep 0.5
-  adb -s "$serial" shell run-as org.saga cat "files/${RELAY_STATUS_FILE:-relay_status.txt}" 2>/dev/null \
+  # API 29 emulators can hang forever on bare `run-as cat`; bound the read.
+  timeout 5 adb -s "$serial" shell run-as org.saga cat "files/${RELAY_STATUS_FILE:-relay_status.txt}" 2>/dev/null \
     | tr -d '\r\n' || true
 }
 
@@ -323,6 +324,23 @@ answer_incoming() {
   local serial="$1" lookup_key="$2"
   adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
     -a org.saga.TEST_ANSWER_INCOMING --es lookup_key "$lookup_key" >/dev/null 2>&1 || true
+}
+
+# After answer: Encrypted may already have settled while RINGING; wait for send/playout arm.
+wait_for_media_answered() {
+  local callee="$1" caller="$2" label="${3:-media-answered}"
+  local max_secs="${4:-30}"
+  if ! wait_for_handshake_log "$callee" \
+    "local answered|JB flushed|onLocalAnswered" "$label-callee" "$max_secs"; then
+    return 1
+  fi
+  if ! wait_for_handshake_log "$caller" \
+    "answered signal received|peer answered signal observed|audio I/O started" \
+    "$label-caller" "$max_secs"; then
+    return 1
+  fi
+  record "ANSWERED:PASS $label send/playout armed"
+  return 0
 }
 
 restart() {

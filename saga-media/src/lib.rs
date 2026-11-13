@@ -31,5 +31,6 @@ pub use metrics::{MediaCounters, MediaCountersSnapshot};
 pub use pipeline::MediaPipeline;
 pub use policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};
 pub use srtp_ctx::{
-    SrtpDecrypt, SrtpEncrypt, MAX_MEDIA_DATAGRAM_BYTES, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
+    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, MAX_MEDIA_DATAGRAM_BYTES,
+    MEDIA_TAG_ANSWERED, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
 };
