@@ -337,6 +337,17 @@ impl<C: Clock> JitterBuffer<C> {
         if let Some(&oldest) = self.packets.keys().next() {
             let ahead = oldest.wrapping_sub(next);
             if (2u16..0x8000).contains(&ahead) {
+                // Before playout starts, a gap usually means the peer sent while
+                // our recv path was still coming up — re-anchor silently so we
+                // do not inflate the JB to the cap or burn PLC on phantom loss.
+                if !self.playout_started {
+                    self.first_seq = Some(oldest);
+                    self.next_seq = Some(oldest);
+                    self.playout_anchor = Some(
+                        self.clock.now() + Duration::from_millis(u64::from(self.target_ms())),
+                    );
+                    return PopOutcome::Wait;
+                }
                 self.next_seq = Some(oldest);
                 self.bump_anchor_for_jump(next, oldest);
                 self.late_or_loss_recent = true;
@@ -418,7 +429,12 @@ impl<C: Clock> JitterBuffer<C> {
             return;
         }
         let min_frames = TARGET_MS_MIN / FRAME_MS;
-        if self.target_frames > min_frames.max(2) {
+        // After a startup spike toward the cap, converge faster than 1 frame/sec
+        // so steady-state returns to ~40–60 ms within a few seconds.
+        if self.target_frames > min_frames.max(2) + 2 {
+            let step = ((self.target_frames - min_frames.max(2)) / 2).max(1);
+            self.target_frames -= step;
+        } else if self.target_frames > min_frames.max(2) {
             self.target_frames -= 1;
         }
         self.hits_since_adapt = 0;

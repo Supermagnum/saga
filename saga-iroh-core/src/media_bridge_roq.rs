@@ -143,9 +143,7 @@ pub fn start_media(
     let pipeline_task = pipeline.clone();
     let playback_task = playback_ring.clone();
     let sid = session_id.to_string();
-    // Only the caller holds send until peer RX — applying this on both sides
-    // deadlocks until the timeout and both burst after ~200 ms of empty playout.
-    let hold_send_for_peer = matches!(role, CallRole::Caller);
+    let _role = role;
 
     crate::iroh_transport::runtime().spawn(async move {
         let _roq_keep = roq_session;
@@ -155,11 +153,6 @@ pub fn start_media(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         info!("[Saga Media] RoQ task running session=[{sid}]");
         let mut ticks: u64 = 0;
-        // Caller: gate outbound until peer media (or short timeout) so the
-        // callee's JB/SRTP/AudioTrack can come up before the caller's burst.
-        let media_start = Instant::now();
-        let mut peer_rx_seen = false;
-        const SEND_HOLD_MS: u128 = 200;
         #[cfg(feature = "mock-token")]
         let mut rx_delayed: VecDeque<(Instant, bytes::Bytes)> = VecDeque::new();
         loop {
@@ -188,7 +181,6 @@ pub fn start_media(
                                 }
                                 if let Some((_, bytes)) = rx_delayed.pop_front() {
                                     p.ingest_datagram(&bytes);
-                                    peer_rx_seen = true;
                                 }
                             }
                         }
@@ -198,90 +190,88 @@ pub fn start_media(
                                 break;
                             }
                             #[cfg(feature = "mock-token")]
-                            let got = {
-                                match tokio::time::timeout(
-                                    std::time::Duration::from_millis(0),
-                                    p.read_datagram_bytes(),
-                                )
-                                .await
-                                {
-                                    Ok(Ok(bytes)) => {
-                                        let drop_pct =
-                                            RX_FAULT_DROP_PCT.load(Ordering::Relaxed);
-                                        let jitter_ms =
-                                            RX_FAULT_JITTER_MS.load(Ordering::Relaxed);
-                                        if (drop_pct > 0 || jitter_ms > 0)
-                                            && !RX_FAULT_ARMED_LOG.swap(true, Ordering::Relaxed)
-                                        {
-                                            info!(
-                                                "saga-rx-fault active drop_pct={drop_pct} \
-                                                 jitter_ms={jitter_ms}"
-                                            );
-                                        }
-                                        if drop_pct > 0 && rx_fault_rand_u32() < drop_pct {
-                                            // Intentional drop — do not ingest.
-                                        } else if jitter_ms > 0 {
-                                            let d = rx_fault_rand_u32() % (jitter_ms + 1);
-                                            if d == 0 {
-                                                p.ingest_datagram(&bytes);
-                                            } else {
-                                                rx_delayed.push_back((
-                                                    Instant::now()
-                                                        + std::time::Duration::from_millis(
-                                                            d as u64,
-                                                        ),
-                                                    bytes,
-                                                ));
-                                            }
-                                        } else {
-                                            p.ingest_datagram(&bytes);
-                                        }
-                                        Some(())
-                                    }
-                                    _ => None,
-                                }
-                            };
+                            let fault_on = RX_FAULT_DROP_PCT.load(Ordering::Relaxed) > 0
+                                || RX_FAULT_JITTER_MS.load(Ordering::Relaxed) > 0;
                             #[cfg(not(feature = "mock-token"))]
-                            let got = {
-                                if tokio::time::timeout(
-                                    std::time::Duration::from_millis(0),
-                                    p.recv_one_datagram(),
-                                )
-                                .await
-                                .is_ok()
+                            let fault_on = false;
+                            let got = if fault_on {
+                                #[cfg(feature = "mock-token")]
                                 {
-                                    Some(())
-                                } else {
-                                    None
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_millis(0),
+                                        p.read_datagram_bytes(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(bytes)) => {
+                                            let drop_pct =
+                                                RX_FAULT_DROP_PCT.load(Ordering::Relaxed);
+                                            let jitter_ms =
+                                                RX_FAULT_JITTER_MS.load(Ordering::Relaxed);
+                                            if !RX_FAULT_ARMED_LOG.swap(true, Ordering::Relaxed) {
+                                                info!(
+                                                    "saga-rx-fault active drop_pct={drop_pct} \
+                                                     jitter_ms={jitter_ms}"
+                                                );
+                                            }
+                                            if drop_pct > 0 && rx_fault_rand_u32() < drop_pct {
+                                                // Intentional drop — do not ingest.
+                                            } else if jitter_ms > 0 {
+                                                let d = rx_fault_rand_u32() % (jitter_ms + 1);
+                                                if d == 0 {
+                                                    p.ingest_datagram(&bytes);
+                                                } else {
+                                                    rx_delayed.push_back((
+                                                        Instant::now()
+                                                            + std::time::Duration::from_millis(
+                                                                d as u64,
+                                                            ),
+                                                        bytes,
+                                                    ));
+                                                }
+                                            } else {
+                                                p.ingest_datagram(&bytes);
+                                            }
+                                            true
+                                        }
+                                        _ => false,
+                                    }
                                 }
+                                #[cfg(not(feature = "mock-token"))]
+                                {
+                                    false
+                                }
+                            } else if tokio::time::timeout(
+                                std::time::Duration::from_millis(0),
+                                p.recv_one_datagram(),
+                            )
+                            .await
+                            .is_ok()
+                            {
+                                true
+                            } else {
+                                false
                             };
-                            if got.is_none() {
+                            if !got {
                                 break;
                             }
-                            peer_rx_seen = true;
                             drained = drained.saturating_add(1);
                         }
-                        let send_ok = !hold_send_for_peer
-                            || peer_rx_seen
-                            || media_start.elapsed().as_millis() >= SEND_HOLD_MS;
                         #[cfg(feature = "mock-token")]
                         let echo_on = ECHO_MODE.load(Ordering::Relaxed);
                         #[cfg(not(feature = "mock-token"))]
                         let echo_on = false;
-                        // Exactly one send per 20 ms tick (after peer-ready gate).
+                        // Exactly one send per 20 ms tick.
                         // Echo mode replaces mic capture with decoded PCM.
-                        // When gated, leave frames queued — do not drop them.
                         if !echo_on {
-                            if send_ok {
-                                match capture_rx.try_recv() {
-                                    Ok(mut pcm) => {
-                                        if let Err(e) = p.send_pcm_frame(&mut pcm) {
-                                            warn!("[Saga Media] send: {e}");
-                                        }
+                            match capture_rx.try_recv() {
+                                Ok(mut pcm) => {
+                                    if let Err(e) = p.send_pcm_frame(&mut pcm) {
+                                        warn!("[Saga Media] send: {e}");
                                     }
-                                    Err(mpsc::error::TryRecvError::Empty) => {}
-                                    Err(mpsc::error::TryRecvError::Disconnected) => break,
                                 }
+                                Err(mpsc::error::TryRecvError::Empty) => {}
+                                Err(mpsc::error::TryRecvError::Disconnected) => break,
                             }
                         } else {
                             // Drain mic so the channel does not back up under echo.
@@ -290,7 +280,7 @@ pub fn start_media(
                         let mut out = vec![0i16; FRAME_SAMPLES];
                         if p.playout_frame(&mut out).is_ok() {
                             #[cfg(feature = "mock-token")]
-                            if echo_on && send_ok {
+                            if echo_on {
                                 if !ECHO_ARMED_LOG.swap(true, Ordering::Relaxed) {
                                     info!("saga-echo-mode looping decoded PCM to send");
                                 }
