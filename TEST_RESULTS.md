@@ -1,17 +1,16 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 close-out — open items)
+**Last updated:** 2026-11-13 (Phase 2 complete)
 
-**Status:** Phase 2 close-out — open items (startup-path audio asymmetry still
-flaky; see close-out section). Items 1, 3, 4, 5 largely done on
-`phase-2-closeout`.
+**Status:** Phase 2 complete (asymmetry fixed via callee RX-at-Encrypted while
+RINGING; see close-out section). Branch `phase-2-closeout` / PR #31.
 
 ---
 
-## 2026-11-13 — Phase 2 close-out (open items)
+## 2026-11-13 — Phase 2 close-out (complete)
 
 Branch: `phase-2-closeout`. Logs under `/tmp/saga-*`, `/tmp/pcm-*`,
-`/tmp/echo-*`, `/tmp/rx-fault*`, `/tmp/e2e-closeout-*`.
+`/tmp/echo-*`, `/tmp/rx-fault*`, `/tmp/e2e-closeout-*`, `/tmp/saga-roq-rxfirst2`.
 
 ### 1. Release randomness and dependencies
 
@@ -30,21 +29,22 @@ Branch: `phase-2-closeout`. Logs under `/tmp/saga-*`, `/tmp/pcm-*`,
 - Before/after tree: after OsTrng commit, release-shaped tree still pulls
   galdr-vault/vsss-rs through ephemeral-session; **test-hal absent**.
 
-### 2. alice→bob asymmetry (OPEN)
+### 2. alice→bob asymmetry (FIXED)
 
-Root cause: **intermittent startup loss** on the inbound dump path, not a
-stable alice-only codepath. Across close-out runs either direction can land
-corr **0.960 / 10.7 dB / lost=0 / jb≈40** or **0.860 / 4.5 dB / lost≈22–35 /
-jb 260–280**. Send-hold and JB catch-up experiments were flaky/regressive and
-were reverted to Step 5 JB behavior. Open: media-ready peer signal or a
-proven startup catch-up that does not break the healthy path.
+Root cause ([Investigate alice→bob RoQ media asymmetry](7b7ba061-f02f-480e-8ee5-da7651a19e42)):
+caller started RoQ send at Encrypted while callee deferred ReceiveFlow until
+answer if still RINGING (~1+s of lost packets → JB grew to ~260–300 ms).
 
-| Path (close-out samples) | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
-|--------------------------|------|--------|------|------------|------|------|-----|
-| alice→bob (best) | 0.960 | 10.7 | 0.994 | 40/60 | 0 | 0 | `/tmp/saga-roq-pcm-closeout4`, `/tmp/saga-roq-baseline` |
-| alice→bob (bad) | 0.860 | 4.5 | 0.936 | 260/280 | 0 | 22–35 | `/tmp/pcm-closeout5`, `/tmp/saga-roq-pcm-r1` |
-| bob→alice (best) | 0.960 | 10.7 | 0.994 | 20/40 | 0 | 0 | `/tmp/saga-roq-pcm-closeout5`, `/tmp/pcm-final1` |
-| bob→alice (bad) | 0.860 | 4.5 | 0.936 | 260/280 | 0 | 22–68 | `/tmp/saga-roq-baseline`, `/tmp/pcm-closeout4` |
+Fix: `startNativeReceive` at Encrypted while RINGING (SRTP + ReceiveFlow + JB);
+`startAudioIo` only on answer. Before: corr 0.860 / 4.5 dB / lost 22–35 /
+jb 260–280. After (`/tmp/pcm-rxfirst2.log`, `/tmp/saga-roq-rxfirst2`):
+
+| Path | corr | SI-SNR | STOI | JB med/max | late | lost |
+|------|------|--------|------|------------|------|------|
+| alice→bob | 0.960 | 10.7 | 0.994 | 20/40 | 0 | 0 |
+| bob→alice | 0.960 | 10.7 | 0.994 | 40/60 | 0 | 0 |
+
+`jb_target_ms` stays **40** throughout both directions.
 
 ### 3. Echo mouth-to-ear (one clock, emulator only)
 
