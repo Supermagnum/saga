@@ -1,9 +1,54 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 complete)
+**Last updated:** 2026-11-13 (Phase 4 conference)
 
-**Status:** Phase 2 complete. Branch `fix/ring-flake` (RING root cause +
-API 29/35 cold suites).
+**Status:** Phase 4 on `phase-4-conference` — production dial fail-fast +
+carrier multi-call / conference UI. Public N0 discovery soak stopped early
+(emulator flaky); local-relay suite remains the CI gate.
+
+---
+
+## 2026-11-13 — Phase 4: production reachability + carrier conference
+
+Branch: `phase-4-conference`.
+
+### Production dial / Not reachable
+
+| Change | Detail |
+|--------|--------|
+| Connect budget | ~40s wall clock; 12s/attempt; addressing misses ≤3 tries |
+| UX | Outgoing connect failure → `DisconnectCause(ERROR, "Not reachable")`; no §5a downgrade |
+| Release discovery | Still `Endpoint::builder(presets::N0)` (PkarrPublisher + DnsAddressLookup) |
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Public N0 Case 2/2b ×10 cold | **STOPPED** after 0/2 | Callee home relay drop / reconnect deadlines on emulator (`Lost connection to relay`, `native=0` pre-dial). Per plan: do not paper over with custom-relay-only hacks. |
+| Offline callee → Not reachable | **PASS** ~40s | Force-stop all bob-identity emulators; alice dial → `NOT_REACHABLE` + Telecom reason `Not reachable`; no Downgraded path. Log evidence in session. |
+| Local-relay Case 2/2b | Used for conference + full suite | Default harness mode |
+
+### Conference UI (C1–C5)
+
+Script: `testing/e2e/run-e2e-conference.sh`. Screenshots under
+`/tmp/saga-conference-screencaps/`.
+
+| Case | Intent | Emulator expectation |
+|------|--------|----------------------|
+| C1 | Second incoming / answer / swap / end | GSM path; soft PASS if multi-call logs |
+| C2 | Merge → children → split | **Often NEEDS_HARDWARE** (no conferenceableCalls) |
+| C3 | Carrier during Iroh hold/resume + Encrypted kept | Local relay + GSM |
+| C4 | Iroh+carrier: Merge hidden / refuse | UI dump + `REFUSE_IROH_CARRIER_MERGE` |
+| C5 | Add call → dialer for second carrier | Intent path |
+
+### Needs real hardware
+
+- Real carrier merge / `getChildren()` / VoLTE conference
+- Dual-SIM multi-call edge cases
+- Reliable public N0 discovery soak on device (emulator public relay flaky)
+
+### Open decisions
+
+- Whether to keep public-relay soak as optional nightly only (local remains default)
+- Exact Add-call UX (dialer vs inline number pad)
 
 ---
 
