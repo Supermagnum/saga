@@ -102,9 +102,7 @@ run_dir() {
   encrypted_call_armed "$caller" "$contact" "$callee" "$inject" "$dump" "$dump_app"
   wait_for_incoming_ringing "$callee" "rxf-$label" \
     && answer_incoming "$callee" "$answer_num" \
-    && wait_for_handshake_log "$caller" "settled to \[Encrypted\]" "enc-$label" 45 \
-    && wait_for_handshake_log "$callee" "\\[Saga Media\\] start session=" "media-c-$label" 30 \
-    && wait_for_handshake_log "$caller" "\\[Saga Media\\] start session=" "media-a-$label" 30
+    && wait_for_media_answered "$callee" "$caller" "rxf-$label" 45
   adb -s "$callee" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
   adb -s "$caller" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
   sleep 5

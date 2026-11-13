@@ -55,9 +55,7 @@ measure_path() {
     -a org.saga.TEST_CONTACT_CALL --es contact_name "$contact"
   wait_for_incoming_ringing "$callee" "echo-$label" \
     && answer_incoming "$callee" "$answer_lookup" \
-    && wait_for_handshake_log "$caller" "settled to \[Encrypted\]" "enc-$label" 45 \
-    && wait_for_handshake_log "$callee" "\\[Saga Media\\] start session=" "media-c-$label" 30 \
-    && wait_for_handshake_log "$caller" "\\[Saga Media\\] start session=" "media-a-$label" 30
+    && wait_for_media_answered "$callee" "$caller" "echo-$label" 45
   adb -s "$caller" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
   adb -s "$callee" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
   sleep 2
