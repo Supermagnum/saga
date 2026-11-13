@@ -315,9 +315,7 @@ impl<C: Clock> JitterBuffer<C> {
         // a late-but-still-useful packet is not marked already_played. Grow the
         // target so the next burst is absorbed. This is underrun, not loss.
         if self.packets.is_empty() {
-            // Do not inflate target before any packet has been accepted (caller
-            // may send before callee JB exists).
-            if self.playout_started && self.first_seq.is_some() {
+            if self.playout_started {
                 self.grow_from_late();
             }
             return PopOutcome::Wait;
@@ -337,16 +335,12 @@ impl<C: Clock> JitterBuffer<C> {
         if let Some(&oldest) = self.packets.keys().next() {
             let ahead = oldest.wrapping_sub(next);
             if (2u16..0x8000).contains(&ahead) {
-                // Gap with later packets already buffered: catch up to the
-                // contiguous run instead of PLC+grow (startup misses were
-                // inflating the JB to the 300 ms cap for the whole call).
-                self.first_seq = Some(oldest);
                 self.next_seq = Some(oldest);
-                self.playout_anchor = Some(
-                    self.clock.now() + Duration::from_millis(u64::from(self.target_ms())),
-                );
-                self.late_or_loss_recent = false;
-                return PopOutcome::Wait;
+                self.bump_anchor_for_jump(next, oldest);
+                self.late_or_loss_recent = true;
+                self.grow_from_late();
+                self.playout_started = true;
+                return PopOutcome::Lost;
             }
         }
         self.next_seq = Some(next.wrapping_add(1));
@@ -422,12 +416,7 @@ impl<C: Clock> JitterBuffer<C> {
             return;
         }
         let min_frames = TARGET_MS_MIN / FRAME_MS;
-        // After a startup spike toward the cap, converge faster than 1 frame/sec
-        // so steady-state returns to ~40–60 ms within a few seconds.
-        if self.target_frames > min_frames.max(2) + 2 {
-            let step = ((self.target_frames - min_frames.max(2)) / 2).max(1);
-            self.target_frames -= step;
-        } else if self.target_frames > min_frames.max(2) {
+        if self.target_frames > min_frames.max(2) {
             self.target_frames -= 1;
         }
         self.hits_since_adapt = 0;
