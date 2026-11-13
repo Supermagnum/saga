@@ -10,6 +10,7 @@ import android.util.Log
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
+import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.iroh.PendingDialLookup
 import org.saga.iroh.SagaDialer
@@ -17,7 +18,7 @@ import org.saga.ui.SagaInCallActivity
 import org.saga.ui.SagaInCallServiceBinder
 
 /**
- * Default-dialer InCallService: draws the call screen for every call on device.
+ * Default-dialer InCallService: one InCall UI for all calls (active + held + ringing).
  */
 class SagaInCallService : InCallService() {
     companion object {
@@ -56,12 +57,6 @@ class SagaInCallService : InCallService() {
         val isSagaAccount = accountId == SagaPhoneAccountRegistrar.ACCOUNT_ID
 
         // BACKSTOP ONLY: if Telecom substituted a SIM account after an Iroh dial, abort.
-        // Primary guard is SagaDialer refusing placeCall when the PhoneAccount is disabled.
-        // API 35 emulator forensics (DEBUG_FORCE_SIM_PATH + legacy ssp "iroh"):
-        //   placeCall → abort ~39ms later (handle already tel:4764), then RIL DIAL / AT> ATD4764;
-        //   still ran ~110ms after placeCall (~70ms after abort). This backstop does NOT prevent
-        //   a carrier dial attempt; keep the pre-dial enable check and non-digit SSP as primary.
-        // See TEST_RESULTS.md (PhoneAccount tel SSP / SIM abort timing).
         if (!isSagaAccount && PendingDialLookup.hasRecentIrohDial()) {
             val now = SystemClock.elapsedRealtime()
             val placeAt = SagaDialer.debugForceSimPlaceCallElapsedRealtimeMs
@@ -96,15 +91,22 @@ class SagaInCallService : InCallService() {
         )
         Log.i(
             TAG,
-            "CHECKPOINT onCallAdded origin=[$origin] peer=[$peerId] telecomState=[${call.state}]"
+            "CHECKPOINT onCallAdded origin=[$origin] peer=[$peerId] telecomState=[${call.state}] " +
+                "calls=${calls.size}"
         )
         if (isSagaAccount) {
             PendingDialLookup.markIrohDialConsumed()
         }
         call.registerCallback(callCallback)
+
+        // Single InCall activity: bring to front / update rather than stacking.
         startActivity(
             Intent(this, SagaInCallActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
                 putExtra(SagaInCallActivity.EXTRA_CALL_ID, callId)
                 putExtra(SagaInCallActivity.EXTRA_DISPLAY_NAME, displayName)
                 putExtra(SagaInCallActivity.EXTRA_ORIGIN, origin.name)
@@ -120,6 +122,7 @@ class SagaInCallService : InCallService() {
         org.saga.audio.SagaCallMediaController.stop(callId, sessionId)
         SagaCallRegistry.remove(callId)
         call.unregisterCallback(callCallback)
+        Log.i(TAG, "onCallRemoved callId=[$callId] remaining=${calls.size}")
     }
 
     private val callCallback = object : Call.Callback() {
@@ -129,7 +132,18 @@ class SagaInCallService : InCallService() {
             if (state == Call.STATE_ACTIVE && ctx.origin == CallOrigin.CELLULAR) {
                 val snapshot = CallSecurityStateResolver.resolve(CallOrigin.CELLULAR)
                 SagaCallRegistry.updateSnapshot(callId, snapshot)
-                CallSecurityPresenter.applyConnectSnapshot(applicationContext, snapshot)
+                // Connect cue once per cellular active — never on swap/unhold/merge.
+                if (!cellularCuePlayed.contains(callId)) {
+                    CallSecurityPresenter.applyConnectSnapshot(applicationContext, snapshot)
+                    cellularCuePlayed.add(callId)
+                }
+                SagaCallEventHub.emit(
+                    SagaCallEventHub.SecurityUpdate(
+                        callId,
+                        snapshot,
+                        playConnectCue = false
+                    )
+                )
             }
             // Cellular holding an Iroh call: STATE_HOLDING on the Iroh Call.
             if (ctx.origin == CallOrigin.IROH) {
@@ -142,6 +156,28 @@ class SagaInCallService : InCallService() {
                         org.saga.audio.SagaCallMediaController.setHeld(callId, sessionId, false)
                 }
             }
+            if (state == Call.STATE_DISCONNECTED) {
+                cellularCuePlayed.remove(callId)
+            }
+        }
+
+        override fun onConferenceableCallsChanged(
+            call: Call,
+            conferenceableCalls: MutableList<Call>
+        ) {
+            // Guard: refuse programmatic merge of mixed origins if anything else tries.
+            val origin = SagaCallRegistry.originForTelecomCall(call)
+            conferenceableCalls.forEach { other ->
+                if (MultiCallActions.refuseMergeIfMixed(call, other)) {
+                    Log.i(
+                        TAG,
+                        "conferenceable mixed origins — Merge hidden; API merge refused " +
+                            "primary=$origin other=${SagaCallRegistry.originForTelecomCall(other)}"
+                    )
+                }
+            }
         }
     }
+
+    private val cellularCuePlayed = mutableSetOf<String>()
 }
