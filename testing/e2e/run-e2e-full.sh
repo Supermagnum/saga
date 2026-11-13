@@ -39,9 +39,9 @@ install_both() {
     # PhoneAccount is registered in Application.onCreate — launch once before enable.
     adb -s "$s" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
     sleep 2
-    adb -s "$s" shell cmd telecom set-phone-account-enabled \
-      org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 \
-      || echo "WARN: set-phone-account-enabled failed on $s (account may be unregistered)"
+    # API 29 has no set-phone-account-enabled — falls back to Settings UI.
+    enable_saga_phone_account "$s" \
+      || echo "WARN: could not enable Saga PhoneAccount on $s"
   done
 }
 

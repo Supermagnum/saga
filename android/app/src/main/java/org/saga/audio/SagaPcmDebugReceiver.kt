@@ -39,8 +39,13 @@ object SagaPcmDebugReceiver {
                         Log.i(TAG, "broadcast DUMP_FINISH")
                     }
                     ACTION_MARKER -> {
-                        SagaPcmDebug.armClickMarker()
-                        Log.i(TAG, "broadcast MARKER")
+                        // Inject side splices a click; dump side only expects a peak.
+                        if (intent.getBooleanExtra("expect_only", false)) {
+                            SagaPcmDebug.armExpectMarker()
+                        } else {
+                            SagaPcmDebug.armClickMarker()
+                        }
+                        Log.i(TAG, "broadcast MARKER expect_only=${intent.getBooleanExtra("expect_only", false)}")
                     }
                     ACTION_MUTE -> {
                         val muted = intent.getBooleanExtra("muted", true)

@@ -257,7 +257,9 @@ warm_encrypted_caller() {
 contact_call() {
   local caller="$1" contact_name="$2" callee="${3:-}"
   local encrypted="${4:-false}"
+  clear_stuck_telephony_calls "$caller"
   if [[ -n "$callee" ]]; then
+    clear_stuck_telephony_calls "$callee"
     ensure_callee_listening "$callee" || {
       record "LISTEN:FAIL callee [$callee] not listening before dial to [$contact_name]"
       return 1
@@ -281,6 +283,7 @@ contact_call() {
 }
 
 stop_caller() {
+  clear_stuck_telephony_calls "$1"
   adb -s "$1" shell am force-stop org.saga
 }
 
@@ -372,4 +375,148 @@ provision_clean_baseline() {
   bash "$E2E_DIR/seed-test-contacts.sh" "$serial_b"
   ensure_callee_listening "$serial_b" || return 1
   wait_for_relay_online "$serial_b" "bob (callee baseline)" || return 1
+}
+
+# --- PhoneAccount enable (API 29 lacks set-phone-account-enabled) ---
+
+phone_account_enabled() {
+  local serial="$1"
+  adb -s "$serial" shell dumpsys telecom | rg -q '\[\[X\] PhoneAccount: ComponentInfo\{org\.saga/org\.saga\.telecom\.SagaConnectionService\}'
+}
+
+phone_account_disabled() {
+  local serial="$1"
+  adb -s "$serial" shell dumpsys telecom | rg -q '\[\[ \] PhoneAccount: ComponentInfo\{org\.saga/org\.saga\.telecom\.SagaConnectionService\}'
+}
+
+_e2e_dump_ui() {
+  local serial="$1" dump="$2"
+  adb -s "$serial" shell uiautomator dump /sdcard/saga_ui.xml >/dev/null 2>&1 || true
+  adb -s "$serial" pull /sdcard/saga_ui.xml "$dump" >/dev/null 2>&1 || true
+}
+
+_e2e_tap_ui_text() {
+  local dump="$1" needle="$2"
+  python3 - "$dump" "$needle" <<'PY'
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+needle = sys.argv[2]
+for m in re.finditer(r'text="([^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml):
+    if needle in m.group(1):
+        x1,y1,x2,y2 = map(int, m.groups()[1:])
+        print(f"{(x1+x2)//2} {(y1+y2)//2}")
+        sys.exit(0)
+for m in re.finditer(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="([^"]*)"', xml):
+    if needle in m.group(5):
+        x1,y1,x2,y2 = map(int, m.groups()[:4])
+        print(f"{(x1+x2)//2} {(y1+y2)//2}")
+        sys.exit(0)
+sys.exit(2)
+PY
+}
+
+_e2e_tap_saga_switch() {
+  local dump="$1"
+  python3 - "$dump" <<'PY'
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+saga_y = None
+for m in re.finditer(r'text="Saga"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml):
+    saga_y = (int(m.group(2)) + int(m.group(4))) // 2
+    break
+if saga_y is None:
+    for m in re.finditer(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="Saga"', xml):
+        saga_y = (int(m.group(2)) + int(m.group(4))) // 2
+        break
+switches = []
+for m in re.finditer(
+    r'class="android\.widget\.Switch"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+    xml,
+):
+    x1,y1,x2,y2 = map(int, m.groups())
+    switches.append(((x1+x2)//2, (y1+y2)//2, y1))
+for m in re.finditer(
+    r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*class="android\.widget\.Switch"',
+    xml,
+):
+    x1,y1,x2,y2 = map(int, m.groups())
+    switches.append(((x1+x2)//2, (y1+y2)//2, y1))
+if not switches:
+    sys.exit(2)
+if saga_y is not None:
+    switches.sort(key=lambda t: abs(t[2] - saga_y))
+x, y, _ = switches[0]
+print(f"{x} {y}")
+PY
+}
+
+# Hang up leftover cellular/emulator GSM calls that block Telecom placeCall
+# ("Aborting call since there's no room").
+clear_stuck_telephony_calls() {
+  local serial="$1"
+  local port
+  port="$(echo "$serial" | rg -o '[0-9]+$' || true)"
+  if [[ -n "$port" ]]; then
+    # Cancel common E2E fixture numbers (thor/alice/bob).
+    for n in +15550100012 +15550100011 +15550100010 15550100012 15550100011 15550100010; do
+      adb -s "$serial" emu gsm cancel "$n" >/dev/null 2>&1 || true
+    done
+  fi
+  adb -s "$serial" shell input keyevent KEYCODE_ENDCALL >/dev/null 2>&1 || true
+  adb -s "$serial" shell cmd telecom cleanup-stuck-calls >/dev/null 2>&1 || true
+}
+
+enable_saga_phone_account() {
+  local serial="$1"
+  adb -s "$serial" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
+  sleep 1
+  # API 30+ supports this; API 29 prints "No shell command implementation".
+  local cmd_out
+  cmd_out="$(adb -s "$serial" shell cmd telecom set-phone-account-enabled \
+    org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 2>&1 || true)"
+  sleep 1
+  if phone_account_enabled "$serial"; then
+    if echo "$cmd_out" | rg -qi 'No shell command|Unknown'; then
+      record "PA:PASS already enabled [$serial]"
+    else
+      record "PA:PASS enabled via telecom cmd [$serial]"
+    fi
+    return 0
+  fi
+  record "PA:INFO telecom cmd unavailable — enabling via Settings UI [$serial]"
+  local dump="/tmp/saga-pa-ui-${serial}.xml"
+  adb -s "$serial" shell am start -a android.telecom.action.CHANGE_PHONE_ACCOUNTS >/dev/null 2>&1
+  sleep 2
+  _e2e_dump_ui "$serial" "$dump"
+  local all_coords
+  all_coords="$(_e2e_tap_ui_text "$dump" "All calling accounts" 2>/dev/null || true)"
+  if [[ -n "${all_coords:-}" ]]; then
+    adb -s "$serial" shell input tap $all_coords
+    sleep 2
+    _e2e_dump_ui "$serial" "$dump"
+  fi
+  local coords
+  coords="$(_e2e_tap_saga_switch "$dump" 2>/dev/null || true)"
+  if [[ -z "${coords:-}" ]]; then
+    record "PA:FAIL no Saga switch on Settings UI [$serial]"
+    return 1
+  fi
+  if phone_account_enabled "$serial"; then
+    record "PA:PASS already enabled [$serial]"
+    return 0
+  fi
+  adb -s "$serial" shell input tap $coords
+  sleep 2
+  if phone_account_enabled "$serial"; then
+    record "PA:PASS enabled via Settings UI [$serial]"
+    return 0
+  fi
+  adb -s "$serial" shell input tap $coords
+  sleep 2
+  if phone_account_enabled "$serial"; then
+    record "PA:PASS enabled via Settings UI retry [$serial]"
+    return 0
+  fi
+  record "PA:FAIL could not enable PhoneAccount [$serial]"
+  return 1
 }

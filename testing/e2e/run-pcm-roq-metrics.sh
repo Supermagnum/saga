@@ -110,8 +110,13 @@ adb -s "$SERIAL_B" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.Sa
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 # Speech scoring first (no click marker — marker corrupts corr/STOI).
 # Dedicated latency probe: after WAV EOF the inject path is silence; fire marker then.
-sleep 4
+sleep 5
+# Arm dump-side expect, then inject-side click (cross-device M2E).
+# Do not tap HOLD/MUTE here — that stops dump/media before pull.
+pcm_broadcast "$SERIAL_B" org.saga.TEST_PCM_MARKER --ez expect_only true
+MARKER_HOST_MS="$(date +%s%3N)"
 pcm_broadcast "$SERIAL_A" org.saga.TEST_PCM_MARKER
+echo "LATENCY_HOST: alice_to_bob marker_send_host_ms=$MARKER_HOST_MS"
 sleep 3
 capture_callee_screencap "$SERIAL_B" "$OUT_DIR/bob-active-call.png" || true
 adb -s "$SERIAL_A" shell screencap -p /sdcard/saga_alice_active.png >/dev/null 2>&1 || true
@@ -122,6 +127,7 @@ adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY
 adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY_MARKER' | tee "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -30 || true
 # Receiver JB stats (bob dumps alice→bob).
 rg 'counters session=\[inbound' "$OUT_DIR/alice_to_bob_logcat_b.txt" | tail -3 || true
+rg 'LATENCY_MARKER' "$OUT_DIR/alice_to_bob_logcat_a.txt" "$OUT_DIR/alice_to_bob_logcat_b.txt" || true
 stop_caller "$SERIAL_A" || true
 stop_caller "$SERIAL_B" || true
 sleep 1
@@ -141,13 +147,19 @@ wait_for_incoming_ringing "$SERIAL_A" "alice-pcm" \
   && wait_for_handshake_log "$SERIAL_B" "\\[Saga Media\\] start session=" "media-b2" 30
 
 adb -s "$SERIAL_A" shell am start -a org.saga.TEST_IN_CALL_UI -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
-sleep 8
+sleep 5
+pcm_broadcast "$SERIAL_A" org.saga.TEST_PCM_MARKER --ez expect_only true
+MARKER_HOST_MS_BA="$(date +%s%3N)"
+pcm_broadcast "$SERIAL_B" org.saga.TEST_PCM_MARKER
+echo "LATENCY_HOST: bob_to_alice marker_send_host_ms=$MARKER_HOST_MS_BA"
+sleep 3
 capture_callee_screencap "$SERIAL_A" "$OUT_DIR/alice-active-call-b2a.png" || true
 
 finish_dump "$SERIAL_A"
-adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/bob_to_alice_logcat_b.txt" | tail -25 || true
-adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session' | tee "$OUT_DIR/bob_to_alice_logcat_a.txt" | tail -25 || true
+adb -s "$SERIAL_B" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY_MARKER' | tee "$OUT_DIR/bob_to_alice_logcat_b.txt" | tail -25 || true
+adb -s "$SERIAL_A" logcat -d | rg 'PcmDebug|inject|dump|counters session|LATENCY_MARKER' | tee "$OUT_DIR/bob_to_alice_logcat_a.txt" | tail -25 || true
 rg 'counters session=\[inbound' "$OUT_DIR/bob_to_alice_logcat_a.txt" | tail -3 || true
+rg 'LATENCY_MARKER' "$OUT_DIR/bob_to_alice_logcat_a.txt" "$OUT_DIR/bob_to_alice_logcat_b.txt" || true
 stop_caller "$SERIAL_A" || true
 stop_caller "$SERIAL_B" || true
 sleep 1

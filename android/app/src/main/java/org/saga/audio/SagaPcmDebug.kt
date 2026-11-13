@@ -31,9 +31,13 @@ object SagaPcmDebug {
     private val injectFrames = AtomicLong(0)
     /** Remaining click-marker frames to splice into inject (0 = none). */
     private val markerFramesLeft = AtomicInteger(0)
+    /** When true, dump side watches for a click peak (cross-device M2E). */
+    private val markerExpectDump = AtomicBoolean(false)
     private val markerInjectNanos = AtomicLong(0)
     private val markerDumpNanos = AtomicLong(0)
     private val markerDumpSeen = AtomicBoolean(false)
+    private val markerDumpFrame = AtomicLong(0)
+    private val dumpFrameCount = AtomicLong(0)
 
     /** Configure inject WAV path (48 kHz mono PCM16 WAV). Cleared when null/blank. */
     @JvmStatic
@@ -84,6 +88,8 @@ object SagaPcmDebug {
             dumpStream = FileOutputStream(f, false)
             dumpPath.set(path)
             dumping.set(true)
+            dumpFrameCount.set(0)
+            markerDumpSeen.set(false)
             Log.i(TAG, "dump armed path=[$path]")
         } catch (e: Exception) {
             Log.e(TAG, "dump open failed: ${e.message}")
@@ -98,13 +104,27 @@ object SagaPcmDebug {
     /**
      * Arm a one-frame click marker on the next inject frame. Logs capture-side
      * monotonic nanos for mouth-to-ear measurement (emulator only).
+     * Also arms dump-side peak expect so the peer can log detection without a
+     * shared clock ([LATENCY_MARKER] dump line with frame index).
      */
     @JvmStatic
     fun armClickMarker() {
         markerDumpSeen.set(false)
         markerDumpNanos.set(0)
+        markerDumpFrame.set(0)
         markerFramesLeft.set(1)
+        markerExpectDump.set(true)
         Log.i(TAG, "click marker armed")
+    }
+
+    /** Dump-only: watch for the next high-energy click without splicing inject. */
+    @JvmStatic
+    fun armExpectMarker() {
+        markerDumpSeen.set(false)
+        markerDumpNanos.set(0)
+        markerDumpFrame.set(0)
+        markerExpectDump.set(true)
+        Log.i(TAG, "click marker expect (dump)")
     }
 
     /**
@@ -169,8 +189,14 @@ object SagaPcmDebug {
             dup.limit(len.coerceAtMost(dup.capacity()))
             val bytes = ByteArray(dup.remaining())
             dup.get(bytes)
+            val frameIdx = dumpFrameCount.getAndIncrement()
             // Detect click marker energy once (emulator mouth-to-ear).
-            if (!markerDumpSeen.get() && markerInjectNanos.get() != 0L) {
+            // Same-process: inject_ns set locally → true m2e_ms.
+            // Cross-device: expect flag only → log dump frame; host correlates.
+            val watch =
+                markerExpectDump.get() ||
+                    (!markerDumpSeen.get() && markerInjectNanos.get() != 0L)
+            if (watch && !markerDumpSeen.get()) {
                 var peak = 0
                 var i = 0
                 while (i + 1 < bytes.size) {
@@ -183,19 +209,35 @@ object SagaPcmDebug {
                 if (peak >= 12000) {
                     val t = SystemClock.elapsedRealtimeNanos()
                     markerDumpNanos.set(t)
+                    markerDumpFrame.set(frameIdx)
                     markerDumpSeen.set(true)
+                    markerExpectDump.set(false)
                     val inj = markerInjectNanos.get()
-                    val m2eMs = (t - inj) / 1_000_000.0
-                    Log.i(
-                        TAG,
-                        String.format(
-                            "LATENCY_MARKER dump_ns=%d inject_ns=%d m2e_ms=%.1f peak=%d (emulator only)",
-                            t,
-                            inj,
-                            m2eMs,
-                            peak
+                    if (inj != 0L) {
+                        val m2eMs = (t - inj) / 1_000_000.0
+                        Log.i(
+                            TAG,
+                            String.format(
+                                "LATENCY_MARKER dump_ns=%d inject_ns=%d m2e_ms=%.1f peak=%d dump_frame=%d (emulator only)",
+                                t,
+                                inj,
+                                m2eMs,
+                                peak,
+                                frameIdx
+                            )
                         )
-                    )
+                    } else {
+                        Log.i(
+                            TAG,
+                            String.format(
+                                "LATENCY_MARKER dump_ns=%d peak=%d dump_frame=%d dump_ms=%.1f (emulator only, cross-device)",
+                                t,
+                                peak,
+                                frameIdx,
+                                frameIdx * 20.0
+                            )
+                        )
+                    }
                 }
             }
             stream.write(bytes)
