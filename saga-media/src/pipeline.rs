@@ -430,9 +430,19 @@ impl MediaPipeline {
     }
 
     pub async fn recv_one_datagram(&mut self) -> Result<()> {
-        let bytes = self.recv.read_bytes().await.map_err(MediaError::Other)?;
-        self.handle_incoming(&bytes);
+        let bytes = self.read_datagram_bytes().await?;
+        self.ingest_datagram(&bytes);
         Ok(())
+    }
+
+    /// Read one RoQ datagram without decoding (debug fault injectors).
+    pub async fn read_datagram_bytes(&mut self) -> Result<Bytes> {
+        self.recv.read_bytes().await.map_err(MediaError::Other)
+    }
+
+    /// Push a framed RoQ payload into SRTP/JB (after optional debug faults).
+    pub fn ingest_datagram(&mut self, bytes: &[u8]) {
+        self.handle_incoming(bytes);
     }
 
     pub fn playout_frame(&mut self, out: &mut [i16]) -> Result<usize> {

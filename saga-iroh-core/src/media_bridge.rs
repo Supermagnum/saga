@@ -21,6 +21,8 @@ mod stub {
     pub fn media_running(_session_id: &str) -> bool {
         false
     }
+    pub fn set_echo_mode(_enabled: bool) {}
+    pub fn set_rx_fault(_drop_pct: u32, _jitter_ms: u32) {}
 }
 #[cfg(not(feature = "iroh-transport"))]
 pub use stub::*;

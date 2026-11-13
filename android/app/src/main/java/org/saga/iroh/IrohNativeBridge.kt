@@ -52,6 +52,16 @@ object IrohNativeBridge {
         if (ensureLoaded()) nativeSetForceBindingPerturb(force)
     }
 
+    /** Debug-only: peer re-injects decoded PCM into send (echo RTT). No-op in release. */
+    fun setEchoMode(enabled: Boolean) {
+        if (ensureLoaded()) nativeSetEchoMode(enabled)
+    }
+
+    /** Debug-only: receive-side drop % + optional jitter ms. No-op in release. */
+    fun setRxFault(dropPct: Int, jitterMs: Int) {
+        if (ensureLoaded()) nativeSetRxFault(dropPct, jitterMs)
+    }
+
     fun pollHandshake(sessionId: String): Int {
         if (!ensureLoaded()) return HANDSHAKE_ENCRYPTED
         return nativePollHandshake(sessionId)
@@ -154,6 +164,8 @@ object IrohNativeBridge {
     private external fun nativePollRelayReady(): Int
     private external fun nativeSetForceHandshakeFail(force: Boolean)
     private external fun nativeSetForceBindingPerturb(force: Boolean)
+    private external fun nativeSetEchoMode(enabled: Boolean)
+    private external fun nativeSetRxFault(dropPct: Int, jitterMs: Int)
     private external fun nativePollHandshake(sessionId: String): Int
     private external fun nativeStartMedia(sessionId: String, mode: Int): Boolean
     private external fun nativeStopMedia(sessionId: String)
