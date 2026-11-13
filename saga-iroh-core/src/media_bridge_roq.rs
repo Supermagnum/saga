@@ -143,6 +143,9 @@ pub fn start_media(
     let pipeline_task = pipeline.clone();
     let playback_task = playback_ring.clone();
     let sid = session_id.to_string();
+    // Only the caller holds send until peer RX — applying this on both sides
+    // deadlocks until the timeout and both burst after ~200 ms of empty playout.
+    let hold_send_for_peer = matches!(role, CallRole::Caller);
 
     crate::iroh_transport::runtime().spawn(async move {
         let _roq_keep = roq_session;
@@ -152,7 +155,7 @@ pub fn start_media(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         info!("[Saga Media] RoQ task running session=[{sid}]");
         let mut ticks: u64 = 0;
-        // Gate outbound until we have seen peer media (or a short timeout) so the
+        // Caller: gate outbound until peer media (or short timeout) so the
         // callee's JB/SRTP/AudioTrack can come up before the caller's burst.
         let media_start = Instant::now();
         let mut peer_rx_seen = false;
@@ -258,7 +261,8 @@ pub fn start_media(
                             peer_rx_seen = true;
                             drained = drained.saturating_add(1);
                         }
-                        let send_ok = peer_rx_seen
+                        let send_ok = !hold_send_for_peer
+                            || peer_rx_seen
                             || media_start.elapsed().as_millis() >= SEND_HOLD_MS;
                         #[cfg(feature = "mock-token")]
                         let echo_on = ECHO_MODE.load(Ordering::Relaxed);
@@ -266,17 +270,18 @@ pub fn start_media(
                         let echo_on = false;
                         // Exactly one send per 20 ms tick (after peer-ready gate).
                         // Echo mode replaces mic capture with decoded PCM.
+                        // When gated, leave frames queued — do not drop them.
                         if !echo_on {
-                            match capture_rx.try_recv() {
-                                Ok(mut pcm) => {
-                                    if send_ok {
+                            if send_ok {
+                                match capture_rx.try_recv() {
+                                    Ok(mut pcm) => {
                                         if let Err(e) = p.send_pcm_frame(&mut pcm) {
                                             warn!("[Saga Media] send: {e}");
                                         }
                                     }
+                                    Err(mpsc::error::TryRecvError::Empty) => {}
+                                    Err(mpsc::error::TryRecvError::Disconnected) => break,
                                 }
-                                Err(mpsc::error::TryRecvError::Empty) => {}
-                                Err(mpsc::error::TryRecvError::Disconnected) => break,
                             }
                         } else {
                             // Drain mic so the channel does not back up under echo.

@@ -327,10 +327,17 @@ impl<C: Clock> JitterBuffer<C> {
             return PopOutcome::Wait;
         }
 
-        // Startup: wait out holes until we have primed at least one target of
-        // arrivals — avoids declaring 20–30 "lost" while the peer's send path
-        // is still catching up after media start.
-        if self.received_count < self.target_frames {
+        // Startup: wait out holes until a few packets have arrived — avoids
+        // declaring a burst of "lost" while the peer's send path is catching up.
+        // Cap the prime at 3 frames so a grown target does not delay forever.
+        let prime_need = self.target_frames.min(3);
+        if self.received_count < prime_need {
+            // Keep the anchor fresh so the first real pop is not instantly Lost.
+            if let Some(next) = self.next_seq {
+                let delay = Duration::from_millis(u64::from(self.target_ms()));
+                self.playout_anchor = Some(self.clock.now() + delay);
+                let _ = next;
+            }
             return PopOutcome::Wait;
         }
 
