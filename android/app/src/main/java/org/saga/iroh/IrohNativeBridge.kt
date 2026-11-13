@@ -52,6 +52,16 @@ object IrohNativeBridge {
         if (ensureLoaded()) nativeSetForceBindingPerturb(force)
     }
 
+    /** Debug-only: peer re-injects decoded PCM into send (echo RTT). No-op in release. */
+    fun setEchoMode(enabled: Boolean) {
+        if (ensureLoaded()) nativeSetEchoMode(enabled)
+    }
+
+    /** Debug-only: receive-side drop % + optional jitter ms. No-op in release. */
+    fun setRxFault(dropPct: Int, jitterMs: Int) {
+        if (ensureLoaded()) nativeSetRxFault(dropPct, jitterMs)
+    }
+
     fun pollHandshake(sessionId: String): Int {
         if (!ensureLoaded()) return HANDSHAKE_ENCRYPTED
         return nativePollHandshake(sessionId)
@@ -86,6 +96,20 @@ object IrohNativeBridge {
 
     fun setMediaHeld(sessionId: String, held: Boolean) {
         if (libraryLoaded) nativeSetMediaHeld(sessionId, held)
+    }
+
+    /**
+     * Callee answer: flush pre-answer JB, arm send/playout, emit answered signal to peer.
+     */
+    fun onLocalAnswered(sessionId: String): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeOnLocalAnswered(sessionId)
+    }
+
+    /** True once local answer (callee) or remote answered signal (caller) armed send. */
+    fun isSendArmed(sessionId: String): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeIsSendArmed(sessionId)
     }
 
     /** §5b re-key; returns swap duration in microseconds, or -1 on failure. */
@@ -154,6 +178,8 @@ object IrohNativeBridge {
     private external fun nativePollRelayReady(): Int
     private external fun nativeSetForceHandshakeFail(force: Boolean)
     private external fun nativeSetForceBindingPerturb(force: Boolean)
+    private external fun nativeSetEchoMode(enabled: Boolean)
+    private external fun nativeSetRxFault(dropPct: Int, jitterMs: Int)
     private external fun nativePollHandshake(sessionId: String): Int
     private external fun nativeStartMedia(sessionId: String, mode: Int): Boolean
     private external fun nativeStopMedia(sessionId: String)
@@ -162,5 +188,7 @@ object IrohNativeBridge {
     private external fun nativeSetMediaMuted(sessionId: String, muted: Boolean)
     private external fun nativeSetMediaMutedAll(muted: Boolean)
     private external fun nativeSetMediaHeld(sessionId: String, held: Boolean)
+    private external fun nativeOnLocalAnswered(sessionId: String): Boolean
+    private external fun nativeIsSendArmed(sessionId: String): Boolean
     private external fun nativeRekeyMedia(sessionId: String): Long
 }

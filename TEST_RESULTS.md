@@ -1,8 +1,96 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 Step 5 verification complete)
+**Last updated:** 2026-11-13 (Phase 2 close-out — open items)
 
-**Status:** Step 5 verification finished on PR #28. CI must stay green.
+**Status:** Phase 2 close-out — open items (API 29 cold suite / Case4b+10
+RING flakes still open). Branch `phase-2-closeout` / PR #31.
+
+---
+
+## 2026-11-13 — Phase 2 close-out (open items)
+
+Branch: `phase-2-closeout`. Logs: `/tmp/preanswer-gate.log`,
+`/tmp/pcm-preanswer-metrics2.log`, `/tmp/echo-rtt3.log`, `/tmp/rx-fault2.log`,
+`/tmp/e2e-api35-final.log`, `/tmp/onboard-api35-final.log`, `/tmp/tree-release-shaped.txt`.
+
+### A. Pre-answer media (follow-up to item 2)
+
+Confirmed: before this change the caller started AudioRecord/send at Encrypted
+(while callee still RINGING). Fix:
+
+- Caller: native RX at Encrypted; **send/playout gated** until explicit
+  answered signal (`MEDIA_TAG_ANSWERED` / `SAGAANS1`).
+- Callee: RX at Encrypted while RINGING; on answer **flush JB + playback ring**,
+  send answered signal, then arm send/playout + Audio I/O.
+- Callee capture stays off until answer (**PASS**).
+
+| Check | Result | Log |
+|-------|--------|-----|
+| caller sent=0 while RINGING (both dirs) | **PASS** | `/tmp/preanswer-gate.log` |
+| callee audio I/O off while RINGING | **PASS** | same |
+| flush + answered signal on answer | **PASS** | same |
+| post-answer metrics alice→bob / bob→alice | corr **0.960** / 10.7 dB / STOI 0.994 / lost=0 / jb≈20–60 | `/tmp/pcm-preanswer-metrics2.log` |
+
+### 1. Release randomness and dependencies
+
+- Release-shaped `cargo tree -e features --features iroh-transport`:
+  `galdr-core` **default only** — **no `test-hal`** (`/tmp/tree-release-shaped.txt`).
+- Host test `production_trng_two_handshakes_differ_ephemeral_pubkeys` **PASS**.
+- Production: `OsTrng` + `MemoryVaultStorage` in `saga-session`. Fake* only in
+  `testing/mock-token`.
+- **galdr-vault / vsss-rs**: required via `ephemeral-session` for LT/vault
+  handshake material — kept (not mock-only).
+- `scripts/check-release-so.sh`: FakeTrng, FakeVaultStorage, test-hal,
+  saga-echo-mode, saga-rx-fault.
+
+### 2. alice→bob asymmetry (FIXED) + pre-answer gate above
+
+Root cause: caller sent before callee ReceiveFlow existed. RX-at-Encrypted while
+RINGING + answered-signal send gate. Steady metrics unchanged at 0.960 / 10.7.
+
+### 3. Echo mouth-to-ear (emulator only; not phone-representative)
+
+| Path | RTT | RTT/2 | JB target | Log |
+|------|-----|-------|-----------|-----|
+| alice↔bob | 117.8 ms | 58.9 ms | 40 ms | `/tmp/echo-rtt3.log` |
+| bob↔alice | 91.8 ms | 45.9 ms | 40 ms | same |
+
+Hygiene: `saga-echo-mode` in `check-release-so.sh`.
+
+### 4. Receive-side fault injector (5% + ~30 ms)
+
+| Path | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
+|------|------|--------|------|------------|------|------|-----|
+| alice→bob | 0.850 | 4.2 | 0.967 | 60/100 | 0 | ~14 | `/tmp/rx-fault2.log` |
+| bob→alice | 0.845 | 4.0 | 0.968 | 60/100 | 0 | ~14 | same |
+
+### 5. Connect-cue dedupe
+
+Committed (`DEDUPE_MS=2500`). Root cause: API 29 double-fired connect
+SecurityUpdate / resume → same cue twice.
+
+- API 35 Case 1: **PASS** cue once (`/tmp/e2e-api35-final.log`).
+- API 29 Case 1: previously **PASS** cue once on cold suite
+  (`/tmp/e2e-closeout-api29-cold.log`); **re-run blocked** this session — API 29
+  emulators wedged on `adb`/`run-as` (timeout added to relay poll).
+
+### Suites (this session)
+
+| Gate | Result |
+|------|--------|
+| API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; **Case4b RING flake**; (`/tmp/e2e-api35-final.log`) |
+| API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold) |
+| API 35 Case 10 | **RING flake** (`/tmp/e2e-case10.log`) |
+| API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35-final.log`) |
+| API 29 cold + onboard | **not re-verified this session** (emulator adb hang) |
+
+### Needs real hardware
+
+- Phone mouth-to-ear with AEC/NS/AGC
+- Speaker / earpiece acoustics
+- Cellular hold on a real modem / dual-SIM
+- Sustained loss/jitter on real mobile networks
+- xous-core#937 items (unchanged)
 
 ---
 
@@ -98,7 +186,6 @@ Harness fixes for API 29: `enable_saga_phone_account` (Settings UI fallback —
 - Speaker / earpiece acoustic quality
 - Cellular hold while Iroh active on dual-SIM / real modem
 - Sustained 5% loss + jitter on mobile networks (`tc netem` / field)
-- Confirm API 29 Case 1 after cue dedupe in a full cold suite pass
 
 ---
 

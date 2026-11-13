@@ -2,10 +2,11 @@
 //!
 //! Holds [`SessionToken`], [`HandshakeOutput`], EndpointId channel binding,
 //! confirmation MACs, and the Init/Response stream driver. Software mock
-//! backends live in `testing/mock-token`.
+//! backends (`FakeTrng` / `FakeVaultStorage`) live only in `testing/mock-token`.
 
 mod channel_bind;
 mod confirm;
+mod hal_os;
 mod handshake_io;
 mod token;
 
@@ -14,6 +15,7 @@ pub use confirm::{
     derive_confirmation_key, initiator_mac, responder_mac, verify_mac, ConfirmationKey,
     CONFIRM_MAC_LEN,
 };
+pub use hal_os::{MemoryVaultStorage, OsTrng};
 pub use handshake_io::{
     perturb_endpoint_id, run_initiator_session, run_responder_session, HandshakeOutcome,
 };
