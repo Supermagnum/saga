@@ -28,10 +28,22 @@ use saga_session::HandshakeOutput;
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
-const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(60);
-const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(5);
-const MAX_CONNECT_ATTEMPTS: u32 = 8;
+/// Per-attempt connect timeout (QUIC dial).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+/// Wall-clock budget for the whole connect phase (excluding post-connect handshake).
+const CONNECT_BUDGET: Duration = Duration::from_secs(40);
+const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(20);
+const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(2);
+const MAX_CONNECT_ATTEMPTS: u32 = 4;
+/// Addressing/discovery misses fail faster — no point burning the full budget.
+const ADDRESSING_MAX_ATTEMPTS: u32 = 3;
+
+fn is_addressing_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("no addressing information")
+        || lower.contains("addressing information available")
+        || lower.contains("failed to resolve")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakePoll {
@@ -561,13 +573,21 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         info!("initiator relay online before connect to [{peer_id}]");
     }
 
-    let addr = endpoint_addr_for_peer(remote, endpoint);
     let mut connection = None;
     let mut last_err = String::new();
+    let deadline = tokio::time::Instant::now() + CONNECT_BUDGET;
     for attempt in 1..=MAX_CONNECT_ATTEMPTS {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "NOT_REACHABLE: connect budget {}s exhausted after {attempt} attempt(s): {last_err}",
+                CONNECT_BUDGET.as_secs()
+            ));
+        }
+        // Refresh address each attempt so late pkarr/DNS publish can land.
+        let attempt_addr = endpoint_addr_for_peer(remote, endpoint);
         match tokio::time::timeout(
             CONNECT_TIMEOUT,
-            endpoint.connect(addr.clone(), SAGA_VOICE_ALPN),
+            endpoint.connect(attempt_addr, SAGA_VOICE_ALPN),
         )
         .await
         {
@@ -577,18 +597,28 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             }
             Ok(Err(e)) => {
                 last_err = format!("{e}");
-                if attempt < MAX_CONNECT_ATTEMPTS {
+                let addressing = is_addressing_error(&last_err);
+                let max_attempts = if addressing {
+                    ADDRESSING_MAX_ATTEMPTS.min(MAX_CONNECT_ATTEMPTS)
+                } else {
+                    MAX_CONNECT_ATTEMPTS
+                };
+                if attempt < max_attempts
+                    && tokio::time::Instant::now() + CONNECT_RETRY_SLEEP < deadline
+                {
                     warn!(
-                        "iroh connect attempt {attempt}/{MAX_CONNECT_ATTEMPTS} to [{peer_id}]: {last_err} — retrying"
+                        "iroh connect attempt {attempt}/{max_attempts} to [{peer_id}]: {last_err} — retrying"
                     );
                     tokio::time::sleep(CONNECT_RETRY_SLEEP).await;
                     continue;
                 }
-                return Err(format!("iroh connect error: {e}"));
+                return Err(format!("NOT_REACHABLE: iroh connect error: {e}"));
             }
             Err(_) => {
                 last_err = format!("timed out after {}s", CONNECT_TIMEOUT.as_secs());
-                if attempt < MAX_CONNECT_ATTEMPTS {
+                if attempt < MAX_CONNECT_ATTEMPTS
+                    && tokio::time::Instant::now() + CONNECT_RETRY_SLEEP < deadline
+                {
                     warn!(
                         "iroh connect attempt {attempt}/{MAX_CONNECT_ATTEMPTS} to [{peer_id}] timed out — retrying"
                     );
@@ -596,15 +626,14 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
                     continue;
                 }
                 return Err(format!(
-                    "iroh connect timed out after {} attempts ({}s each)",
-                    MAX_CONNECT_ATTEMPTS,
+                    "NOT_REACHABLE: iroh connect timed out after {attempt} attempt(s) ({}s each)",
                     CONNECT_TIMEOUT.as_secs()
                 ));
             }
         }
     }
-    let connection =
-        connection.ok_or_else(|| format!("iroh connect failed after retries: {last_err}"))?;
+    let connection = connection
+        .ok_or_else(|| format!("NOT_REACHABLE: iroh connect failed after retries: {last_err}"))?;
 
     #[cfg(feature = "mock-token")]
     let (handshake, handshake_output, roq) = {

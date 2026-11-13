@@ -33,6 +33,7 @@
     <string name="padlock_encrypted">Encrypted call</string>
     <string name="padlock_not_encrypted">Not encrypted</string>
     <string name="padlock_downgraded">Encryption failed</string>
+    <string name="call_not_reachable">Not reachable</string>
     <string name="phone_account_onboarding_title">Enable Saga calling</string>
     <string name="phone_account_onboarding_body">Encrypted Iroh calls need the Saga account turned on under Calling accounts. Until then, Saga will not place or receive Iroh calls — and will never fall back to the SIM.</string>
     <string name="phone_account_open_settings">Open Calling accounts</string>

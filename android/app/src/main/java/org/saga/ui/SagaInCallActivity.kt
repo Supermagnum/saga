@@ -2,7 +2,10 @@ package org.saga.ui
 
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.OutcomeReceiver
+import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.CallEndpoint
 import android.telecom.InCallService
@@ -74,8 +77,35 @@ class SagaInCallActivity : AppCompatActivity() {
                     maybePlayConnectCue(update.snapshot)
                 }
                 maybeShowDowngradeModal(update.snapshot, displayName)
+                if (update.snapshot.statusText == getString(R.string.call_not_reachable) ||
+                    update.snapshot.statusText == "Not reachable"
+                ) {
+                    // Brief status visibility, then leave the dead call screen.
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isFinishing) finish()
+                    }, 1500L)
+                }
             }
         }
+
+        // Telecom disconnect (including Not reachable) should close the screen.
+        SagaInCallServiceBinder.service?.calls?.firstOrNull {
+            SagaCallRegistry.telecomCallId(it) == callId
+        }?.registerCallback(object : Call.Callback() {
+            override fun onStateChanged(call: Call, state: Int) {
+                if (state == Call.STATE_DISCONNECTED || state == Call.STATE_DISCONNECTING) {
+                    val label = call.details?.disconnectCause?.label?.toString()
+                    if (!label.isNullOrBlank()) {
+                        binding.securityStatus.text = label
+                    }
+                    if (!isFinishing) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            if (!isFinishing) finish()
+                        }, 1200L)
+                    }
+                }
+            }
+        })
     }
 
     private fun rustSessionId(): String? =
