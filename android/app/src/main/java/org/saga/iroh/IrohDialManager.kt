@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecuritySnapshot
 import org.saga.call.CallSecurityStateResolver
+import org.saga.call.PadlockDisplayState
 import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.handshake.EncryptionEstablishedStore
@@ -22,6 +23,7 @@ import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallSecurityAudioWarning
 import org.saga.telecom.SagaIrohConnection
 import android.telecom.Connection
+import android.telecom.DisconnectCause
 import java.util.concurrent.ConcurrentHashMap
 
 class IrohDialManager private constructor(context: Context) {
@@ -148,15 +150,53 @@ class IrohDialManager private constructor(context: Context) {
                     onHandshakeSettled(lookupKey, telecomCallKey, state, connection)
                 }
             },
-            onFailed = {
-                onHandshakeSettled(
-                    lookupKey,
-                    telecomCallKey,
-                    handshakeCoordinator.resolveFailure(lookupKey),
-                    connection
-                )
+            onFailed = { reason ->
+                // Connect-phase failure is reachability, not §5a downgrade / cellular fallback.
+                failNotReachable(lookupKey, telecomCallKey, connection, reason)
             }
         )
+    }
+
+    /**
+     * Outgoing peer never answered the QUIC dial (discovery miss, budget exhausted, etc.).
+     * Disconnect cleanly with InCall status "Not reachable" — never open the §5a padlock path.
+     */
+    private fun failNotReachable(
+        lookupKey: String,
+        telecomCallKey: String,
+        connection: SagaIrohConnection,
+        reason: String
+    ) {
+        Log.w(
+            TAG,
+            "NOT_REACHABLE lookup=[$lookupKey] key=[$telecomCallKey] reason=[$reason]"
+        )
+        val status = appContext.getString(org.saga.R.string.call_not_reachable)
+        val snapshot = CallSecuritySnapshot(
+            padlockState = PadlockDisplayState.KEY_NOT_FOUND,
+            statusText = status,
+            playSecureCue = false,
+            playUnsecureCue = false,
+            showDowngradeModal = false
+        )
+        SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        SagaCallEventHub.emit(
+            SagaCallEventHub.SecurityUpdate(
+                telecomCallKey,
+                snapshot,
+                playConnectCue = false
+            )
+        )
+        sessions.remove(telecomCallKey)?.disconnect()
+        lookupKeys.remove(telecomCallKey)
+        try {
+            connection.setDisconnected(
+                DisconnectCause(DisconnectCause.ERROR, status)
+            )
+            connection.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "failNotReachable disconnect failed: ${e.message}")
+        }
     }
 
     fun endCall(telecomCallKey: String) {
