@@ -4,7 +4,9 @@
 //! A tokio task owns [`MediaPipeline`] (Opus + SRTP/plain + RoQ datagrams).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+#[cfg(feature = "mock-token")]
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
@@ -20,23 +22,23 @@ const FRAME_BYTES: usize = FRAME_SAMPLES * 2;
 const RING_FRAMES: usize = 50;
 
 /// Debug-only: re-inject decoded PCM into the local send path (echo RTT).
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static ECHO_MODE: AtomicBool = AtomicBool::new(false);
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static ECHO_ARMED_LOG: AtomicBool = AtomicBool::new(false);
 
 /// Debug-only: receive-side fault injector (drop % and optional delay jitter).
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static RX_FAULT_DROP_PCT: AtomicU32 = AtomicU32::new(0);
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static RX_FAULT_JITTER_MS: AtomicU32 = AtomicU32::new(0);
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static RX_FAULT_ARMED_LOG: AtomicBool = AtomicBool::new(false);
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 static RX_FAULT_RNG: StdMutex<u64> = StdMutex::new(0xC0FFEE_u64);
 
 /// Enable/disable debug echo mode (never linked in release).
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 pub fn set_echo_mode(enabled: bool) {
     ECHO_MODE.store(enabled, Ordering::Relaxed);
     ECHO_ARMED_LOG.store(false, Ordering::Relaxed);
@@ -48,11 +50,11 @@ pub fn set_echo_mode(enabled: bool) {
     }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock-token"))]
 pub fn set_echo_mode(_enabled: bool) {}
 
 /// Configure debug Rx fault injector (drop_pct 0–100, jitter_ms optional delay).
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 pub fn set_rx_fault(drop_pct: u32, jitter_ms: u32) {
     RX_FAULT_DROP_PCT.store(drop_pct.min(100), Ordering::Relaxed);
     RX_FAULT_JITTER_MS.store(jitter_ms, Ordering::Relaxed);
@@ -64,10 +66,10 @@ pub fn set_rx_fault(drop_pct: u32, jitter_ms: u32) {
     }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "mock-token"))]
 pub fn set_rx_fault(_drop_pct: u32, _jitter_ms: u32) {}
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "mock-token")]
 fn rx_fault_rand_u32() -> u32 {
     let mut g = RX_FAULT_RNG.lock().unwrap_or_else(|e| e.into_inner());
     // xorshift64*
@@ -155,7 +157,7 @@ pub fn start_media(
         let media_start = Instant::now();
         let mut peer_rx_seen = false;
         const SEND_HOLD_MS: u128 = 200;
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "mock-token")]
         let mut rx_delayed: VecDeque<(Instant, bytes::Bytes)> = VecDeque::new();
         loop {
             tokio::select! {
@@ -171,7 +173,7 @@ pub fn start_media(
                         // to fill the 300 ms JB and force jump-forward (audio
                         // warp). Leave ≥1 slot and stop after a few datagrams;
                         // the rest wait for the next 20 ms tick after playout.
-                        #[cfg(debug_assertions)]
+                        #[cfg(feature = "mock-token")]
                         {
                             let now = Instant::now();
                             while let Some((ready, _)) = rx_delayed.front() {
@@ -192,7 +194,7 @@ pub fn start_media(
                             if p.jitter_len() + 1 >= p.jitter_cap() {
                                 break;
                             }
-                            #[cfg(debug_assertions)]
+                            #[cfg(feature = "mock-token")]
                             let got = {
                                 match tokio::time::timeout(
                                     std::time::Duration::from_millis(0),
@@ -236,7 +238,7 @@ pub fn start_media(
                                     _ => None,
                                 }
                             };
-                            #[cfg(not(debug_assertions))]
+                            #[cfg(not(feature = "mock-token"))]
                             let got = {
                                 if tokio::time::timeout(
                                     std::time::Duration::from_millis(0),
@@ -258,9 +260,9 @@ pub fn start_media(
                         }
                         let send_ok = peer_rx_seen
                             || media_start.elapsed().as_millis() >= SEND_HOLD_MS;
-                        #[cfg(debug_assertions)]
+                        #[cfg(feature = "mock-token")]
                         let echo_on = ECHO_MODE.load(Ordering::Relaxed);
-                        #[cfg(not(debug_assertions))]
+                        #[cfg(not(feature = "mock-token"))]
                         let echo_on = false;
                         // Exactly one send per 20 ms tick (after peer-ready gate).
                         // Echo mode replaces mic capture with decoded PCM.
@@ -282,7 +284,7 @@ pub fn start_media(
                         }
                         let mut out = vec![0i16; FRAME_SAMPLES];
                         if p.playout_frame(&mut out).is_ok() {
-                            #[cfg(debug_assertions)]
+                            #[cfg(feature = "mock-token")]
                             if echo_on && send_ok {
                                 if !ECHO_ARMED_LOG.swap(true, Ordering::Relaxed) {
                                     info!("saga-echo-mode looping decoded PCM to send");
