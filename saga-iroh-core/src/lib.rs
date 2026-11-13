@@ -564,6 +564,33 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeRekeyMedia(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetEchoMode(
+    _env: JNIEnv,
+    _thiz: JObject,
+    enabled: jboolean,
+) {
+    #[cfg(feature = "iroh-transport")]
+    media_bridge::set_echo_mode(enabled == jni::sys::JNI_TRUE);
+    #[cfg(not(feature = "iroh-transport"))]
+    let _ = enabled;
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetRxFault(
+    _env: JNIEnv,
+    _thiz: JObject,
+    drop_pct: jint,
+    jitter_ms: jint,
+) {
+    #[cfg(feature = "iroh-transport")]
+    media_bridge::set_rx_fault(drop_pct.max(0) as u32, jitter_ms.max(0) as u32);
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (drop_pct, jitter_ms);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId(
     env: JNIEnv,
     _thiz: JObject,

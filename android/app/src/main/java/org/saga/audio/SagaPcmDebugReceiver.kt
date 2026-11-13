@@ -19,6 +19,8 @@ object SagaPcmDebugReceiver {
     const val ACTION_DUMP_FINISH = "org.saga.TEST_PCM_DUMP_FINISH"
     const val ACTION_MARKER = "org.saga.TEST_PCM_MARKER"
     const val ACTION_MUTE = "org.saga.TEST_MEDIA_MUTE"
+    const val ACTION_ECHO = "org.saga.TEST_ECHO_MODE"
+    const val ACTION_RX_FAULT = "org.saga.TEST_RX_FAULT"
 
     fun register(context: Context) {
         val receiver = object : BroadcastReceiver() {
@@ -53,6 +55,17 @@ object SagaPcmDebugReceiver {
                         SagaCallMediaController.setMutedAllForTest(muted)
                         Log.i(TAG, "broadcast MUTE muted=$muted")
                     }
+                    ACTION_ECHO -> {
+                        val enabled = intent.getBooleanExtra("enabled", false)
+                        org.saga.iroh.IrohNativeBridge.setEchoMode(enabled)
+                        Log.i(TAG, "broadcast ECHO enabled=$enabled")
+                    }
+                    ACTION_RX_FAULT -> {
+                        val dropPct = intent.getIntExtra("drop_pct", 0)
+                        val jitterMs = intent.getIntExtra("jitter_ms", 0)
+                        org.saga.iroh.IrohNativeBridge.setRxFault(dropPct, jitterMs)
+                        Log.i(TAG, "broadcast RX_FAULT drop_pct=$dropPct jitter_ms=$jitterMs")
+                    }
                 }
             }
         }
@@ -62,6 +75,8 @@ object SagaPcmDebugReceiver {
             addAction(ACTION_DUMP_FINISH)
             addAction(ACTION_MARKER)
             addAction(ACTION_MUTE)
+            addAction(ACTION_ECHO)
+            addAction(ACTION_RX_FAULT)
         }
         ContextCompat.registerReceiver(
             context.applicationContext,

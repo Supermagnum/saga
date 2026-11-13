@@ -4,7 +4,7 @@
 //! A tokio task owns [`MediaPipeline`] (Opus + SRTP/plain + RoQ datagrams).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
@@ -18,6 +18,69 @@ use tokio::sync::{mpsc, Mutex as TokioMutex};
 
 const FRAME_BYTES: usize = FRAME_SAMPLES * 2;
 const RING_FRAMES: usize = 50;
+
+/// Debug-only: re-inject decoded PCM into the local send path (echo RTT).
+#[cfg(debug_assertions)]
+static ECHO_MODE: AtomicBool = AtomicBool::new(false);
+#[cfg(debug_assertions)]
+static ECHO_ARMED_LOG: AtomicBool = AtomicBool::new(false);
+
+/// Debug-only: receive-side fault injector (drop % and optional delay jitter).
+#[cfg(debug_assertions)]
+static RX_FAULT_DROP_PCT: AtomicU32 = AtomicU32::new(0);
+#[cfg(debug_assertions)]
+static RX_FAULT_JITTER_MS: AtomicU32 = AtomicU32::new(0);
+#[cfg(debug_assertions)]
+static RX_FAULT_ARMED_LOG: AtomicBool = AtomicBool::new(false);
+#[cfg(debug_assertions)]
+static RX_FAULT_RNG: StdMutex<u64> = StdMutex::new(0xC0FFEE_u64);
+
+/// Enable/disable debug echo mode (never linked in release).
+#[cfg(debug_assertions)]
+pub fn set_echo_mode(enabled: bool) {
+    ECHO_MODE.store(enabled, Ordering::Relaxed);
+    ECHO_ARMED_LOG.store(false, Ordering::Relaxed);
+    if enabled {
+        // Marker string must appear only in debug .so (check-release-so.sh).
+        info!("saga-echo-mode enabled");
+    } else {
+        info!("saga-echo-mode disabled");
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub fn set_echo_mode(_enabled: bool) {}
+
+/// Configure debug Rx fault injector (drop_pct 0–100, jitter_ms optional delay).
+#[cfg(debug_assertions)]
+pub fn set_rx_fault(drop_pct: u32, jitter_ms: u32) {
+    RX_FAULT_DROP_PCT.store(drop_pct.min(100), Ordering::Relaxed);
+    RX_FAULT_JITTER_MS.store(jitter_ms, Ordering::Relaxed);
+    RX_FAULT_ARMED_LOG.store(false, Ordering::Relaxed);
+    if drop_pct > 0 || jitter_ms > 0 {
+        info!("saga-rx-fault drop_pct={drop_pct} jitter_ms={jitter_ms}");
+    } else {
+        info!("saga-rx-fault disabled");
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub fn set_rx_fault(_drop_pct: u32, _jitter_ms: u32) {}
+
+#[cfg(debug_assertions)]
+fn rx_fault_rand_u32() -> u32 {
+    let mut g = RX_FAULT_RNG.lock().unwrap_or_else(|e| e.into_inner());
+    // xorshift64*
+    let mut x = *g;
+    if x == 0 {
+        x = Instant::now().elapsed().as_nanos() as u64 | 1;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *g = x;
+    (x % 100) as u32
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -92,6 +155,8 @@ pub fn start_media(
         let media_start = Instant::now();
         let mut peer_rx_seen = false;
         const SEND_HOLD_MS: u128 = 200;
+        #[cfg(debug_assertions)]
+        let mut rx_delayed: VecDeque<(Instant, bytes::Bytes)> = VecDeque::new();
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => break,
@@ -106,18 +171,86 @@ pub fn start_media(
                         // to fill the 300 ms JB and force jump-forward (audio
                         // warp). Leave ≥1 slot and stop after a few datagrams;
                         // the rest wait for the next 20 ms tick after playout.
+                        #[cfg(debug_assertions)]
+                        {
+                            let now = Instant::now();
+                            while let Some((ready, _)) = rx_delayed.front() {
+                                if *ready > now {
+                                    break;
+                                }
+                                if p.jitter_len() + 1 >= p.jitter_cap() {
+                                    break;
+                                }
+                                if let Some((_, bytes)) = rx_delayed.pop_front() {
+                                    p.ingest_datagram(&bytes);
+                                    peer_rx_seen = true;
+                                }
+                            }
+                        }
                         let mut drained = 0u32;
                         while drained < 5 {
                             if p.jitter_len() + 1 >= p.jitter_cap() {
                                 break;
                             }
-                            if tokio::time::timeout(
-                                std::time::Duration::from_millis(0),
-                                p.recv_one_datagram(),
-                            )
-                            .await
-                            .is_err()
-                            {
+                            #[cfg(debug_assertions)]
+                            let got = {
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_millis(0),
+                                    p.read_datagram_bytes(),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(bytes)) => {
+                                        let drop_pct =
+                                            RX_FAULT_DROP_PCT.load(Ordering::Relaxed);
+                                        let jitter_ms =
+                                            RX_FAULT_JITTER_MS.load(Ordering::Relaxed);
+                                        if (drop_pct > 0 || jitter_ms > 0)
+                                            && !RX_FAULT_ARMED_LOG.swap(true, Ordering::Relaxed)
+                                        {
+                                            info!(
+                                                "saga-rx-fault active drop_pct={drop_pct} \
+                                                 jitter_ms={jitter_ms}"
+                                            );
+                                        }
+                                        if drop_pct > 0 && rx_fault_rand_u32() < drop_pct {
+                                            // Intentional drop — do not ingest.
+                                        } else if jitter_ms > 0 {
+                                            let d = rx_fault_rand_u32() % (jitter_ms + 1);
+                                            if d == 0 {
+                                                p.ingest_datagram(&bytes);
+                                            } else {
+                                                rx_delayed.push_back((
+                                                    Instant::now()
+                                                        + std::time::Duration::from_millis(
+                                                            d as u64,
+                                                        ),
+                                                    bytes,
+                                                ));
+                                            }
+                                        } else {
+                                            p.ingest_datagram(&bytes);
+                                        }
+                                        Some(())
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            #[cfg(not(debug_assertions))]
+                            let got = {
+                                if tokio::time::timeout(
+                                    std::time::Duration::from_millis(0),
+                                    p.recv_one_datagram(),
+                                )
+                                .await
+                                .is_ok()
+                                {
+                                    Some(())
+                                } else {
+                                    None
+                                }
+                            };
+                            if got.is_none() {
                                 break;
                             }
                             peer_rx_seen = true;
@@ -125,20 +258,40 @@ pub fn start_media(
                         }
                         let send_ok = peer_rx_seen
                             || media_start.elapsed().as_millis() >= SEND_HOLD_MS;
+                        #[cfg(debug_assertions)]
+                        let echo_on = ECHO_MODE.load(Ordering::Relaxed);
+                        #[cfg(not(debug_assertions))]
+                        let echo_on = false;
                         // Exactly one send per 20 ms tick (after peer-ready gate).
-                        match capture_rx.try_recv() {
-                            Ok(mut pcm) => {
-                                if send_ok {
-                                    if let Err(e) = p.send_pcm_frame(&mut pcm) {
-                                        warn!("[Saga Media] send: {e}");
+                        // Echo mode replaces mic capture with decoded PCM.
+                        if !echo_on {
+                            match capture_rx.try_recv() {
+                                Ok(mut pcm) => {
+                                    if send_ok {
+                                        if let Err(e) = p.send_pcm_frame(&mut pcm) {
+                                            warn!("[Saga Media] send: {e}");
+                                        }
                                     }
                                 }
+                                Err(mpsc::error::TryRecvError::Empty) => {}
+                                Err(mpsc::error::TryRecvError::Disconnected) => break,
                             }
-                            Err(mpsc::error::TryRecvError::Empty) => {}
-                            Err(mpsc::error::TryRecvError::Disconnected) => break,
+                        } else {
+                            // Drain mic so the channel does not back up under echo.
+                            while capture_rx.try_recv().is_ok() {}
                         }
                         let mut out = vec![0i16; FRAME_SAMPLES];
                         if p.playout_frame(&mut out).is_ok() {
+                            #[cfg(debug_assertions)]
+                            if echo_on && send_ok {
+                                if !ECHO_ARMED_LOG.swap(true, Ordering::Relaxed) {
+                                    info!("saga-echo-mode looping decoded PCM to send");
+                                }
+                                let mut echo = out.clone();
+                                if let Err(e) = p.send_pcm_frame(&mut echo) {
+                                    warn!("[Saga Media] echo send: {e}");
+                                }
+                            }
                             let mut bytes = vec![0u8; FRAME_BYTES];
                             for (i, s) in out.iter().enumerate() {
                                 let b = s.to_le_bytes();
