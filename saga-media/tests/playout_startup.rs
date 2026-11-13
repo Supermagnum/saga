@@ -24,12 +24,18 @@ async fn playout_before_first_packet_is_silence() {
     let mut frame = vec![1000i16; FRAME_SAMPLES];
     pair.caller.send_pcm_frame(&mut frame).unwrap();
     pair.callee.recv_one_datagram().await.unwrap();
-    let n = pair.callee.playout_frame(&mut out).unwrap();
-    assert_eq!(n, FRAME_SAMPLES);
-    assert!(
-        out.iter().any(|s| *s != 0),
-        "expected decoded energy after first packet"
-    );
+    // Adaptive JB primes ~40–60 ms (2–3 frames) before first decode.
+    let mut saw_energy = false;
+    for _ in 0..8 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let n = pair.callee.playout_frame(&mut out).unwrap();
+        assert_eq!(n, FRAME_SAMPLES);
+        if out.iter().any(|s| *s != 0) {
+            saw_energy = true;
+            break;
+        }
+    }
+    assert!(saw_energy, "expected decoded energy after JB priming delay");
 }
 
 #[tokio::test]

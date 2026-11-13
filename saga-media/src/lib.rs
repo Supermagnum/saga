@@ -25,7 +25,7 @@ pub use codec::{
     TARGET_BITRATE,
 };
 pub use error::{MediaError, Result};
-pub use jitter::JitterBuffer;
+pub use jitter::{JitterBuffer, CAP_MS as JB_CAP_MS, TARGET_MS_HIGH, TARGET_MS_MIN};
 pub use keys::{CallRole, SrtpKeyPair, SrtpMaster, SRTP_MASTER_KEY_LEN, SRTP_MASTER_SALT_LEN};
 pub use metrics::{MediaCounters, MediaCountersSnapshot};
 pub use pipeline::MediaPipeline;
