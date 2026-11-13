@@ -241,16 +241,13 @@ pub fn start_media(
                                 {
                                     false
                                 }
-                            } else if tokio::time::timeout(
-                                std::time::Duration::from_millis(0),
-                                p.recv_one_datagram(),
-                            )
-                            .await
-                            .is_ok()
-                            {
-                                true
                             } else {
-                                false
+                                tokio::time::timeout(
+                                    std::time::Duration::from_millis(0),
+                                    p.recv_one_datagram(),
+                                )
+                                .await
+                                .is_ok()
                             };
                             if !got {
                                 break;
