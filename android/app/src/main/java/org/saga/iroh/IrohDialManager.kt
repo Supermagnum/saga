@@ -76,6 +76,9 @@ class IrohDialManager private constructor(context: Context) {
         }
         connection.setActive()
         Log.i(TAG, "CHECKPOINT incoming Connection setActive key=[$telecomCallKey]")
+        val sessionId = sessions[telecomCallKey]?.sessionId
+        // Flush pre-answer JB + signal caller before AudioTrack/mic attach.
+        SagaCallMediaController.onLocalAnswered(appContext, telecomCallKey, sessionId)
         pendingIncomingActivation.remove(telecomCallKey)?.let { state ->
             publishHandshakeState(
                 lookupKeys[telecomCallKey] ?: telecomCallKey,

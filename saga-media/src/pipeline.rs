@@ -17,7 +17,8 @@ use crate::keys::{CallRole, SrtpKeyPair};
 use crate::metrics::MediaCounters;
 use crate::policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};
 use crate::srtp_ctx::{
-    SrtpDecrypt, SrtpEncrypt, MAX_MEDIA_DATAGRAM_BYTES, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
+    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, MAX_MEDIA_DATAGRAM_BYTES,
+    MEDIA_TAG_ANSWERED, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
 };
 use saga_session::HandshakeOutput;
 
@@ -227,6 +228,34 @@ impl MediaPipeline {
 
     pub fn jitter_cap(&self) -> usize {
         self.jb.max_packets()
+    }
+
+    /// True when `bytes` is the explicit callee-answered control datagram.
+    pub fn is_answered_signal(bytes: &[u8]) -> bool {
+        bytes.first() == Some(&MEDIA_TAG_ANSWERED)
+            && bytes.get(1..) == Some(ANSWERED_SIGNAL_PAYLOAD)
+    }
+
+    /// Discard pre-answer media so it can never be played after answer.
+    pub fn flush_pre_answer(&mut self) {
+        self.jb.flush_pre_answer();
+        self.last_opus = None;
+    }
+
+    /// One-shot control datagram: peer must arm send/playout on receipt.
+    pub fn send_answered_signal(&mut self) -> Result<()> {
+        let mut framed = BytesMut::with_capacity(1 + ANSWERED_SIGNAL_PAYLOAD.len());
+        framed.extend_from_slice(&[MEDIA_TAG_ANSWERED]);
+        framed.extend_from_slice(ANSWERED_SIGNAL_PAYLOAD);
+        let need = framed.len() + FLOW_ID_MARGIN;
+        let limit = self.effective_max_datagram()?;
+        if need > limit {
+            return Err(MediaError::DatagramTooLarge { need, limit });
+        }
+        match self.send.try_send_payload(&framed) {
+            Ok(true) | Ok(false) => Ok(()),
+            Err(e) => Err(MediaError::Other(e)),
+        }
     }
 
     pub fn set_packet_loss_hint(&mut self, percent: i32) -> Result<()> {
