@@ -110,10 +110,13 @@ packet is lost only when its playout deadline passes while a hole remains
 (then PLC/FEC). Empty underruns wait without advancing so a late packet is
 not marked already-played. Hard cap **300 ms**.
 
-**Latency:** mouth-to-ear on emulators is measured with a capture-side click
-marker (`LATENCY_MARKER` logs). Cross-correlation `lag_ms` from speech
-scoring is **not** a latency measurement — it is the delay alignment used
-for corr/SI-SNR/STOI. Emulator timings are **not** representative of phones.
+**Latency:** mouth-to-ear on emulators uses a capture-side click marker
+(`LATENCY_MARKER` inject + dump peak). Cross-emulator
+`elapsedRealtimeNanos` clocks are not synced — report dump-frame / JB
+`target_ms` and stage budgets rather than a single subtracted nanos delta.
+Cross-correlation `lag_ms` from speech scoring is **not** a latency
+measurement — it is the delay alignment used for corr/SI-SNR/STOI.
+Emulator timings are **not** representative of phones.
 
 Cellular fallback: user places a normal `tel:` call; Saga renders it but
 does not encrypt it. Universal `call_unsecure.wav` at connect; no open

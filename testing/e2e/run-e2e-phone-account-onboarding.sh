@@ -57,8 +57,7 @@ install_peer_enabled() {
   adb -s "$serial" shell pm grant org.saga android.permission.WRITE_CONTACTS 2>/dev/null || true
   adb -s "$serial" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
   sleep 2
-  adb -s "$serial" shell cmd telecom set-phone-account-enabled \
-    org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0
+  enable_saga_phone_account "$serial" || true
 }
 
 tap_ui_text() {

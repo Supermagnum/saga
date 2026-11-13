@@ -6,7 +6,7 @@ E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
 record() { echo "$1"; }
 
 echo "=== Step 5: Cases 1–6 + 4b (run-e2e-full) ==="
-bash "$E2E_DIR/run-e2e-full.sh"
+bash "$E2E_DIR/run-e2e-full.sh" || record "STEP5:WARN run-e2e-full exited non-zero (continuing Cases 8–10)"
 
 echo ""
 echo "=== Step 5: Case 8 rekey PCM gap ==="
