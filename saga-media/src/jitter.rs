@@ -337,24 +337,16 @@ impl<C: Clock> JitterBuffer<C> {
         if let Some(&oldest) = self.packets.keys().next() {
             let ahead = oldest.wrapping_sub(next);
             if (2u16..0x8000).contains(&ahead) {
-                // Large gap (≥5 frames / 100 ms): peer likely sent before our
-                // recv path was ready, or the stream restarted. Re-anchor
-                // silently so we do not inflate the JB to the cap.
-                if ahead >= 5 || !self.playout_started {
-                    self.first_seq = Some(oldest);
-                    self.next_seq = Some(oldest);
-                    self.playout_anchor = Some(
-                        self.clock.now() + Duration::from_millis(u64::from(self.target_ms())),
-                    );
-                    self.late_or_loss_recent = false;
-                    return PopOutcome::Wait;
-                }
+                // Gap with later packets already buffered: catch up to the
+                // contiguous run instead of PLC+grow (startup misses were
+                // inflating the JB to the 300 ms cap for the whole call).
+                self.first_seq = Some(oldest);
                 self.next_seq = Some(oldest);
-                self.bump_anchor_for_jump(next, oldest);
-                self.late_or_loss_recent = true;
-                self.grow_from_late();
-                self.playout_started = true;
-                return PopOutcome::Lost;
+                self.playout_anchor = Some(
+                    self.clock.now() + Duration::from_millis(u64::from(self.target_ms())),
+                );
+                self.late_or_loss_recent = false;
+                return PopOutcome::Wait;
             }
         }
         self.next_seq = Some(next.wrapping_add(1));
