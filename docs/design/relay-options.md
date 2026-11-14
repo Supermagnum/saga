@@ -1,9 +1,40 @@
-# Relay options for Saga (design note — no implementation)
+# Relay options for Saga (design note)
 
 How Saga peers find each other and fall back when NAT blocks a direct path.
-Today debug/E2E defaults to a **local** `iroh-relay`; production dials use
+Debug/E2E defaults to a **local** `iroh-relay`; production dials use
 **n0 public relays** via `Endpoint::builder(presets::N0)` (PkarrPublisher +
 DnsAddressLookup). This note compares staying on n0 vs self-hosting.
+
+## Decision — 2026-11-14
+
+**Option A: n0 public relays (`presets::N0`) remain the default for release.**
+
+Reasons:
+
+1. **No infrastructure to run** — Saga does not need to operate a relay or
+   pkarr/dns-server fleet for typical users to place Encrypted calls.
+2. **Open-source relay software** — `iroh-relay` / related n0 stack is open
+   source; dependence is on a public mesh of open software, not a proprietary
+   binary in the APK.
+3. **Reachability with Private DNS** — host peer↔peer public N0 soaks pass
+   10/10 each direction with clean recursive DNS; emulator public path works
+   10/10 when Android Private DNS (DoT) is used with the platform resolver
+   path (see `TEST_RESULTS.md` / android-dns work). Captive ISP DNS without
+   Private DNS remains a documented failure mode, not a reason to abandon n0.
+
+### Risks retained next to this decision
+
+| Risk | Detail |
+|------|--------|
+| **Telenor Nettvern** (and similar ISP “safe browsing” DNS) with Private DNS **off** | Captive answers for some `*.relay.n0.iroh.link` / `dns.iroh.link` → TLS `UnknownIssuer` on N0 HTTPS probes; `endpoint.online()` may never complete. Mitigation: OS Private DNS (DoT) / VPN / Orbot; **not** in-app pinned Cloudflare/Google resolvers. |
+| **Metadata visible to relay and discovery operators** | n0 (or any home-relay operator) can observe EndpointId pairs, timing/volume, and client IPs when traffic uses the relay; `dns.iroh.link` sees publish/lookup. No cleartext audio when session keys stay on endpoints. See “Discovery metadata” below. |
+| **Dependence on n0 service availability** | Capacity, policy, or regional outages can affect reachability when a direct path is unavailable. Local/custom relay remains the lab and privacy escape hatch. |
+
+### Future work (not implemented)
+
+An **advanced setting** for a user-supplied self-hosted relay URL (and later
+optional custom discovery base) — productize the existing E2E
+`saga_iroh_relay` override. Default remains n0; this setting is opt-in only.
 
 ## What a relay does (and does not)
 
@@ -32,8 +63,8 @@ Implications:
 - **Pinned Cloudflare/Google (or any) resolvers in-app are a privacy regression** for
   discovery: they override the user’s Private DNS / VPN / Orbot choice and send
   every relay and pkarr hostname lookup to that provider. Saga must use the
-  system resolver (via `ndk_context` on Android) unless the user explicitly
-  configures a custom resolver (future setting; default off).
+  platform / system resolver on Android unless the user explicitly configures a
+  custom resolver (future setting; default off).
 - A self-hosted **relay + dns-server** moves relay and pkarr metadata to an
   operator you choose; the user’s **DNS resolver** still sees hostname lookups
   unless they also route DNS through a trusted path (Private DNS, VPN, Orbot).
@@ -45,7 +76,8 @@ Implications:
 
 **What it is:** n0’s published relay mesh (`*.relay.n0.iroh.link`) plus pkarr over
 `dns.iroh.link`. Release Android already builds with this preset when no
-`saga_iroh_relay` override is set.
+`saga_iroh_relay` override is set. **Chosen as the release default** (see
+Decision above).
 
 | Dimension | Assessment |
 |-----------|------------|
@@ -53,22 +85,25 @@ Implications:
 | Privacy | See table above: n0 sees EndpointId pairs and envelopes; `dns.iroh.link` sees publish/lookup; user’s recursive DNS sees hostnames. Trust n0’s ops and jurisdiction. No Saga cleartext. |
 | Cost / effort | Free for typical volumes; zero ops. Subject to n0 policy/capacity changes. |
 | F-Droid | Usually fine (no proprietary binary). If n0 were ever considered a “non-free network service” anti-feature, document dependency clearly; self-host is the escape hatch. |
-| User config | None today. Future: relay URL override + optional custom DNS resolver (default off). |
+| User config | None today. Future (not implemented): advanced self-hosted relay URL + optional custom DNS resolver (default off). |
 
 ## Option B — Self-hosted `iroh-relay` + `iroh-dns-server`
 
 **What it is:** Run your own relay (as in `testing/iroh-relay/`) and optionally an
 iroh-dns / pkarr publisher so dial-by-public-key does not depend on `dns.iroh.link`.
+**Not the release default**; remains the lab path and a future advanced setting.
 
 | Dimension | Assessment |
 |-----------|------------|
 | Reliability | Full control; LAN/dev is already how E2E avoids public flakiness. WAN needs a stable public IP/DNS, TLS certs, and monitoring. |
 | Privacy | Relay + pkarr metadata stay with the operator you choose (self, co-op, NGO). Still metadata-visible to that operator; user’s DNS resolver still sees hostnames unless DNS is also trusted. |
 | Cost / effort | VPS (~few €/mo) + TLS + upgrades. dns-server adds another moving piece (pkarr records, rate limits). |
-| F-Droid | Strong story: default can remain n0 or “user-configured”; shipping a default that *requires* a proprietary cloud is avoided. |
-| User config | Settings field: relay URL (and later dns/pkarr base). App already pushes `saga_iroh_relay.xml` in E2E; productize that path. |
+| F-Droid | Strong story: default stays n0; shipping a default that *requires* a proprietary cloud is avoided. |
+| User config | Future settings field: relay URL (and later dns/pkarr base). App already pushes `saga_iroh_relay.xml` in E2E; productize that path later. |
 
-## How a user could configure their own relay (product sketch)
+## How a user could configure their own relay (future product sketch)
+
+Not implemented. Sketch only:
 
 1. Settings → Network → **Relay URL** (e.g. `https://relay.example.org`).
 2. Optional: **Discovery** = n0 pkarr (default) | custom dns/pkarr base | discovery-off + manual EndpointAddr (power users).
