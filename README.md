@@ -52,3 +52,33 @@ SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 Use `SAGA_IROH_RELAY_MODE=public` to exercise public N0 relays for comparison (expect more variance).
 
 Details: [testing/e2e/README.md](testing/e2e/README.md).
+
+## Troubleshooting
+
+### Public N0 relays fail with TLS `UnknownIssuer` or never go online
+
+Some ISP “safe browsing” resolvers (e.g. Telenor Nettvern) hijack lookups for
+`*.relay.n0.iroh.link` / `dns.iroh.link` and return a captive portal certificate.
+Iroh then fails TLS probes (`UnknownIssuer`) and `endpoint.online()` never
+completes.
+
+Saga installs `ndk_context` (`IrohNativeBridge.installAndroidContext`) and
+declares `ACCESS_NETWORK_STATE` so iroh can read **system** DNS via
+`ConnectivityManager` / `LinkProperties`. It does **not** pin Cloudflare/Google
+(or any) resolvers in-app: that would leak every discovery hostname lookup and
+override Private DNS / VPN / Orbot.
+
+**What helps:**
+
+| Approach | Effect |
+|----------|--------|
+| Clean recursive DNS on the network (or a VPN that replaces `LinkProperties` DNS) | Iroh’s UDP DNS to those nameserver IPs resolves real N0 hosts |
+| Android **Private DNS** (DoT) | Helps apps using the platform resolver; iroh currently queries the nameserver IPs from `LinkProperties.getDnsServers()` itself, so DoT alone may **not** bypass an ISP hijack when those IPs still answer with captive results (seen on emulator `10.0.2.3` → host ISP DNS → `UnknownIssuer` even with Private DNS validated) |
+| Local / custom relay (`saga_iroh_relay`) | Avoids public N0 hostnames for the call path |
+| Host `saga-peer` soak `bwrap` + clean `resolv.conf` | Applies only to the Linux peer binary, not the Android app |
+
+A future optional **custom DNS resolver** setting (default **off**) may be added for
+power users; it must never be forced.
+
+See also [docs/design/relay-options.md](docs/design/relay-options.md) (discovery
+metadata: what relay, pkarr/DNS, and the recursive resolver each observe).
