@@ -34,6 +34,8 @@ pub trait DnsBackend: fmt::Debug + Send + Sync + 'static {
 }
 
 /// Default per-lookup budget (matches Android bridge default).
+/// Used by the Android backend and host unit tests; host lib builds only.
+#[allow(dead_code)]
 pub const DEFAULT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// iroh [`Resolver`] wrapping a [`DnsBackend`].
@@ -44,6 +46,9 @@ pub struct PlatformDnsResolver<B: DnsBackend> {
 }
 
 impl<B: DnsBackend> PlatformDnsResolver<B> {
+    /// Construct with [`DEFAULT_LOOKUP_TIMEOUT`]. Host lib builds only exercise
+    /// this via unit tests / the Android target.
+    #[allow(dead_code)]
     pub fn new(backend: B) -> Self {
         Self {
             backend: Arc::new(backend),
@@ -57,6 +62,7 @@ impl<B: DnsBackend> PlatformDnsResolver<B> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn into_iroh(self) -> DnsResolver {
         DnsResolver::custom(self)
     }
