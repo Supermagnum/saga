@@ -68,7 +68,11 @@ Shared helpers: [`e2e-common.sh`](e2e-common.sh) (sourced by full suite, standal
 
 | Script | Purpose |
 |--------|---------|
-| [`run-e2e-full.sh`](run-e2e-full.sh) | Build, install, seed, Cases 1–6 + Phase 3 |
+| [`run-e2e-full.sh`](run-e2e-full.sh) | Build, install, seed, Cases 1–7 + Phase 3 (Case 7 = speech PCM metrics) |
+| [`run-case7-speech.sh`](run-case7-speech.sh) | Speech round-trip thresholds (corr/SI-SNR/STOI) |
+| [`run-public-relay-emu-peer-soak.sh`](run-public-relay-emu-peer-soak.sh) | Emulator→peer public N0 ×N (enables Private DNS) |
+| [`run-public-relay-peer-emu-soak.sh`](run-public-relay-peer-emu-soak.sh) | Peer→emulator public N0 ×N |
+| [`run-network-change-recovery.sh`](run-network-change-recovery.sh) | Airplane / WiFi toggle → relay-ready + call (×N; ≤10s target) |
 | [`run-e2e-phone-account-onboarding.sh`](run-e2e-phone-account-onboarding.sh) | Issue #2: disabled PhoneAccount blocks Iroh (no SIM), Settings UI enable, inbound reject |
 | [`run-case-standalone.sh`](run-case-standalone.sh) | Single case (3–6) from clean boot |
 | [`run-e2e-conference.sh`](run-e2e-conference.sh) | Phase 4 C1–C5 multi-call / conference (emulator limits honest) |
