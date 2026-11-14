@@ -333,6 +333,48 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeIsAvailable(
     jni::sys::JNI_TRUE
 }
 
+/// Publish Application context to ndk_context so iroh can read system DNS when desired.
+/// Keep a GlobalRef for process lifetime (required by install_android_jni_context).
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeInstallAndroidContext(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    context: JObject,
+) {
+    ensure_bridge_class_cached(&mut env);
+    #[cfg(all(target_os = "android", feature = "iroh-transport"))]
+    {
+        use std::ffi::c_void;
+        use std::sync::OnceLock;
+        static ANDROID_APP_CTX: OnceLock<GlobalRef> = OnceLock::new();
+        if ANDROID_APP_CTX.get().is_some() {
+            return;
+        }
+        let Ok(vm) = env.get_java_vm() else {
+            error!("nativeInstallAndroidContext: get_java_vm failed");
+            return;
+        };
+        let Ok(global) = env.new_global_ref(&context) else {
+            error!("nativeInstallAndroidContext: new_global_ref failed");
+            return;
+        };
+        let ctx_ptr = global.as_raw() as *mut c_void;
+        let vm_ptr = vm.get_java_vm_pointer() as *mut c_void;
+        if ANDROID_APP_CTX.set(global).is_err() {
+            return;
+        }
+        // Safety: GlobalRef kept in ANDROID_APP_CTX until process exit; VM is process-scoped.
+        unsafe {
+            iroh::dns::install_android_jni_context(vm_ptr, ctx_ptr);
+        }
+        info!("android JNI context installed for iroh DNS");
+    }
+    #[cfg(not(all(target_os = "android", feature = "iroh-transport")))]
+    {
+        let _ = context;
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetRelayUrl(
     mut env: JNIEnv,
