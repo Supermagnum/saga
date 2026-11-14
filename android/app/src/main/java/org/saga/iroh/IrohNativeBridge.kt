@@ -31,6 +31,11 @@ object IrohNativeBridge {
         return libraryLoaded
     }
 
+    /** Must run once from Application.onCreate before binding the Iroh endpoint. */
+    fun installAndroidContext(context: android.content.Context) {
+        if (ensureLoaded()) nativeInstallAndroidContext(context.applicationContext)
+    }
+
     fun setDevIdentity(peerLabel: String) {
         if (ensureLoaded()) nativeSetDevIdentity(peerLabel)
     }
@@ -173,6 +178,7 @@ object IrohNativeBridge {
     private external fun nativeConnect(sessionId: String, peerId: String)
     private external fun nativeDisconnect(sessionId: String)
     private external fun nativeIsAvailable(): Boolean
+    private external fun nativeInstallAndroidContext(context: android.content.Context)
     private external fun nativeSetDevIdentity(peerLabel: String)
     private external fun nativeSetRelayUrl(relayUrl: String)
     private external fun nativePollRelayReady(): Int
