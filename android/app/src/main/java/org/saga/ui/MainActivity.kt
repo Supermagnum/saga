@@ -27,10 +27,13 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "[Saga Main Activity]"
         private const val PREFS = "saga_phone_account_ui"
         private const val KEY_ONBOARDING_SHOWN = "onboarding_shown"
+        /** Open dialer for a second call from InCall; finish after placeCall. */
+        const val EXTRA_ADD_CALL_MODE = "org.saga.EXTRA_ADD_CALL_MODE"
     }
 
     private lateinit var binding: ActivityMainBinding
     private var selectedContactUri: Uri? = null
+    private var addCallMode = false
 
     private val requestDialerRole = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -73,8 +76,42 @@ class MainActivity : AppCompatActivity() {
         binding.phoneAccountBanner.setOnClickListener {
             startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
         }
+        wireKeypad()
+        applyAddCallMode(intent)
         updateRoleStatus()
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+    }
+
+    private fun applyAddCallMode(intent: Intent?) {
+        addCallMode = intent?.getBooleanExtra(EXTRA_ADD_CALL_MODE, false) == true
+        if (addCallMode) {
+            binding.title.text = getString(R.string.add_call_title)
+            binding.addCallSubtitle.visibility = View.VISIBLE
+            binding.addCallSubtitle.text = getString(R.string.keypad_hint)
+            binding.requestDialerRole.visibility = View.GONE
+            binding.roleStatus.visibility = View.GONE
+            binding.dialIroh.text = getString(R.string.add_call_place)
+            // Prefer cellular for add-call (second leg is typically carrier).
+            binding.dialUnencrypted.visibility = View.VISIBLE
+            Log.i(TAG, "Add-call dialer mode active")
+        } else {
+            binding.addCallSubtitle.visibility = View.GONE
+        }
+    }
+
+    private fun wireKeypad() {
+        val keys = listOf(
+            binding.key1 to "1", binding.key2 to "2", binding.key3 to "3",
+            binding.key4 to "4", binding.key5 to "5", binding.key6 to "6",
+            binding.key7 to "7", binding.key8 to "8", binding.key9 to "9",
+            binding.keyStar to "*", binding.key0 to "0", binding.keyHash to "#"
+        )
+        keys.forEach { (btn, digit) ->
+            btn.setOnClickListener {
+                selectedContactUri = null
+                binding.peerIdInput.append(digit)
+            }
+        }
     }
 
     override fun onResume() {
@@ -85,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        applyAddCallMode(intent)
         if (intent.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
             startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
             return
@@ -225,8 +263,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun placeResolved(target: DialTarget) {
-        Log.i(TAG, "Placing call target=[$target]")
-        SagaDialer.placeCall(this, target)
+        Log.i(TAG, "Placing call target=[$target] addCallMode=[$addCallMode]")
+        // Add-call from InCall: prefer cellular second leg unless Iroh was chosen.
+        val effective = if (addCallMode && target is DialTarget.Iroh) {
+            // Keep Iroh if user tapped Call (encrypted); unencrypted button already prefers cellular.
+            target
+        } else {
+            target
+        }
+        SagaDialer.placeCall(this, effective)
+        if (addCallMode) {
+            // Return to the single InCall composition after placing the second call.
+            finish()
+        }
     }
 
     private fun launchContactPicker() {

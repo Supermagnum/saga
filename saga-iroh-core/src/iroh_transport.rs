@@ -29,14 +29,16 @@ use saga_session::HandshakeOutput;
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 
 /// Per-attempt connect timeout (QUIC dial).
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Wall-clock budget for the whole connect phase (excluding post-connect handshake).
-const CONNECT_BUDGET: Duration = Duration::from_secs(40);
-const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(20);
-const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(2);
-const MAX_CONNECT_ATTEMPTS: u32 = 4;
+/// Host public-relay soak: home relay ~3s, voice connect ~70ms once discovered.
+/// 18s leaves room for 2–3 slow attempts + addressing misses without a 40s hang.
+const CONNECT_BUDGET: Duration = Duration::from_secs(18);
+const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(12);
+const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(1);
+const MAX_CONNECT_ATTEMPTS: u32 = 3;
 /// Addressing/discovery misses fail faster — no point burning the full budget.
-const ADDRESSING_MAX_ATTEMPTS: u32 = 3;
+const ADDRESSING_MAX_ATTEMPTS: u32 = 2;
 
 fn is_addressing_error(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
@@ -440,6 +442,9 @@ async fn handle_inbound_connection(conn: Connection) {
 
 async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
+    // Default DnsResolver reads system nameservers via ndk_context (see
+    // IrohNativeBridge.installAndroidContext). Do not pin third-party resolvers:
+    // that would leak callee discovery lookups and override Private DNS / VPN / Orbot.
     let mut builder =
         Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()]);
     builder = apply_relay_builder(builder)?;

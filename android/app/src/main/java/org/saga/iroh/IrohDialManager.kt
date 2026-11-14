@@ -142,10 +142,11 @@ class IrohDialManager private constructor(context: Context) {
         val session = IrohSessionFactory.create(peerId)
         sessions[telecomCallKey] = session
         lookupKeys[telecomCallKey] = lookupKey
-        publishSecuring(lookupKey, telecomCallKey)
+        publishConnecting(lookupKey, telecomCallKey)
 
         session.connect(
             onConnected = {
+                publishSecuring(lookupKey, telecomCallKey)
                 handshakeCoordinator.start(lookupKey, session.sessionId) { state ->
                     onHandshakeSettled(lookupKey, telecomCallKey, state, connection)
                 }
@@ -372,6 +373,21 @@ class IrohDialManager private constructor(context: Context) {
                 userContinuedPast5a = false
             )
         }
+    }
+
+    /** Discovery / QUIC dial in progress — not yet a security handshake. */
+    private fun publishConnecting(lookupKey: String, telecomCallKey: String) {
+        val snapshot = CallSecuritySnapshot(
+            padlockState = PadlockDisplayState.SECURING,
+            statusText = appContext.getString(org.saga.R.string.call_connecting),
+            playSecureCue = false,
+            playUnsecureCue = false,
+            showDowngradeModal = false
+        )
+        SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        SagaCallEventHub.emit(
+            SagaCallEventHub.SecurityUpdate(telecomCallKey, snapshot, playConnectCue = false)
+        )
     }
 
     private fun publishSecuring(lookupKey: String, telecomCallKey: String) {
