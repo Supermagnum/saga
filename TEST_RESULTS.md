@@ -1,30 +1,49 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-14 (relay decision Option A)
+**Last updated:** 2026-11-14 (android DNS)
 
-**Status:** `docs/relay-decision-option-a` — release default remains n0
-`presets::N0` (docs + spec only). Local-relay suite remains the CI / E2E gate.
+**Status:** `fix/android-dns` — iroh DNS via `android.net.DnsResolver`
+(Private DNS / VPN / Orbot). No pinned third-party resolvers. Case 7 speech
+round-trip is in `run-e2e-full.sh`. Local-relay suite remains the CI gate.
 
 ---
 
-## 2026-11-14 — Relay decision (Option A)
+## 2026-11-14 — Android platform DNS (`fix/android-dns`)
 
-Branch: `docs/relay-decision-option-a`. Docs-only; no runtime change.
+Branch: `fix/android-dns` (from main after #36).
 
-| Record | Location |
-|--------|----------|
-| Decision + risks + future self-host setting | `docs/design/relay-options.md` |
-| Spec transport §14.4.1 | `saga-spec.md` |
+### Choice
+
+iroh 1.x exposes `DnsResolver::custom` / `EndpointBuilder::dns_resolver`. Saga
+implements `AndroidDnsBridge` (JNI → `android.net.DnsResolver` + cache) and
+keeps `presets::N0` (PkarrPublisher HTTPS + DnsAddressLookup TXT). Pkarr-over-HTTPS
+alone still needs A/AAAA for `*.relay.n0.iroh.link`, so a platform resolver is
+required either way; routing TXT through the same backend keeps one path that
+honours user DNS settings. No hard-coded Cloudflare/Google resolvers.
+
+### Gates
 
 | Gate | Result | Notes |
 |------|--------|-------|
-| API 35 `run-e2e-step5.sh` (Cases 1–10 + 4b + C3–C5 + onboarding) | *(pending this branch)* | Local relay; C1/C2 NEEDS_HARDWARE |
-| API 29 one-run | *(pending this branch)* | |
+| Host `android_dns` unit tests (mock backend) | **PASS** 3/3 | |
+| Emu→peer public ×10, Private DNS `one.one.one.one` | **PASS** 10/10 | `/tmp/saga-public-relay-emu-peer/summary.txt` |
+| Peer→emu public ×10, Private DNS ON | **PASS** 10/10 | `/tmp/saga-public-relay-peer-emu/summary.txt` |
+| Pcap Private DNS ON | **PASS** | Emulator `udp port 53` capture: **0** packets; DoT to `1.0.0.1:853` observed |
+| Private DNS OFF + no peer | **PASS** | `Not reachable` ~19.7s; Telecom reason `Not reachable` |
+| Private DNS OFF + peer (Telenor Nettvern) | Observed | ISP DNS filter returns captive answers for some n0 hostnames → HTTPS probes `UnknownIssuer` (see `docs/design/relay-options.md`). euc1 path may still connect intermittently; README: enable Private DNS |
+| Private DNS OFF + no peer | **PASS** | `Not reachable` ~19.7s; Telecom reason `Not reachable` |
+| API 35 `run-e2e-step5.sh` (Cases 1–10 + 4b + C3–C5 + onboarding) | **PASS** | Case 7 speech corr=0.960 SI-SNR=10.7 STOI=0.994 both dirs; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api35-android-dns.log` |
+| Network-change recovery (airplane ×5, WiFi ×5) | **PASS** 10/10 | Relay recover max 3721ms (airplane) / 548ms (WiFi); all call_ok after. Log: `/tmp/saga-network-change-recovery/summary.txt` |
 
-### Not verified / needs real hardware
+### DNS concurrency
 
-- Unchanged from prior parts (physical phones, real Galdralag, USB Nitrokey on device).
-- Cross-machine LAN public-relay ×10.
+Unbounded parallel `DnsResolver` bursts on some AVDs with Private DNS return
+`ECONNREFUSED` after the first success. The bridge allows up to **3** in-flight
+lookups so relay A/AAAA and discovery TXT can overlap without that flake.
+
+### Not verified
+
+- Cross-machine LAN public-relay ×10
 
 ---
 
@@ -66,14 +85,13 @@ Branch: `fix/public-reachability`.
 ### Not verified
 
 - Cross-machine LAN public-relay ×10 (no second host this session)
-- Case 7 (no harness script in tree)
-- Shipping in-app pinned DNS as a workaround
+- Shipping in-app pinned DNS as a workaround (rejected for privacy)
 
 ### Suites
 
 | Gate | Result | Log |
 |------|--------|-----|
-| API 35 `run-e2e-step5.sh` | **PASS** (C1/C2 NEEDS_HARDWARE) | agent terminal Step5 run 2026-11-14 |
+| API 35 `run-e2e-step5.sh` | **PASS** (C1/C2 NEEDS_HARDWARE); Case 7 not yet in suite | agent terminal Step5 run 2026-11-14 |
 
 ---
 
