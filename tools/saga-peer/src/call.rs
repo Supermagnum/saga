@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use iroh::endpoint::presets;
 use iroh::tls::CaTlsConfig;
-use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl};
+use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, Watcher};
 use iroh_roq::{Session as RoqSession, ALPN as ROQ_ALPN};
 use log::{info, warn};
 use mock_token::{run_initiator, run_responder, HandshakeOutcome, MockIdentity};
@@ -79,8 +79,20 @@ pub async fn run_listen(opts: CallOpts) -> Result<PeerOutcome> {
         opts.identity,
         ep.id()
     );
+    let t0 = Instant::now();
     ep.online().await;
-    info!("relay online");
+    let home = current_home_relay(&ep);
+    info!(
+        "relay online after {:?} home=[{}] public={}",
+        t0.elapsed(),
+        home.as_deref().unwrap_or("none"),
+        opts.public_relay
+    );
+    // Give pkarr publisher a beat to land before accepting dials (public discovery).
+    if opts.public_relay {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        info!("pkarr publish settle done; ready to accept");
+    }
 
     loop {
         let incoming = ep.accept().await.context("accept")?;
@@ -110,18 +122,107 @@ pub async fn run_listen(opts: CallOpts) -> Result<PeerOutcome> {
 pub async fn run_call(opts: CallOpts) -> Result<PeerOutcome> {
     let peer = opts.peer.clone().context("--peer required for call")?;
     let ep = bind_endpoint(&opts.identity, &opts).await?;
+    let t0 = Instant::now();
     ep.online().await;
+    let home = current_home_relay(&ep);
+    info!(
+        "caller relay online after {:?} home=[{}] public={}",
+        t0.elapsed(),
+        home.as_deref().unwrap_or("none"),
+        opts.public_relay
+    );
     let remote = resolve_endpoint_id(&peer)?;
     info!(
         "calling peer [{}] as [{}] → {}",
         peer, opts.identity, remote
     );
-    let addr = EndpointAddr::from(remote);
-    let conn = ep
-        .connect(addr, SAGA_VOICE_ALPN)
+    let dial_start = Instant::now();
+    let conn = connect_voice(&ep, remote, &opts)
         .await
-        .context("voice connect")?;
+        .with_context(|| {
+            format!(
+                "voice connect failed after {:?} (public={})",
+                dial_start.elapsed(),
+                opts.public_relay
+            )
+        })?;
+    info!(
+        "voice connected in {:?} via remote={}",
+        dial_start.elapsed(),
+        conn.remote_id()
+    );
     drive_initiator(ep, conn, peer, opts).await
+}
+
+fn current_home_relay(endpoint: &Endpoint) -> Option<String> {
+    let mut watcher = endpoint.home_relay_status();
+    for status in watcher.get() {
+        if status.is_connected() {
+            return Some(status.url().to_string());
+        }
+    }
+    None
+}
+
+fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint, public_relay: bool) -> EndpointAddr {
+    let addr = EndpointAddr::new(remote);
+    if !public_relay {
+        // Custom/local: hint is applied via RelayMode::Custom on the endpoint.
+        if let Some(url) = current_home_relay(endpoint) {
+            if let Ok(relay_url) = url.parse::<RelayUrl>() {
+                info!("connect EndpointAddr hints home relay [{url}]");
+                return addr.with_relay_url(relay_url);
+            }
+        }
+        return addr;
+    }
+    // Public N0: prefer home-relay hint when we have one; else discovery-only (pkarr/DNS).
+    if let Some(url) = current_home_relay(endpoint) {
+        if let Ok(relay_url) = url.parse::<RelayUrl>() {
+            info!("connect EndpointAddr hints N0 home relay [{url}]");
+            return addr.with_relay_url(relay_url);
+        }
+    }
+    warn!("connect EndpointAddr discovery-only (no home relay hint)");
+    addr
+}
+
+async fn connect_voice(
+    endpoint: &Endpoint,
+    remote: PublicKey,
+    opts: &CallOpts,
+) -> Result<iroh::endpoint::Connection> {
+    // Public discovery can miss on first try; keep wall clock modest.
+    let budget = if opts.public_relay {
+        Duration::from_secs(25)
+    } else {
+        Duration::from_secs(45)
+    };
+    let per_attempt = Duration::from_secs(10);
+    let max_attempts: u32 = if opts.public_relay { 4 } else { 6 };
+    let deadline = Instant::now() + budget;
+    let mut last_err = String::new();
+    for attempt in 1..=max_attempts {
+        if Instant::now() >= deadline {
+            bail!("connect budget {:?} exhausted: {last_err}", budget);
+        }
+        let addr = endpoint_addr_for_peer(remote, endpoint, opts.public_relay);
+        match tokio::time::timeout(per_attempt, endpoint.connect(addr, SAGA_VOICE_ALPN)).await {
+            Ok(Ok(conn)) => return Ok(conn),
+            Ok(Err(e)) => {
+                last_err = format!("{e}");
+                warn!("connect attempt {attempt}/{max_attempts}: {last_err}");
+            }
+            Err(_) => {
+                last_err = format!("timed out after {}s", per_attempt.as_secs());
+                warn!("connect attempt {attempt}/{max_attempts}: {last_err}");
+            }
+        }
+        if attempt < max_attempts {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+    bail!("connect failed after {max_attempts} attempts: {last_err}")
 }
 
 async fn drive_initiator(
