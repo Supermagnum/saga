@@ -137,15 +137,13 @@ pub async fn run_call(opts: CallOpts) -> Result<PeerOutcome> {
         peer, opts.identity, remote
     );
     let dial_start = Instant::now();
-    let conn = connect_voice(&ep, remote, &opts)
-        .await
-        .with_context(|| {
-            format!(
-                "voice connect failed after {:?} (public={})",
-                dial_start.elapsed(),
-                opts.public_relay
-            )
-        })?;
+    let conn = connect_voice(&ep, remote, &opts).await.with_context(|| {
+        format!(
+            "voice connect failed after {:?} (public={})",
+            dial_start.elapsed(),
+            opts.public_relay
+        )
+    })?;
     info!(
         "voice connected in {:?} via remote={}",
         dial_start.elapsed(),
@@ -164,7 +162,11 @@ fn current_home_relay(endpoint: &Endpoint) -> Option<String> {
     None
 }
 
-fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint, public_relay: bool) -> EndpointAddr {
+fn endpoint_addr_for_peer(
+    remote: PublicKey,
+    endpoint: &Endpoint,
+    public_relay: bool,
+) -> EndpointAddr {
     let addr = EndpointAddr::new(remote);
     if !public_relay {
         // Custom/local: hint is applied via RelayMode::Custom on the endpoint.
