@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Full E2E suite (Cases 1-6 + Phase 3). Requires two emulators.
+# Full E2E suite (Cases 1-7 + Phase 3). Requires two emulators.
+# Case 7 = speech round-trip (PCM inject/dump, corr/SI-SNR/STOI).
 # "Phase 3" here is a static audio-cue source grep — not product Phase 3 (Nitrokey).
 # Dials seeded contacts by display name (bob, alice, thor) only.
 # Dev identity XML files are named by contact (saga_dev_identity_bob.xml etc.).
@@ -351,6 +352,18 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|secure" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
+
+echo ""
+echo "=== Case 7: Speech round-trip (PCM inject/dump, corr/SI-SNR/STOI) ==="
+# run-case7-speech.sh records CASE7:PASS/FAIL itself.
+if ! bash "$E2E_DIR/run-case7-speech.sh"; then
+  record "CASE7:FAIL harness exited non-zero"
+fi
+stop_caller "$SERIAL_A" || true
+stop_caller "$SERIAL_B" || true
+sleep 1
 
 echo ""
 echo "=== Phase 3: Audio cue regression (static) ==="
