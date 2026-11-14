@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
-iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq", "dep:saga-media", "dep:bytes"]
+iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq", "dep:saga-media", "dep:bytes", "dep:n0-error"]
 # Debug / E2E only: software SessionToken + local insecure relay TLS + BLAKE3 dev labels.
 mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils"]
 
@@ -32,6 +32,10 @@ version = "1.0"
 optional = true
 default-features = true
 # `test-utils` (local insecure relay TLS) only via feature `mock-token`.
+
+[dependencies.n0-error]
+version = "1"
+optional = true
 
 [dependencies.tokio]
 version = "1"
