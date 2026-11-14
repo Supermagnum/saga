@@ -1,10 +1,60 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 4 conference)
+**Last updated:** 2026-11-14 (public reachability)
 
-**Status:** Phase 4 on `phase-4-conference` — production dial fail-fast +
-carrier multi-call / conference UI. Public N0 discovery soak stopped early
-(emulator flaky); local-relay suite remains the CI gate.
+**Status:** `fix/public-reachability` — 18s connect budget, Connecting… UI,
+add-call dialer, Android system-DNS via `ndk_context`. Local-relay suite remains
+the CI gate. Public N0 on this host’s emulators fails under ISP DNS hijack
+without pinned in-app resolvers (not shipped).
+
+---
+
+## 2026-11-14 — Public reachability follow-up
+
+Branch: `fix/public-reachability`.
+
+### Connect / UX
+
+| Change | Detail |
+|--------|--------|
+| Connect budget | 18s wall; 8s/attempt; ≤3 attempts (was ~40s) |
+| UX | InCall **Connecting…** during discovery; `setInitializing` (no early ringback); offline → `Not reachable` |
+| Add call | InCall → Saga dialer (`EXTRA_ADD_CALL_MODE`) with contacts / search / keypad |
+
+### Public N0 soaks
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Host peer↔peer `--public-relay` ×10 each dir | **PASS** 20/20 | Peer under `bwrap` + clean DNS; home `euc1-1` ~3s |
+| Emu↔peer public ×10 (system DNS + Private DNS DoT) | **FAIL** 0/10 | Alice never relay-ready; logcat `UnknownIssuer` on N0 HTTPS probes. JNI context + `ACCESS_NETWORK_STATE` installed; iroh still queries `LinkProperties` nameserver IPs (`10.0.2.3` → host ISP) and bypasses DoT. Evidence: `/tmp/saga-public-relay-emu-peer-systemdns/summary.txt`. Pinned Cloudflare/Google **not** shipped (would leak discovery lookups). |
+| Prior pinned-resolver emu soak (not shipped) | 10/10 | Shown only as contrast; regresses privacy |
+
+### Offline Not reachable ×5
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Alice → laptop, no peer | **PASS** 5/5 | Wall ~17–18s; Telecom reason `Not reachable`; no §5a |
+
+### API 35 Step5 suite (local relay)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b | **PASS** |
+| Cases 8–10 | **PASS** |
+| C3–C5 | **PASS** (C1/C2 **NEEDS_HARDWARE**) |
+| Onboarding + `INBOUND_REJECT` | **PASS** |
+
+### Not verified
+
+- Cross-machine LAN public-relay ×10 (no second host this session)
+- Case 7 (no harness script in tree)
+- Shipping in-app pinned DNS as a workaround
+
+### Suites
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 `run-e2e-step5.sh` | **PASS** (C1/C2 NEEDS_HARDWARE) | agent terminal Step5 run 2026-11-14 |
 
 ---
 

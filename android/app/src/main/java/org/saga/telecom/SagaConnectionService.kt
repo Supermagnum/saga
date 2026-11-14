@@ -40,8 +40,9 @@ class SagaConnectionService : ConnectionService() {
         val telecomCallKey = lookupKey
         Log.i(TAG, "Outgoing Iroh call to contact [$contactName] lookup=[$lookupKey]")
         val connection = SagaIrohConnection(this, contactName, telecomCallKey, incoming = false)
+        // Stay INITIALIZING during discovery/connect so Telecom does not play ringback
+        // before the peer is actually reached (InCall shows "Connecting…").
         connection.setInitializing()
-        connection.setDialing()
         PendingDialLookup.markIrohDialConsumed()
         IrohDialManager.get(this).startOutgoing(peerId, connection, telecomCallKey, lookupKey)
         return connection

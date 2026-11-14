@@ -24,6 +24,8 @@ class SagaApplication : Application() {
         IrohIncomingCallBridge.init(this)
         IrohRelayStatus.registerQueryReceiver(this)
         SagaPcmDebugReceiver.register(this)
+        // Before any endpoint bind: ndk_context for system DNS readers.
+        IrohNativeBridge.installAndroidContext(this)
         IrohRelayStore.getUrl(this)?.let { relayUrl ->
             Log.i(TAG, "Using custom Iroh relay url=[$relayUrl]")
             IrohNativeBridge.setRelayUrl(relayUrl)

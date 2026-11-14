@@ -288,13 +288,12 @@ class SagaInCallActivity : AppCompatActivity() {
     }
 
     private fun launchAddCall() {
-        // Third-party dialers cannot call TelecomManager.addNewOutgoingCall (system API).
-        // Open the Saga dialer for a second tel: placeCall (carrier).
-        Log.i(TAG, "Add call → dialer for second carrier placeCall")
+        // Open Saga's own dialer in add-call mode (contacts + search + keypad), then return here.
+        Log.i(TAG, "Add call → Saga dialer (add-call mode)")
         startActivity(
             Intent(this, MainActivity::class.java).apply {
                 action = Intent.ACTION_DIAL
-                data = Uri.fromParts("tel", "", null)
+                putExtra(MainActivity.EXTRA_ADD_CALL_MODE, true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
