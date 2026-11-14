@@ -697,6 +697,28 @@ SIP signaling path.
   so a dropped video packet never blocks audio — a reasonable primitive if
   group calls need per-participant streams through a relay.
 
+#### 14.4.1 Release relay default (decision 2026-11-14)
+
+**Default for release:** n0 public relays via iroh `presets::N0`
+(PkarrPublisher + DnsAddressLookup). Debug/E2E may still use a local
+`iroh-relay`. Rationale and full comparison:
+[`docs/design/relay-options.md`](docs/design/relay-options.md).
+
+Reasons: no Saga-operated infrastructure; open-source relay software; public
+N0 reachability passes host soaks and emulator soaks when Android Private DNS
+(DoT) is used with the platform resolver (no in-app pinned resolvers).
+
+**Risks kept with the decision:**
+
+- ISP DNS filters (e.g. Telenor Nettvern) with Private DNS off can break N0
+  TLS probes (`UnknownIssuer`).
+- Relay and discovery operators see EndpointId / timing / volume metadata
+  (not cleartext media when session keys stay on endpoints).
+- Reachability when a direct path fails depends on n0 service availability.
+
+**Future work (not implemented):** an advanced settings field for a
+self-hosted relay URL. Default remains n0.
+
 **Gap:** Iroh solves live connectivity, not store-and-forward presence — it
 doesn't help reach a peer whose device is currently offline/asleep. If
 missed-call notification via a decentralized store is ever required,
@@ -709,11 +731,14 @@ fresh codebase (§10), not a GPLv3 Linphone fork.
 
 ### 14.5 Open items
 
+- [x] Choose release relay default — **Option A / n0 `presets::N0`**
+      (2026-11-14); see §14.4.1 and `docs/design/relay-options.md`.
 - [ ] Confirm Iroh's exact license before dependency lock-in.
 - [ ] Determine mesh/relay participant-count threshold empirically.
 - [ ] Decide whether missed-call/offline presence is a v-next requirement;
       if so, evaluate OpenDHT integration effort at that point.
 - [ ] Prototype token identity <-> Iroh node identity binding.
+- [ ] Advanced self-hosted relay URL setting (opt-in; not the default).
 
 ## 15. Testing: mock token & two-emulator encryption verification
 
