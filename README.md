@@ -45,7 +45,7 @@ Quick start:
 # Start local relay (once per host session)
 bash testing/iroh-relay/start-local-relay.sh
 
-# Full suite (builds APK, seeds contacts, Cases 1–6)
+# Full suite (builds APK, seeds contacts, Cases 1–7)
 SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 ```
 
@@ -63,22 +63,23 @@ Iroh then fails TLS probes (`UnknownIssuer`) and `endpoint.online()` never
 completes.
 
 Saga installs `ndk_context` (`IrohNativeBridge.installAndroidContext`) and
-declares `ACCESS_NETWORK_STATE` so iroh can read **system** DNS via
-`ConnectivityManager` / `LinkProperties`. It does **not** pin Cloudflare/Google
-(or any) resolvers in-app: that would leak every discovery hostname lookup and
-override Private DNS / VPN / Orbot.
+routes iroh DNS through `android.net.DnsResolver` (`AndroidDnsBridge`) so
+A/AAAA/TXT honour **Private DNS (DoT), VPN, and Orbot**. It does **not** pin
+Cloudflare/Google (or any) resolvers in-app: that would leak every discovery
+hostname lookup and override the user’s DNS settings.
 
 **What helps:**
 
 | Approach | Effect |
 |----------|--------|
-| Clean recursive DNS on the network (or a VPN that replaces `LinkProperties` DNS) | Iroh’s UDP DNS to those nameserver IPs resolves real N0 hosts |
-| Android **Private DNS** (DoT) | Helps apps using the platform resolver; iroh currently queries the nameserver IPs from `LinkProperties.getDnsServers()` itself, so DoT alone may **not** bypass an ISP hijack when those IPs still answer with captive results (seen on emulator `10.0.2.3` → host ISP DNS → `UnknownIssuer` even with Private DNS validated) |
+| Android **Private DNS** (DoT), e.g. `one.one.one.one` | Platform `DnsResolver` uses DoT; bypasses ISP recursive hijacks (e.g. Telenor Nettvern → captive `UnknownIssuer`) |
+| Clean recursive DNS / VPN / Orbot | Same path — Saga uses the active network’s platform resolver |
 | Local / custom relay (`saga_iroh_relay`) | Avoids public N0 hostnames for the call path |
 | Host `saga-peer` soak `bwrap` + clean `resolv.conf` | Applies only to the Linux peer binary, not the Android app |
 
-A future optional **custom DNS resolver** setting (default **off**) may be added for
-power users; it must never be forced.
+If public N0 never becomes reachable and the call fails with **Not reachable**
+within the connect budget (~18s), check Private DNS / VPN. Saga must not hang
+silently on hijacked DNS.
 
 See also [docs/design/relay-options.md](docs/design/relay-options.md) (discovery
 metadata: what relay, pkarr/DNS, and the recursive resolver each observe).

@@ -442,11 +442,14 @@ async fn handle_inbound_connection(conn: Connection) {
 
 async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
-    // Default DnsResolver reads system nameservers via ndk_context (see
-    // IrohNativeBridge.installAndroidContext). Do not pin third-party resolvers:
-    // that would leak callee discovery lookups and override Private DNS / VPN / Orbot.
+    // Do not pin third-party resolvers. On Android, route A/AAAA/TXT through
+    // android.net.DnsResolver (Private DNS / VPN / Orbot). Elsewhere use iroh defaults.
     let mut builder =
         Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()]);
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.dns_resolver(crate::android_dns::android_iroh_dns_resolver());
+    }
     builder = apply_relay_builder(builder)?;
     #[cfg(feature = "mock-token")]
     {

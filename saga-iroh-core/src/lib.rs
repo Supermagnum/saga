@@ -16,6 +16,8 @@ use log::{error, info, warn};
 use android_logger::Config;
 
 #[cfg(feature = "iroh-transport")]
+mod android_dns;
+#[cfg(feature = "iroh-transport")]
 mod iroh_transport;
 
 mod media_bridge;
@@ -37,9 +39,24 @@ fn jstring_to_rust(env: &mut JNIEnv, input: &JString) -> Option<String> {
 }
 
 static BRIDGE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+static DNS_BRIDGE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
 const BRIDGE_CLASS_NAME: &str = "org/saga/iroh/IrohNativeBridge";
+const DNS_BRIDGE_CLASS_NAME: &str = "org/saga/iroh/AndroidDnsBridge";
+
+#[cfg(all(feature = "iroh-transport", target_os = "android"))]
+pub(crate) fn java_vm() -> Option<&'static JavaVM> {
+    JAVA_VM.get()
+}
+
+/// Cached `AndroidDnsBridge` jclass — FindClass fails on spawn_blocking threads.
+#[cfg(all(feature = "iroh-transport", target_os = "android"))]
+pub(crate) fn dns_bridge_jclass<'local>(env: &mut JNIEnv<'local>) -> Option<JClass<'local>> {
+    let class_ref = DNS_BRIDGE_CLASS.get()?;
+    let local = env.new_local_ref(class_ref.as_obj()).ok()?;
+    Some(JClass::from(local))
+}
 
 fn clear_pending_exception(env: &mut JNIEnv, context: &str) {
     if env.exception_check().unwrap_or(false) {
@@ -48,6 +65,11 @@ fn clear_pending_exception(env: &mut JNIEnv, context: &str) {
         }
         let _ = env.exception_clear();
     }
+}
+
+#[cfg(all(feature = "iroh-transport", target_os = "android"))]
+pub(crate) fn clear_pending_exception_pub(env: &mut JNIEnv, context: &str) {
+    clear_pending_exception(env, context);
 }
 
 fn bridge_jclass<'local>(env: &mut JNIEnv<'local>) -> Option<JClass<'local>> {
@@ -153,18 +175,29 @@ fn notify_failed(env: &mut JNIEnv, session_id: &str, reason: &str) {
 }
 
 fn ensure_bridge_class_cached(env: &mut JNIEnv) {
-    if BRIDGE_CLASS.get().is_some() {
-        return;
+    if BRIDGE_CLASS.get().is_none() {
+        match env.find_class(BRIDGE_CLASS_NAME) {
+            Ok(class) => match env.new_global_ref(&class) {
+                Ok(global) => {
+                    let _ = BRIDGE_CLASS.set(global);
+                    info!("cached IrohNativeBridge jclass via find_class");
+                }
+                Err(e) => error!("failed to cache IrohNativeBridge global ref: {e}"),
+            },
+            Err(e) => error!("find_class {BRIDGE_CLASS_NAME} failed: {e}"),
+        }
     }
-    match env.find_class(BRIDGE_CLASS_NAME) {
-        Ok(class) => match env.new_global_ref(&class) {
-            Ok(global) => {
-                let _ = BRIDGE_CLASS.set(global);
-                info!("cached IrohNativeBridge jclass via find_class");
-            }
-            Err(e) => error!("failed to cache IrohNativeBridge global ref: {e}"),
-        },
-        Err(e) => error!("find_class {BRIDGE_CLASS_NAME} failed: {e}"),
+    if DNS_BRIDGE_CLASS.get().is_none() {
+        match env.find_class(DNS_BRIDGE_CLASS_NAME) {
+            Ok(class) => match env.new_global_ref(&class) {
+                Ok(global) => {
+                    let _ = DNS_BRIDGE_CLASS.set(global);
+                    info!("cached AndroidDnsBridge jclass via find_class");
+                }
+                Err(e) => error!("failed to cache AndroidDnsBridge global ref: {e}"),
+            },
+            Err(e) => error!("find_class {DNS_BRIDGE_CLASS_NAME} failed: {e}"),
+        }
     }
 }
 

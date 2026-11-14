@@ -49,7 +49,7 @@ Implications:
 
 | Dimension | Assessment |
 |-----------|------------|
-| Reliability | Generally good on clean DNS; host soak with unhijacked DNS: home relay ~3s, voice connect ~70ms. ISP “safe browsing” DNS (e.g. Telenor Nettvern) can hijack relay hostnames → TLS `UnknownIssuer` and `online()` never completes. Workaround: OS Private DNS (DoT), not in-app pinned resolvers. Emulator NAT + public discovery remains flakier than local relay. |
+| Reliability | Generally good on clean DNS; host soak with unhijacked DNS: home relay ~3s, voice connect ~70ms. **Telenor Nettvern** (ISP DNS filter / “safe browsing”) rewrites some `*.relay.n0.iroh.link` / `dns.iroh.link` answers → TLS `UnknownIssuer` on N0 HTTPS probes when the app uses the ISP recursive path (Private DNS off). With Android Private DNS (DoT) and Saga’s `AndroidDnsBridge`, probes resolve to real n0 hosts. Do **not** ship in-app pinned Cloudflare/Google resolvers as a workaround (privacy). Emulator NAT + public discovery remains flakier than local relay. |
 | Privacy | See table above: n0 sees EndpointId pairs and envelopes; `dns.iroh.link` sees publish/lookup; user’s recursive DNS sees hostnames. Trust n0’s ops and jurisdiction. No Saga cleartext. |
 | Cost / effort | Free for typical volumes; zero ops. Subject to n0 policy/capacity changes. |
 | F-Droid | Usually fine (no proprietary binary). If n0 were ever considered a “non-free network service” anti-feature, document dependency clearly; self-host is the escape hatch. |
@@ -79,13 +79,16 @@ iroh-dns / pkarr publisher so dial-by-public-key does not depend on `dns.iroh.li
 ## Recommendation frame (for decision, not a commit)
 
 - **Ship production dials on n0** for reachability out of the box; keep local/custom override for labs and privacy-conscious users.
-- **Document DNS requirements** (real resolution of `*.relay.n0.iroh.link` / `dns.iroh.link`) — captive ISP resolvers break public mode hard; prefer OS Private DNS over in-app pins.
+- **Document DNS requirements** (real resolution of `*.relay.n0.iroh.link` / `dns.iroh.link`) — captive ISP resolvers (e.g. Telenor Nettvern) break public mode with `UnknownIssuer`; prefer OS Private DNS over in-app pins.
 - **Invest in self-host docs + settings** before treating self-host as the default; ops cost is the main barrier, not code.
 - Emulator public-relay soaks are a weak production proxy; prefer host↔host and real devices for release gates.
 
 ## Evidence pointers
 
 - Host public soak harness: `testing/e2e/run-public-relay-peer-soak.sh` (optional host-side `bwrap` + clean `resolv.conf` for the **peer binary only**, not the Android app).
-- Emulator public soak: `testing/e2e/run-public-relay-emu-peer-soak.sh` (enables Android Private DNS for the AVD).
+- Emulator public soak: `testing/e2e/run-public-relay-emu-peer-soak.sh` and
+  `testing/e2e/run-public-relay-peer-emu-soak.sh` (enable Android Private DNS).
+- Android iroh DNS: `AndroidDnsBridge` → `android.net.DnsResolver` (Private DNS /
+  VPN / Orbot). No in-app pinned third-party resolvers.
 - Android bind path: `saga-iroh-core` `Endpoint::builder(presets::N0)` unless `relay_url` override; `installAndroidContext` publishes `ndk_context` so iroh can read system DNS.
 - Local insecure TLS is **mock-token / debug only** (`CaTlsConfig::insecure_skip_verify`); release must not ship that path.
