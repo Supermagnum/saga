@@ -1,9 +1,63 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-13 (Phase 2 complete)
+**Last updated:** 2026-11-13 (Phase 4 conference)
 
-**Status:** Phase 2 complete. Branch `fix/ring-flake` (RING root cause +
-API 29/35 cold suites).
+**Status:** Phase 4 on `phase-4-conference` — production dial fail-fast +
+carrier multi-call / conference UI. Public N0 discovery soak stopped early
+(emulator flaky); local-relay suite remains the CI gate.
+
+---
+
+## 2026-11-13 — Phase 4: production reachability + carrier conference
+
+Branch: `phase-4-conference`.
+
+### Production dial / Not reachable
+
+| Change | Detail |
+|--------|--------|
+| Connect budget | ~40s wall clock; 12s/attempt; addressing misses ≤3 tries |
+| UX | Outgoing connect failure → `DisconnectCause(ERROR, "Not reachable")`; no §5a downgrade |
+| Release discovery | Still `Endpoint::builder(presets::N0)` (PkarrPublisher + DnsAddressLookup) |
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Public N0 Case 2/2b ×10 cold | **STOPPED** after 0/2 | Callee home relay drop / reconnect deadlines on emulator (`Lost connection to relay`, `native=0` pre-dial). Per plan: do not paper over with custom-relay-only hacks. |
+| Offline callee → Not reachable | **PASS** ~40s | Force-stop all bob-identity emulators; alice dial → `NOT_REACHABLE` + Telecom reason `Not reachable`; no Downgraded path. Log evidence in session. |
+| Local-relay Case 2/2b | Used for conference + full suite | Default harness mode |
+
+### Conference UI (C1–C5)
+
+Script: `testing/e2e/run-e2e-conference.sh`. Screenshots under
+`/tmp/saga-conference-screencaps/`.
+
+| Case | Result | Notes |
+|------|--------|-------|
+| C1 | **NEEDS_HARDWARE** | GSM second-incoming not confirmed on emulator RIL |
+| C2 | **NEEDS_HARDWARE** | Merge not offered (no conferenceableCalls/children) |
+| C3 | **PASS** | Iroh + GSM hold path (`held=` in logcat); screencap c3 |
+| C4 | **PASS** | Merge absent from UI dump with Iroh+carrier |
+| C5 | **PASS** | Add call → dialer intent |
+
+Log: `/tmp/saga-conference-e2e3.log`. Screenshots: `/tmp/saga-conference-screencaps/`.
+
+### Needs real hardware
+
+- Real carrier merge / `getChildren()` / VoLTE conference
+- Dual-SIM multi-call edge cases
+- Reliable public N0 discovery soak on device (emulator public relay flaky)
+
+### Suites
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (1–10 + 4b + C1–C5 + onboarding) | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api35-phase4.log` (~10m) |
+| API 29 Step5 once | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api29-phase4.log` (~9m) |
+
+### Open decisions
+
+- Whether to keep public-relay soak as optional nightly only (local remains default)
+- Exact Add-call UX (dialer vs inline number pad)
 
 ---
 

@@ -623,13 +623,23 @@ Notes:
 Not part of the v1 build (see §3), but captured here so the two-party
 architecture doesn't foreclose it.
 
-### 14.1 Why carrier conference-merge is unusable
+### 14.1 Carrier conference vs encrypted groups
 
-Carrier-side call merging routes audio mixing through the carrier's network,
-giving the carrier cleartext access to the mixed stream. Incompatible with
-end-to-end encryption. Group calls with encryption intact must be handled
-entirely at the app/data layer, following the pattern used by Signal and
-Messenger:
+**Carrier conference (cleartext stock parity — allowed):** as default dialer,
+Saga hosts multi-call UI for cellular calls (second incoming, add call,
+hold/swap, merge/split when Telecom capabilities allow). Audio mixing stays
+on the carrier network; the InCall padlock stays key-not-found / "Not
+encrypted". This is an unencrypted feature for dialer parity, not an
+encrypted group call.
+
+**Never mix Iroh ↔ carrier in one conference:** hide Merge and refuse
+programmatic `conference()` / `mergeConference()` when any leg is Iroh.
+Hold/swap across origins is allowed (Iroh media pauses on `STATE_HOLDING`).
+
+**Why carrier merge cannot provide E2E encryption:** carrier-side mixing
+gives the carrier cleartext access to the mixed stream. Encrypted group
+calls must be handled entirely at the app/data layer (Iroh-only later),
+following the pattern used by Signal and Messenger:
 
 - **SRTP/DTLS** secures the hop to whatever relay forwards media.
 - **A second, frame-level encryption layer** (SFrame-style) secures the

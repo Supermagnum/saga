@@ -5,6 +5,16 @@
     <string name="dialer_role_granted">Saga is the default dialer</string>
     <string name="dialer_role_denied">Default dialer role not granted</string>
     <string name="end_call">End call</string>
+    <string name="add_call">Add call</string>
+    <string name="swap_calls">Swap</string>
+    <string name="merge_calls">Merge</string>
+    <string name="split_call">Split</string>
+    <string name="answer_hold">Answer</string>
+    <string name="reject_call">Reject</string>
+    <string name="end_and_answer">End &amp; answer</string>
+    <string name="call_on_hold_fmt">On hold: %1$s</string>
+    <string name="incoming_second_fmt">Incoming: %1$s</string>
+    <string name="conference_participants_fmt">Conference: %1$s</string>
     <string name="mute">Mute</string>
     <string name="unmute">Unmute</string>
     <string name="speaker">Speaker</string>
@@ -33,6 +43,7 @@
     <string name="padlock_encrypted">Encrypted call</string>
     <string name="padlock_not_encrypted">Not encrypted</string>
     <string name="padlock_downgraded">Encryption failed</string>
+    <string name="call_not_reachable">Not reachable</string>
     <string name="phone_account_onboarding_title">Enable Saga calling</string>
     <string name="phone_account_onboarding_body">Encrypted Iroh calls need the Saga account turned on under Calling accounts. Until then, Saga will not place or receive Iroh calls — and will never fall back to the SIM.</string>
     <string name="phone_account_open_settings">Open Calling accounts</string>
