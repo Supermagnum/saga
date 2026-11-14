@@ -1,11 +1,30 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-14 (public reachability)
+**Last updated:** 2026-11-14 (relay decision Option A)
 
-**Status:** `fix/public-reachability` — 18s connect budget, Connecting… UI,
-add-call dialer, Android system-DNS via `ndk_context`. Local-relay suite remains
-the CI gate. Public N0 on this host’s emulators fails under ISP DNS hijack
-without pinned in-app resolvers (not shipped).
+**Status:** `docs/relay-decision-option-a` — release default remains n0
+`presets::N0` (docs + spec only). Local-relay suite remains the CI / E2E gate.
+
+---
+
+## 2026-11-14 — Relay decision (Option A)
+
+Branch: `docs/relay-decision-option-a`. Docs-only; no runtime change.
+
+| Record | Location |
+|--------|----------|
+| Decision + risks + future self-host setting | `docs/design/relay-options.md` |
+| Spec transport §14.4.1 | `saga-spec.md` |
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| API 35 `run-e2e-step5.sh` (Cases 1–10 + 4b + C3–C5 + onboarding) | *(pending this branch)* | Local relay; C1/C2 NEEDS_HARDWARE |
+| API 29 one-run | *(pending this branch)* | |
+
+### Not verified / needs real hardware
+
+- Unchanged from prior parts (physical phones, real Galdralag, USB Nitrokey on device).
+- Cross-machine LAN public-relay ×10.
 
 ---
 
