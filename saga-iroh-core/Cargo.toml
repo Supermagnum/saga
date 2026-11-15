@@ -65,3 +65,9 @@ codegen-units = 1
 inherits = "release"
 lto = false
 codegen-units = 16
+
+# Android API 29 (kernel 4.14) returns EPERM for IP_TOS/ECN cmsgs; upstream
+# noq-udp only falls back on EINVAL. Keep a tiny local patch until upstream
+# accepts the same change (see vendor/noq-udp/README.saga.md).
+[patch.crates-io]
+noq-udp = { path = "../vendor/noq-udp" }
