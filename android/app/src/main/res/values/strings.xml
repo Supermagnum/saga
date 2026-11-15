@@ -113,4 +113,12 @@
     <string name="voice_disguise_chip_local">Voice disguise on</string>
     <string name="voice_disguise_chip_peer">Caller is using voice disguise</string>
     <string name="voice_disguise_cellular_disabled">Not available on phone-network calls</string>
+    <string name="nitrokey_pin_title">Unlock security token</string>
+    <string name="nitrokey_pin_body">Enter the User PIN for your Nitrokey (OpenPGP). Saga never logs this PIN.</string>
+    <string name="nitrokey_pin_hint">User PIN</string>
+    <string name="nitrokey_pin_ok">Unlock</string>
+    <string name="nitrokey_pin_cancel">Cancel</string>
+    <string name="nitrokey_card_not_supported">This security token is not supported. Saga needs an OpenPGP AUT key on Brainpool P-256 or P-384.</string>
+    <string name="nitrokey_card_locked">Security token is locked. Unblock it with the reset code, then try again.</string>
+    <string name="nitrokey_unavailable">No supported security token found. Plug in a Nitrokey over USB and allow access.</string>
 </resources>
