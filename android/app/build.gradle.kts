@@ -141,6 +141,12 @@ tasks.register<Exec>("cargoNdkBuild") {
     val requireNative = sagaRequireNative()
     isIgnoreExitValue = !requireNative
     doFirst {
+        // Drop stale ABI dirs so leftover .so files are not packaged into the APK.
+        if (sagaIrohNdkLibs.isDirectory) {
+            sagaIrohNdkLibs.listFiles()?.forEach { child ->
+                if (child.isDirectory) child.deleteRecursively()
+            }
+        }
         logger.lifecycle("cargo-ndk profile=[$profile] abis=${abis.joinToString(",")}")
     }
     doLast {

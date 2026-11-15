@@ -45,31 +45,33 @@ export SOURCE_DATE_EPOCH=1731628800
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
 
 mkdir -p out
+ZIPALIGN="$ANDROID_HOME/build-tools/36.1.0/zipalign"
+
+# cargoNdkBuild clears target/ndk-libs ABI dirs before each run so stale .so
+# files are not packaged. For a double-build compare, also wipe Android cargo
+# targets between runs (or use a fresh clone).
+
+build_variant() {
+  local abis="$1"
+  local out_name="$2"
+  rm -rf saga-iroh-core/target/ndk-libs
+  cd android
+  ./gradlew clean assembleRelease verifyReleaseApkHygiene --no-daemon \
+    -Psaga.requireNative=true \
+    -Psaga.abis="$abis"
+  cd ..
+  "$ZIPALIGN" -f -p 4 \
+    android/app/build/outputs/apk/release/app-release-unsigned.apk \
+    "out/${out_name}"
+  "$ZIPALIGN" -c -v 4 "out/${out_name}"
+  sha256sum "out/${out_name}"
+}
 
 # --- arm64-v8a only (real phones) ---
-cd android
-./gradlew clean assembleRelease verifyReleaseApkHygiene --no-daemon \
-  -Psaga.requireNative=true \
-  -Psaga.abis=arm64-v8a
-cd ..
-ZIPALIGN="$ANDROID_HOME/build-tools/36.1.0/zipalign"
-"$ZIPALIGN" -f -p 4 \
-  android/app/build/outputs/apk/release/app-release-unsigned.apk \
-  out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
-"$ZIPALIGN" -c -v 4 out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
-sha256sum out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
+build_variant arm64-v8a saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
 
 # --- universal (arm64-v8a + x86_64) if size is acceptable ---
-cd android
-./gradlew clean assembleRelease verifyReleaseApkHygiene --no-daemon \
-  -Psaga.requireNative=true \
-  -Psaga.abis=arm64-v8a,x86_64
-cd ..
-"$ZIPALIGN" -f -p 4 \
-  android/app/build/outputs/apk/release/app-release-unsigned.apk \
-  out/saga-0.1.0-preview.1-universal-unsigned.apk
-"$ZIPALIGN" -c -v 4 out/saga-0.1.0-preview.1-universal-unsigned.apk
-sha256sum out/saga-0.1.0-preview.1-universal-unsigned.apk
+build_variant arm64-v8a,x86_64 saga-0.1.0-preview.1-universal-unsigned.apk
 ```
 
 Hygiene must pass (`scripts/check-release-apk.sh` via
@@ -77,8 +79,8 @@ Hygiene must pass (`scripts/check-release-apk.sh` via
 
 ### Reproducibility check
 
-Build each variant **twice** from a clean tree with the same
-`SOURCE_DATE_EPOCH` and toolchain; SHA-256 of the unsigned zipaligned APKs
+Build each variant **twice** with the same `SOURCE_DATE_EPOCH` and toolchain
+(fresh `ndk-libs`, Gradle `clean`). SHA-256 of the unsigned zipaligned APKs
 must match. Record hashes in the PR / release checklist.
 
 ```bash
