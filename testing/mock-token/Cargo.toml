@@ -2,19 +2,26 @@
 name = "mock-token"
 version = "0.1.0"
 edition = "2021"
-description = "Software mock Galdralag token for Saga E2E (ephemeral-session wire format)"
+description = "Software mock Galdralag SessionToken for Saga E2E (Brainpool + FakeTrng)"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
+async-trait = "0.1"
 blake3 = "1"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-hkdf = "0.12"
+heapless = { version = "0.9", default-features = false }
 log = "0.4"
-rand = "0.8"
-sha2 = "0.10"
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread"] }
+saga-session = { path = "../../saga-session" }
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }
+zeroize = { version = "1", features = ["derive"] }
 
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+# galdr-core (test-hal) and galdr-vault are required for the software mock only:
+# FakeTrng / FakeVaultStorage + LT Brainpool key gen. Not used by saga-session.
+ephemeral-session = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1" }
+galdr-core = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-core", features = ["test-hal"] }
+galdr-vault = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-vault" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util", "time"] }
+hex = "0.4"
+serde_json = "1"

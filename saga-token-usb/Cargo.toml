@@ -1,0 +1,36 @@
+[package]
+name = "saga-token-usb"
+version = "0.1.0"
+edition = "2021"
+description = "Production USB CCID / OpenPGP SessionToken backends (Nitrokey; Galdralag later)"
+license = "AGPL-3.0-or-later"
+
+[features]
+default = []
+pcsc = ["dep:card-backend-pcsc"]
+# Software AutSigner — host/CI only. Never enable on Android release .so.
+test-card = ["dep:galdr-vault", "dep:galdr-core", "galdr-core/test-hal", "dep:bp256", "dep:ecdsa"]
+
+[dependencies]
+async-trait = "0.1"
+log = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"
+saga-session = { path = "../saga-session" }
+openpgp-card = "0.7"
+card-backend = "0.2"
+card-backend-pcsc = { version = "0.5", optional = true }
+galdr-vault = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-vault", default-features = false, optional = true }
+galdr-core = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-core", default-features = false, optional = true }
+bp256 = { version = "0.14", optional = true, default-features = false, features = ["arithmetic", "ecdsa"] }
+ecdsa = { version = "0.17", optional = true, default-features = false, features = ["der", "algorithm"] }
+thiserror = "1"
+
+[dev-dependencies]
+env_logger = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+mock-token = { path = "../testing/mock-token" }
+# test-card only in default CI; enable `pcsc` locally for ignored live tests
+# (requires libpcsclite-dev). Do not pull pcsc into --features test-card builds.
+saga-token-usb = { path = ".", features = ["test-card"] }

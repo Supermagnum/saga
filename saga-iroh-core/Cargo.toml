@@ -10,20 +10,35 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
-iroh-transport = ["dep:iroh", "dep:tokio", "dep:blake3"]
-mock-token = ["iroh-transport", "dep:mock_token"]
+iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq", "dep:saga-media", "dep:bytes", "dep:n0-error"]
+# Debug / E2E only: software SessionToken + local insecure relay TLS + BLAKE3 dev labels.
+mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils"]
+# Production OpenPGP / Nitrokey SessionToken (no mock, no test-utils).
+nitrokey = ["iroh-transport", "dep:saga-token-usb"]
 
 [dependencies]
 jni = "0.21"
 log = "0.4"
+saga-session = { path = "../saga-session" }
+saga-token-usb = { path = "../saga-token-usb", optional = true }
+# Shared Opus+SRTP media pipeline (host + Android NDK).
+saga-media = { path = "../saga-media", optional = true }
+bytes = { version = "1", optional = true }
+# RoQ media framing (datagrams). Fork ported to Saga's iroh 1.x pin — see docs/upstream/iroh-roq-port.md.
+iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "c9b02963a1c786f7ae2788ee4c39e44c9c76b01d", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.14"
+android_logger = "0.15"
 
 [dependencies.iroh]
 version = "1.0"
 optional = true
-features = ["test-utils"]
+default-features = true
+# `test-utils` (local insecure relay TLS) only via feature `mock-token`.
+
+[dependencies.n0-error]
+version = "1"
+optional = true
 
 [dependencies.tokio]
 version = "1"
@@ -53,3 +68,9 @@ codegen-units = 1
 inherits = "release"
 lto = false
 codegen-units = 16
+
+# Android API 29 (kernel 4.14) returns EPERM for IP_TOS/ECN cmsgs; upstream
+# noq-udp only falls back on EINVAL. Keep a tiny local patch until upstream
+# accepts the same change (see vendor/noq-udp/README.saga.md).
+[patch.crates-io]
+noq-udp = { path = "../vendor/noq-udp" }

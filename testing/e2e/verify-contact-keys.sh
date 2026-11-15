@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify bob/alice have Saga pubkey rows; thor must not.
+# Verify bob/alice/laptop/charlene have Saga pubkey rows; thor must not.
 set -euo pipefail
 
 SERIAL="${1:?usage: verify-contact-keys.sh SERIAL}"
@@ -37,7 +37,7 @@ has_name() {
   echo "$DATA" | rg -q "data1=$1, mimetype=vnd.android.cursor.item/name"
 }
 
-for name in bob alice; do
+for name in bob alice laptop charlene; do
   if ! has_name "$name"; then
     echo "FAIL: contact [$name] not found"
     FAIL=1

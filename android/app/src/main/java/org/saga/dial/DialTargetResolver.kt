@@ -65,14 +65,14 @@ object DialTargetResolver {
             return null
         }
         ContactKeyRepository.readPublicKeyBytes(context, contactUri)?.let { keyBytes ->
-            val peer = ContactKeyStore.peerIdFromKeyBytes(keyBytes) ?: return null
             val lookup = phone ?: contactUri.toString()
+            val peer = irohPeerForContactKey(keyBytes, phone) ?: return null
             Log.i(TAG, "Resolved contact [${displayName ?: lookup}] to Iroh (lookup=[$lookup])")
             return DialTarget.Iroh(peer, lookup, contactName = displayName)
         }
         if (!phone.isNullOrBlank()) {
             ContactKeyRepository.readPublicKeyBytesForPhone(context, phone)?.let { keyBytes ->
-                val peer = ContactKeyStore.peerIdFromKeyBytes(keyBytes) ?: return@let null
+                val peer = irohPeerForContactKey(keyBytes, phone) ?: return@let null
                 Log.i(TAG, "Resolved contact [${displayName ?: phone}] to Iroh via phone key")
                 return DialTarget.Iroh(peer, phone, contactName = displayName)
             }
@@ -116,7 +116,7 @@ object DialTargetResolver {
                     return DialTarget.Cellular(normalized)
                 }
                 ContactKeyRepository.readPublicKeyBytesForPhone(context, normalized)?.let { keyBytes ->
-                    val peer = ContactKeyStore.peerIdFromKeyBytes(keyBytes) ?: return@let null
+                    val peer = irohPeerForContactKey(keyBytes, normalized) ?: return@let null
                     Log.i(TAG, "Resolved phone [$normalized] to Iroh peer via Contacts key")
                     return DialTarget.Iroh(peer, normalized)
                 }
@@ -214,5 +214,17 @@ object DialTargetResolver {
         if (PhoneNumberUtils.isGlobalPhoneNumber(input)) return true
         val digits = input.count { it.isDigit() }
         return digits >= 3 && input.all { it.isDigit() || it in "+-()./\\ " }
+    }
+
+    /**
+     * Iroh peer id stays the phone-digit label. Token fingerprint in Contacts is
+     * only proof the contact is encrypted-capable (and for handshake trust later).
+     */
+    private fun irohPeerForContactKey(keyBytes: ByteArray, phone: String?): IrohNodeId? {
+        ContactKeyStore.fingerprintHexFromKeyBytes(keyBytes)?.let {
+            val digits = phone?.filter { ch -> ch.isDigit() }.orEmpty()
+            return IrohNodeId.parse(digits)
+        }
+        return ContactKeyStore.peerIdFromKeyBytes(keyBytes)
     }
 }

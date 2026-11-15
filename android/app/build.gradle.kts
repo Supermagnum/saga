@@ -62,6 +62,15 @@ fun sagaCargoProfile(): String {
     return if (sagaIsReleaseRequested()) "release" else "ci"
 }
 
+/**
+ * Cargo features for native lib.
+ * Release: iroh-transport + nitrokey (production SessionToken; no mock-token / test-utils).
+ * Debug / CI: iroh-transport,mock-token for E2E SessionToken + local relay TLS.
+ */
+fun sagaCargoFeatures(): String {
+    return if (sagaIsReleaseRequested()) "iroh-transport,nitrokey" else "iroh-transport,mock-token"
+}
+
 android {
     namespace = "org.saga"
     compileSdk = 35
@@ -72,8 +81,10 @@ android {
         applicationId = "org.saga"
         minSdk = 29
         targetSdk = 35
+        // Monotonic integer (Part 5 / F-Droid UpdateCheckData). Bump on every
+        // published APK; keep in sync with docs/fdroid/org.saga.yml.
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0-preview.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters.clear()
@@ -84,6 +95,12 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Debuggable must stay false so FLAG_DEBUGGABLE gates hold.
+            isDebuggable = false
+        }
+        debug {
+            isDebuggable = true
+            applicationIdSuffix = ""
         }
     }
 
@@ -98,6 +115,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     sourceSets {
@@ -118,11 +136,17 @@ tasks.register<Exec>("cargoNdkBuild") {
         cmd += "-t"
         cmd += abi
     }
-    cmd += listOf("build", "--profile", profile, "--features", "iroh-transport,mock-token")
+    cmd += listOf("build", "--profile", profile, "--features", sagaCargoFeatures())
     commandLine(cmd)
     val requireNative = sagaRequireNative()
     isIgnoreExitValue = !requireNative
     doFirst {
+        // Drop stale ABI dirs so leftover .so files are not packaged into the APK.
+        if (sagaIrohNdkLibs.isDirectory) {
+            sagaIrohNdkLibs.listFiles()?.forEach { child ->
+                if (child.isDirectory) child.deleteRecursively()
+            }
+        }
         logger.lifecycle("cargo-ndk profile=[$profile] abis=${abis.joinToString(",")}")
     }
     doLast {
@@ -181,6 +205,28 @@ tasks.register("verifyNativeLibsInApk") {
         logger.lifecycle(
             "OK: libsaga_iroh_core.so present for ${abis.joinToString(" and ")} in ${apk.name}"
         )
+    }
+}
+
+tasks.register("verifyReleaseApkHygiene") {
+    group = "verification"
+    description = "Grep release APK/manifest for debug hooks (TEST_*, mock-token markers)"
+    dependsOn("assembleRelease")
+    doLast {
+        val candidates = listOf(
+            layout.buildDirectory.file("outputs/apk/release/app-release-unsigned.apk").get().asFile,
+            layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        )
+        val found = candidates.firstOrNull { it.isFile }
+            ?: throw GradleException("Release APK not found under outputs/apk/release/")
+        val script = rootProject.file("../scripts/check-release-apk.sh")
+        val pb = ProcessBuilder("bash", script.absolutePath, found.absolutePath)
+            .inheritIO()
+            .directory(rootProject.projectDir)
+        val code = pb.start().waitFor()
+        if (code != 0) {
+            throw GradleException("check-release-apk.sh failed for ${found.name} (exit=$code)")
+        }
     }
 }
 
