@@ -1,9 +1,55 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Part 5 F-Droid readiness)
+**Last updated:** 2026-11-15 (Privacy docs + Opus CBR)
 
-**Status:** `feat/fdroid-readiness` — F-Droid packaging prep (not submitted).
-`applicationId` remains `org.saga` pending maintainer decision.
+**Status:** `privacy-docs-cbr` — issue #40 Part A (docs, CBR, Settings link).
+Do not merge until CI green; Part B (preview APK) waits on this merge.
+
+---
+
+## 2026-11-15 — Privacy docs + Opus CBR (`privacy-docs-cbr`, issue #40)
+
+Branch: `privacy-docs-cbr` (from main after #47 F-Droid readiness).
+Precondition: API 29 DNS hotfix #42 (`bindProcessToNetwork` removed; explicit
+`Network` for `DnsResolver`) is on main.
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| README Privacy section | Exposure table, VPN provider table, Nitrokey/Galdralag FS note, CBR note |
+| Settings → Privacy | Opens README anchor `#privacy-what-saga-does-and-doesnt-protect` |
+| Fastlane full_description | Honest IP/metadata sentence |
+| Opus VBR → CBR | `set_vbr(false)`, 32 kbps, DTX still off; shared by 1:1 and group encode-once |
+| `relay-options.md` Future options | Watch Rust crate; `nym-smoldvpn` spike candidate; mixnet unsuitable |
+| `saga-spec.md` | Media pipeline CBR + privacy pointer |
+
+### Opus CBR before/after (LibriSpeech host fixture)
+
+| Mode | Bitrate | Packet sizes (Opus payload) | STOI | corr / SI-SNR |
+|------|---------|-----------------------------|------|---------------|
+| VBR (before) | 27.08 kbps | min 31 max 109 mean 67.7 std 21.4; **60** unique | 0.9946 | 0.960 / 10.8 dB |
+| CBR (after) | **32.00 kbps** | **min=max=80; std 0; 1 unique** | 0.9918 | 0.959 / 10.5 dB |
+
+Host gate: `cargo test -p saga-media --test cbr_packet_sizes` asserts constant size.
+Group/mesh uses the same `OpusEncoder::new()` (encode once).
+
+### Emulator verification
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (`5554`/`5556`) Cases 1–10 + 4b + C1–C5 + onboarding | **PASS** (C1/C2 NEEDS_HARDWARE); conference `pass=17 fail=0 needs_hardware=2` | `/tmp/e2e-step5-privacy-api35.log` |
+| API 35 Case 7 alice↔bob (CBR) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=**0.9915** | same log |
+| API 35 group G1–G11 (`SAGA_RUN_GROUP=1`) | G1/G2/G6/G7/G9-mute/G10 PASS; known mesh PENDING/FAIL (pairwise scaffold) | same log; summary `pass=77 fail=5 pending_mesh=7` |
+| API 29 Step5 Alice35→Bob29 (`5554`/`5560`) | Cases 3–6 + 4b + 8–10 + C3–C5 + onboarding **PASS**; Case 2/2b early **RELAY:FAIL** (bob warm-up after long suite); Case 7 first pass SI-SNR alice→bob 9.5 (flake) | `/tmp/e2e-step5-privacy-api29.log` |
+| API 29 Case 7 re-run (warm relay) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=0.9915 | `/tmp/e2e-api29-privacy-case7.log` |
+| VPN WireGuard emulator test | **NOT VERIFIED** | No `sudo` / `wireguard-tools` on host; no WireGuard APK on AVDs. Extra latency not measured. |
+
+### Not verified / open
+
+- Emulator WireGuard VPN → public-relay call + pcap (no UDP/53 outside tunnel)
+- Physical phones
+- Part B preview APK (blocked until this PR merges)
 
 ---
 
@@ -919,7 +965,7 @@ Plain RTP inside RoQ after not-encrypted resolution (QUIC still encrypts transpo
 | Item | Choice |
 |------|--------|
 | Crate | `saga-media/` (host-testable; not inside `saga-iroh-core`) |
-| Opus | `opus` **0.3.1** + `audiopus_sys` (cmake/cc from source — F-Droid-safe; same stack as iroh-roq tests). 48 kHz mono, 20 ms, VBR **32 kbps**, in-band FEC on, **DTX off**, `Application::Voip`, complexity 10 |
+| Opus | `opus` **0.3.1** + `audiopus_sys` (cmake/cc from source — F-Droid-safe; same stack as iroh-roq tests). 48 kHz mono, 20 ms, **CBR 32 kbps** (was VBR; privacy #40), in-band FEC on, **DTX off**, `Application::Voip`, complexity 10 |
 | SRTP | `webrtc-srtp` **0.17.3** `ProtectionProfile::AeadAes256Gcm` |
 | RoQ | fork `c9b02963…` — `try_send_payload` (non-blocking; never `send_rtp_wait` on media path), `read_bytes`, `max_datagram_size` |
 | Keys | HKDF-SHA256 over `saga_session_key`; info = direction label + `transcript_hash`; labels `saga-srtp-caller-to-callee-v1` / `saga-srtp-callee-to-caller-v1` |
