@@ -23,6 +23,7 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.launch
 import org.saga.R
 import org.saga.audio.SagaCallMediaController
+import org.saga.audio.VoiceDisguiseStore
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
@@ -54,6 +55,7 @@ class SagaInCallActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityInCallBinding
     private var callId: String = ""
+    private var callOrigin: CallOrigin = CallOrigin.CELLULAR
     private var connectCuePlayed = false
     private var downgradeModalShown = false
 
@@ -75,6 +77,7 @@ class SagaInCallActivity : AppCompatActivity() {
         val origin = intent.getStringExtra(EXTRA_ORIGIN)?.let {
             runCatching { CallOrigin.valueOf(it) }.getOrDefault(CallOrigin.CELLULAR)
         } ?: CallOrigin.CELLULAR
+        callOrigin = origin
 
         binding.callerName.text = displayName.ifEmpty { "Call" }
         binding.endCall.setOnClickListener { endFocusedCall() }
@@ -90,20 +93,34 @@ class SagaInCallActivity : AppCompatActivity() {
         binding.btnAnswerHold.setOnClickListener { answerHoldingOthers() }
         binding.btnReject.setOnClickListener { rejectIncoming() }
         binding.btnEndAndAnswer.setOnClickListener { endAndAnswer() }
+        binding.toggleDisguise.setOnClickListener { toggleVoiceDisguise() }
 
         val registryContext = SagaCallRegistry.get(callId)
         val snapshot = registryContext?.snapshot
             ?: CallSecurityStateResolver.resolve(origin)
 
+        // §16: apply per-contact override for this call only (does not rewrite global prefs).
+        if (origin == CallOrigin.IROH) {
+            val effective = VoiceDisguiseStore.effectiveForContact(this, displayName)
+            VoiceDisguiseStore.pushNative(this, effective)
+        }
+
         renderSnapshot(snapshot)
         maybePlayConnectCue(snapshot)
         maybeShowDowngradeModal(snapshot, displayName)
         refreshAudioStatus()
+        refreshDisguiseUi(origin)
         refreshMultiCallUi()
 
         // Group model changes (any participant snapshot, add / remove): redraw rows + header.
         lifecycleScope.launch {
             GroupCallRegistry.groups.collect { refreshMultiCallUi() }
+        }
+        lifecycleScope.launch {
+            VoiceDisguiseStore.peerDisguise.collect { refreshDisguiseUi(currentOrigin()) }
+        }
+        lifecycleScope.launch {
+            VoiceDisguiseStore.localActive.collect { refreshDisguiseUi(currentOrigin()) }
         }
 
         lifecycleScope.launch {
@@ -152,6 +169,44 @@ class SagaInCallActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshMultiCallUi()
+        refreshDisguiseUi(callOrigin)
+    }
+
+    private fun currentOrigin(): CallOrigin = callOrigin
+
+    private fun refreshDisguiseUi(origin: CallOrigin) {
+        val iroh = origin == CallOrigin.IROH
+        binding.toggleDisguise.visibility = View.VISIBLE
+        if (iroh) {
+            binding.toggleDisguise.isEnabled = true
+            binding.disguiseCellularHint.visibility = View.GONE
+            val settings = VoiceDisguiseStore.load(this)
+            val localOn = settings.callEnabled && settings.mode != VoiceDisguiseStore.MODE_OFF
+            binding.disguiseChipLocal.visibility = if (localOn) View.VISIBLE else View.GONE
+            binding.toggleDisguise.text = getString(R.string.voice_disguise_toggle)
+            binding.disguiseChipPeer.visibility =
+                if (VoiceDisguiseStore.peerDisguise.value) View.VISIBLE else View.GONE
+        } else {
+            binding.toggleDisguise.isEnabled = false
+            binding.disguiseCellularHint.visibility = View.VISIBLE
+            binding.disguiseChipLocal.visibility = View.GONE
+            binding.disguiseChipPeer.visibility = View.GONE
+        }
+    }
+
+    private fun toggleVoiceDisguise() {
+        if (callOrigin != CallOrigin.IROH) return
+        val cur = VoiceDisguiseStore.load(this)
+        if (cur.mode == VoiceDisguiseStore.MODE_OFF) {
+            // Quick toggle from Off: enable pitch with call_enabled.
+            VoiceDisguiseStore.save(
+                this,
+                cur.copy(mode = VoiceDisguiseStore.MODE_PITCH, callEnabled = true)
+            )
+        } else {
+            VoiceDisguiseStore.setCallEnabled(this, !cur.callEnabled)
+        }
+        refreshDisguiseUi(callOrigin)
     }
 
     override fun onDestroy() {

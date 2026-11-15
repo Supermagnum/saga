@@ -77,6 +77,50 @@ object IrohNativeBridge {
         if (ensureLoaded()) nativeSetRxFault(dropPct, jitterMs)
     }
 
+    /**
+     * §16 voice disguise settings. mode: 0=off 1=pitch 2=formant 3=formant+pitch;
+     * formantStrength: 0=mild 1=medium 2=strong.
+     */
+    fun setDisguiseSettings(
+        mode: Int,
+        pitchSemitones: Float,
+        formantStrength: Int,
+        randomEachCall: Boolean,
+        callEnabled: Boolean
+    ) {
+        if (ensureLoaded()) {
+            nativeSetDisguiseSettings(
+                mode,
+                pitchSemitones,
+                formantStrength,
+                randomEachCall,
+                callEnabled
+            )
+        }
+    }
+
+    fun localDisguiseActive(): Boolean {
+        if (!ensureLoaded()) return false
+        return nativeLocalDisguiseActive()
+    }
+
+    fun peerDisguiseActive(sessionId: String): Boolean {
+        if (!ensureLoaded()) return false
+        return nativePeerDisguiseActive(sessionId)
+    }
+
+    /** In-place s16le mono PCM through the current disguise settings (Test my voice). */
+    fun processDisguisePcm(frame: ByteBuffer) {
+        if (ensureLoaded()) nativeProcessDisguisePcm(frame)
+    }
+
+    /** Native -> Kotlin: peer disguise chip (does not affect padlock / security). */
+    @JvmStatic
+    fun notifyPeerDisguise(sessionId: String, active: Boolean) {
+        Log.i(TAG, "notifyPeerDisguise session=[$sessionId] active=$active")
+        org.saga.audio.VoiceDisguiseStore.onPeerDisguise(sessionId, active)
+    }
+
     fun pollHandshake(sessionId: String): Int {
         if (!ensureLoaded()) return HANDSHAKE_ENCRYPTED
         return nativePollHandshake(sessionId)
@@ -254,6 +298,16 @@ object IrohNativeBridge {
     private external fun nativeSetForceBindingPerturb(force: Boolean)
     private external fun nativeSetEchoMode(enabled: Boolean)
     private external fun nativeSetRxFault(dropPct: Int, jitterMs: Int)
+    private external fun nativeSetDisguiseSettings(
+        mode: Int,
+        pitchSemitones: Float,
+        formantStrength: Int,
+        randomEachCall: Boolean,
+        callEnabled: Boolean
+    )
+    private external fun nativeLocalDisguiseActive(): Boolean
+    private external fun nativePeerDisguiseActive(sessionId: String): Boolean
+    private external fun nativeProcessDisguisePcm(pcm: ByteBuffer)
     private external fun nativePollHandshake(sessionId: String): Int
     private external fun nativeStartMedia(sessionId: String, mode: Int): Boolean
     private external fun nativeStopMedia(sessionId: String)
