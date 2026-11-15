@@ -17,7 +17,7 @@ mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils
 nitrokey = ["iroh-transport", "dep:saga-token-usb"]
 
 [dependencies]
-jni = "0.21"
+jni = "0.22"
 log = "0.4"
 saga-session = { path = "../saga-session" }
 saga-token-usb = { path = "../saga-token-usb", optional = true }
