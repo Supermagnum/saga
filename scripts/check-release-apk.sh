@@ -71,6 +71,21 @@ else
   fail=1
 fi
 
+# Only libsaga_iroh_core.so may appear under lib/<abi>/ (no leftover cdylibs).
+unexpected_so=0
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
+  base="$(basename "$entry")"
+  if [[ "$base" != "libsaga_iroh_core.so" ]]; then
+    echo "FAIL: unexpected native library in release APK: $entry"
+    fail=1
+    unexpected_so=1
+  fi
+done < <(unzip -l "$APK" | awk '/[[:space:]]lib\/[^/]+\/[^/]+\.so$/ { print $NF }')
+if [[ "$unexpected_so" -eq 0 ]]; then
+  echo "OK: no unexpected .so under lib/"
+fi
+
 # Iroh group-call UI strings are debug source-set only (not in release resources).
 # Carrier conference (Phase 4) may still say "Conference:" — that is fine.
 check_apk_string_absent() {

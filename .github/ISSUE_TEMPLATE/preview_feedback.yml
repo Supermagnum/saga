@@ -1,0 +1,64 @@
+name: Preview feedback
+description: Report a problem or observation from a preview APK install
+title: "[preview] "
+labels: ["preview"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying a Saga preview build.
+
+        **Do not post phone numbers, contacts, call recordings, Nitrokey PINs,
+        or other personal data.** Redact logs before pasting. Prefer device
+        model and Android/ROM version over anything that identifies you.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Phone or tablet model (e.g. Pixel 8, Fairphone 5).
+      placeholder: Pixel 8
+    validations:
+      required: true
+  - type: input
+    id: android_version
+    attributes:
+      label: Android version
+      description: Android API / release (e.g. 15 / API 35).
+      placeholder: 15 (API 35)
+    validations:
+      required: true
+  - type: input
+    id: rom
+    attributes:
+      label: ROM / OS
+      description: Stock OEM, GrapheneOS, LineageOS, CalyxOS, etc.
+      placeholder: GrapheneOS
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Steps to reproduce, expected vs actual behaviour. No personal data.
+      placeholder: Installed arm64 APK, set as default dialer, dialled Saga contact…
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (no personal data)
+      description: |
+        Optional logcat or crash snippets with phone numbers, names, and
+        tokens redacted. Prefer `adb logcat` filtered to `saga` / `org.saga`.
+      placeholder: |
+        (paste redacted logs here, or write "none")
+    validations:
+      required: false
+  - type: input
+    id: apk_variant
+    attributes:
+      label: APK variant / SHA-256 (optional)
+      description: arm64-v8a or universal, and the SHA-256 you verified if known.
+      placeholder: arm64-v8a
+    validations:
+      required: false

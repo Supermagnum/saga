@@ -8,3 +8,7 @@ saga-session/target/
 saga-media/target/
 testing/mock-token/target/
 tools/saga-peer/target/
+# Local unsigned/signed preview APKs — never commit binaries or keystores.
+out/
+*.jks
+*.keystore

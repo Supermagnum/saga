@@ -16,6 +16,24 @@ Prepare Saga for F-Droid; **do not** open the fdroiddata merge request from here
 
 Still **`org.saga`**. Part 5 does not change it — choose the final ID before submission; then edit `applicationId` in `android/app/build.gradle.kts` and rename this recipe.
 
+## versionCode / versionName
+
+`versionCode` is a **monotonic integer** (Part 5 scheme), kept in sync between
+`android/app/build.gradle.kts` and this recipe's `CurrentVersionCode` /
+`Builds[].versionCode`. `versionName` is a human string (SemVer + optional
+pre-release label, e.g. `0.1.0-preview.1`).
+
+## Developer signature (GitHub ↔ F-Droid updates)
+
+F-Droid should use **reproducible builds** that retain the **developer
+signature** (`Binaries:` pointing at the GitHub release APK, plus
+`AllowedAPKSigningKeys:` with the signing certificate SHA-256 hex). That way
+an install from GitHub and one from F-Droid can update each other.
+
+Placeholders live as comments at the top of [`org.saga.yml`](org.saga.yml).
+Fill them after the maintainer signs (see [`../release.md`](../release.md)).
+Do **not** put keystore material in this repository.
+
 ## Local checks
 
 ```bash
