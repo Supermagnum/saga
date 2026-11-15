@@ -36,6 +36,7 @@ Tests dial **contacts by display name** (`bob`, `alice`, `thor`), not raw Iroh p
 | alice | +15550100011 | `15550100011` | Encrypted callee on SERIAL_A (Case 2b) |
 | thor | +15550100012 | (none) | Cellular-only; cannot secure; never an Iroh identity |
 | laptop | +15550100020 | `15550100020` | Linux saga-peer (encrypted) |
+| charlene | +15550100030 | `15550100030` | Third call peer (emulator-5558, encrypted) |
 
 Dev identity prefs (`saga_dev_identity.xml`) use the same phone-digit labels (`15550100010` for bob, `15550100011` for alice). Legacy labels such as `bobpeer12` are **not** used in the dial path.
 
@@ -76,6 +77,7 @@ Shared helpers: [`e2e-common.sh`](e2e-common.sh) (sourced by full suite, standal
 | [`run-e2e-phone-account-onboarding.sh`](run-e2e-phone-account-onboarding.sh) | Issue #2: disabled PhoneAccount blocks Iroh (no SIM), Settings UI enable, inbound reject |
 | [`run-case-standalone.sh`](run-case-standalone.sh) | Single case (3–6) from clean boot |
 | [`run-e2e-conference.sh`](run-e2e-conference.sh) | Phase 4 C1–C5 multi-call / conference (emulator limits honest) |
+| [`run-e2e-group.sh`](run-e2e-group.sh) | Multi-peer group calls G1-G11 (3 emulators + saga-peer; **local only**) |
 | [`run-alice-bob-probe.sh`](run-alice-bob-probe.sh) | Focused alice→bob encrypted probe |
 | [`diagnose-relay-timeout.sh`](diagnose-relay-timeout.sh) | Case-2-position wait + 8-cycle restart sweep with native/logcat forensics |
 | [`seed-test-contacts.sh`](seed-test-contacts.sh) | Seed bob/alice/thor on one emulator |
@@ -141,6 +143,86 @@ Environment variables:
 Calls use `org.saga.TEST_CONTACT_CALL --es contact_name <name>`.
 
 **Harness rules:** provision may force-stop both emulators once (baseline). Mid-suite, only the **caller** is force-stopped per case; bob is not restarted in Case 6 (carrier props only).
+
+## Multi-peer group calls (G1-G11, local only)
+
+Needs **three** emulators plus the host `saga-peer`; never a CI gate (same RAM/KVM
+limit as the two-emulator suite, one more AVD).
+
+| Role | Serial | Contact label | Identity prefs |
+|------|--------|---------------|----------------|
+| alice | `emulator-5554` (`SERIAL_A`) | `15550100011` | `saga_dev_identity_alice.xml` |
+| bob | `emulator-5556` (`SERIAL_B`) | `15550100010` | `saga_dev_identity_bob.xml` |
+| charlene | `emulator-5558` (`SERIAL_C`) | `15550100030` | `saga_dev_identity_charlene.xml` |
+| laptop (4th) | host `saga-peer listen` | `15550100020` | built-in |
+
+Charlene's contact (+15550100030, key `e4f3e33e...`) is seeded by `seed-test-contacts.sh` /
+`TestContactSeeder` on all three emulators. Start the AVDs with matching ports
+(`emulator -avd <name> -port 5558`) and install the **current** debug APK on each (the
+suite probes `TEST_ADD_PARTICIPANT` first and exits 2 if the APK is older).
+
+```bash
+bash testing/e2e/run-e2e-group.sh                      # G1-G11
+G_CASES="G1 G2 G3" bash testing/e2e/run-e2e-group.sh   # subset
+SAGA_IROH_RELAY_MODE=public bash testing/e2e/run-e2e-group.sh   # public N0 relays (Private DNS)
+SAGA_RUN_GROUP=1 bash testing/e2e/run-e2e-step5.sh     # optional, appended to Step 5 (default off)
+```
+
+Output: `/tmp/saga-group-e2e/` (logcat per case, `*.score.txt`, host-mesh log, UI dumps),
+screenshots in `/tmp/saga-group-e2e/screencaps/` (`OUT_DIR`, `SCREENCAP_DIR` override).
+
+Debug intents used (MainActivity, `FLAG_DEBUGGABLE` only):
+
+| Intent | Extras | Use |
+|--------|--------|-----|
+| `org.saga.TEST_CONTACT_CALL` | `contact_name` | 1:1 baseline dial |
+| `org.saga.TEST_ANSWER_INCOMING` | `lookup_key` | answer a ringing leg |
+| `org.saga.TEST_ADD_PARTICIPANT` | `contact_name`, `confirm_unencrypted`, `introduced_by`, `roster_fingerprint`, `conference` | add to the live call; outcome logged as `E2E add participant name=[..] outcome=[..]` |
+| `org.saga.TEST_GROUP_HANGUP_PARTICIPANT` | `contact_name` or `lookup_key` | hang up one participant |
+| `org.saga.TEST_MEDIA_MUTE` (broadcast) | `--ez muted` | mute all engines |
+
+Manual equivalents (from a running Iroh call on the adder):
+
+```bash
+adb -s emulator-5554 shell am start -n org.saga/.ui.MainActivity \
+  -a org.saga.TEST_ADD_PARTICIPANT --es contact_name charlene
+adb -s emulator-5556 shell am start -n org.saga/.ui.MainActivity \
+  -a org.saga.TEST_ADD_PARTICIPANT --es contact_name 15550100030 \
+  --ez confirm_unencrypted true --es introduced_by alice --es roster_fingerprint <64hex>
+```
+
+Shared helpers added to `e2e-common.sh`: `push_identity` (works for `charlene`),
+`provision_clean_baseline_group`, `push_group_peer_prefs`, `add_participant`,
+`add_participant_outcome`, `hangup_group_participant`, `settled_lookups`/`settled_count`,
+`delete_contact_by_name`, `set_contact_key`, `tap_ui_id`.
+
+The debug seeder re-inserts contacts on every app launch, so G4/G5 edit contacts
+(`delete_contact_by_name`, `set_contact_key`) only after the call is established and never
+restart that device afterwards.
+
+Result tags: `PASS`, `FAIL` (exit 1), `NEEDS_HARDWARE` (emulator cannot exercise it) and
+`PENDING_MESH` (needs the native mesh backend for Bob-Charlene links, or a mesh-capable
+`saga-peer`; the pairwise-session scaffold only provides the adder's links).
+
+| Case | What it checks | Expected on pairwise scaffold |
+|------|----------------|-------------------------------|
+| G1 | alice -> bob 1:1 Encrypted, no group markers | PASS |
+| G2 | alice adds charlene; alice has 2 Encrypted links; screenshots; PCM metrics | PASS (third link PENDING_MESH) |
+| G3 | bob <-> charlene direct link, distinct media sessions | PENDING_MESH |
+| G4 | charlene deleted from bob -> "introduced by alice"; wrong roster fingerprint -> KEY_MISMATCH | PENDING_MESH |
+| G5 | wrong key -> not Encrypted on alice; key-less peer needs confirm to admit | alice side PASS, bob side PENDING_MESH; confirm-to-admit PASS |
+| G6 | add laptop; alice has 3 Encrypted links; 6-link mesh and hear-three | adder links PASS, mesh PENDING_MESH |
+| G7 | 5th participant refused | PASS |
+| G8 | bob leaves (alice + charlene continue); alice leaves (bob + charlene continue) | first PASS, second PENDING_MESH |
+| G9 | mute and hold reach every link | PASS (hold NEEDS_HARDWARE if UI tap fails) |
+| G10 | incoming cellular during group: hold, no Merge | PASS or NEEDS_HARDWARE (emulator GSM) |
+| G11 | charlene adds laptop | charlene link PASS, propagation to alice/bob PENDING_MESH |
+
+Media metrics: `group_media_probe` injects the speech clip on alice, dumps playout PCM on
+bob/charlene and scores corr / SI-SNR / STOI with `pcm_score.py` (recorded as `METRIC`
+lines; INFO if no dump). The host mesh model (`cargo test -p saga-peer --test host_mesh`,
+disable with `SAGA_GROUP_HOST_MESH=0`) is recorded as `HOSTMESH:` lines and corroborates 3 and
+4 peer mixing, leave and 5th refusal without emulators; it does not replace PENDING_MESH.
 
 ## Test prefs (pushed via `adb`)
 

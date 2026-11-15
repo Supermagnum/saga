@@ -494,6 +494,149 @@ provision_clean_baseline() {
   wait_for_relay_online "$serial_b" "bob (callee baseline)" || return 1
 }
 
+# --- Multi-peer group call helpers (3 emulators; local-only, see README) ---
+
+# Pre-establish encryption flags for every dial/answer label (E.164 and digits-only forms)
+# so group legs behave like Case 2/3 caller-side warm paths instead of first-trust prompts.
+push_group_peer_prefs() {
+  local serial="$1"
+  local gen="/tmp/saga_group_encryption_gen.xml"
+  {
+    echo "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>"
+    echo "<map>"
+    for n in 15550100010 15550100011 15550100020 15550100030; do
+      echo "    <boolean name=\"+$n\" value=\"true\" />"
+      echo "    <boolean name=\"$n\" value=\"true\" />"
+    done
+    echo "</map>"
+  } >"$gen"
+  clear_prefs "$serial"
+  push_pref "$serial" "$gen" saga_encryption_established.xml
+  push_pref "$serial" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+}
+
+# provision_clean_baseline_group ALICE_SERIAL BOB_SERIAL CHARLENE_SERIAL
+# Stops Saga everywhere, pushes alice/bob/charlene dev identities, relay prefs and seeds
+# contacts. Bob and Charlene are left listening with relay online (callees).
+provision_clean_baseline_group() {
+  local serial_a="$1" serial_b="$2" serial_c="$3"
+  ensure_local_relay
+  local s
+  for s in "$serial_a" "$serial_b" "$serial_c"; do
+    adb -s "$s" shell am force-stop org.saga
+  done
+  sleep 1
+  for s in "$serial_a" "$serial_b" "$serial_c"; do
+    adb -s "$s" logcat -c 2>/dev/null || true
+  done
+  push_identity "$serial_a" "alice"
+  push_identity "$serial_b" "bob"
+  push_identity "$serial_c" "charlene"
+  for s in "$serial_a" "$serial_b" "$serial_c"; do
+    push_iroh_relay_pref "$s"
+    bash "$E2E_DIR/seed-test-contacts.sh" "$s"
+    push_group_peer_prefs "$s"
+  done
+  ensure_callee_listening "$serial_b" || return 1
+  ensure_callee_listening "$serial_c" || return 1
+  wait_for_relay_online "$serial_b" "bob (group baseline)" || return 1
+  wait_for_relay_online "$serial_c" "charlene (group baseline)" || return 1
+}
+
+# add_participant SERIAL CONTACT_OR_LABEL [extra am args...]
+# Debug intent org.saga.TEST_ADD_PARTICIPANT (MainActivity, FLAG_DEBUGGABLE only).
+# Extras: --ez confirm_unencrypted true, --es introduced_by NAME,
+#         --es roster_fingerprint HEX64, --es conference GROUP_ID.
+# Outcome is logged as: E2E add participant name=[..] outcome=[PLACED|NEEDS_UNENCRYPTED_CONFIRMATION|...]
+add_participant() {
+  local serial="$1" contact="$2"
+  shift 2
+  adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
+    -a org.saga.TEST_ADD_PARTICIPANT --es contact_name "$contact" "$@" >/dev/null 2>&1
+}
+
+# Last logged add-participant outcome on SERIAL for contact (empty if none).
+add_participant_outcome() {
+  local serial="$1" contact="$2"
+  adb_logcat_dump "$serial" | rg -o "E2E add participant name=\[$contact\] outcome=\[[A-Z_]+\]" \
+    | tail -1 | rg -o 'outcome=\[[A-Z_]+\]' | sed 's/outcome=\[\(.*\)\]/\1/' || true
+}
+
+# Debug intent org.saga.TEST_GROUP_HANGUP_PARTICIPANT: hang up ONE participant locally.
+hangup_group_participant() {
+  local serial="$1" who="$2"
+  adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
+    -a org.saga.TEST_GROUP_HANGUP_PARTICIPANT --es contact_name "$who" >/dev/null 2>&1
+}
+
+# Distinct lookup keys that settled to STATE on SERIAL (one per line).
+settled_lookups() {
+  local serial="$1" state="${2:-Encrypted}"
+  adb_logcat_dump "$serial" \
+    | rg -o "Handshake settled to \[$state\] for \[[^]]+\]" \
+    | sed 's/.*for \[\(.*\)\]/\1/' | sort -u || true
+}
+
+settled_count() {
+  settled_lookups "$@" | rg -c . || echo 0
+}
+
+# Contact data helpers (live edit while Saga is running; the debug seeder re-inserts
+# contacts on every app launch, so edit AFTER launch and do not restart that device).
+contact_raw_id() {
+  local serial="$1" name="$2"
+  adb -s "$serial" shell "content query --uri content://com.android.contacts/data --projection raw_contact_id:data1:mimetype" 2>/dev/null \
+    | rg "data1=$name, mimetype=vnd.android.cursor.item/name" \
+    | rg -o 'raw_contact_id=[0-9]+' | head -1 | cut -d= -f2 || true
+}
+
+delete_contact_by_name() {
+  local serial="$1" name="$2" raw
+  raw="$(contact_raw_id "$serial" "$name")"
+  if [[ -z "$raw" ]]; then
+    return 1
+  fi
+  adb -s "$serial" shell "content delete --uri 'content://com.android.contacts/raw_contacts?caller_is_syncadapter=true' --where '_id=$raw'" >/dev/null 2>&1 || true
+  [[ -z "$(contact_raw_id "$serial" "$name")" ]]
+}
+
+# set_contact_key SERIAL NAME FINGERPRINT_HEX64: rewrite the Saga key row of a contact.
+set_contact_key() {
+  local serial="$1" name="$2" fp="$3" raw row_id b64
+  raw="$(contact_raw_id "$serial" "$name")"
+  [[ -n "$raw" ]] || return 1
+  row_id="$(adb -s "$serial" shell "content query --uri content://com.android.contacts/data --projection _id:raw_contact_id:mimetype" 2>/dev/null \
+    | rg "raw_contact_id=$raw, mimetype=vnd.android.cursor.item/vnd.saga.galdralag_pubkey" \
+    | rg -o '_id=[0-9]+' | head -1 | cut -d= -f2 || true)"
+  [[ -n "$row_id" ]] || return 1
+  b64="$(printf '%s' "$fp" | base64 -w0)"
+  adb -s "$serial" shell "content update --uri content://com.android.contacts/data --bind data1:s:$b64 --where '_id=$row_id'" >/dev/null 2>&1
+}
+
+# Tap a view by resource id suffix (e.g. end_call, toggle_hold) from a fresh uiautomator dump.
+tap_ui_id() {
+  local serial="$1" rid="$2"
+  local dump="/tmp/saga-ui-id-${serial}.xml"
+  _e2e_dump_ui "$serial" "$dump"
+  local coords
+  coords="$(python3 - "$dump" "$rid" <<'PY'
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+rid = sys.argv[2]
+for m in re.finditer(r'<node [^>]*>', xml):
+    node = m.group(0)
+    if f'resource-id="org.saga:id/{rid}"' in node:
+        b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', node)
+        if b:
+            x1, y1, x2, y2 = map(int, b.groups())
+            print(f"{(x1+x2)//2} {(y1+y2)//2}")
+            sys.exit(0)
+sys.exit(2)
+PY
+)" || return 1
+  adb -s "$serial" shell input tap $coords
+}
+
 # --- PhoneAccount enable (API 29 lacks set-phone-account-enabled) ---
 
 phone_account_enabled() {
