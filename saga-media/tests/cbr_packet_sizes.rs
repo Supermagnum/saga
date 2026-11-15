@@ -73,7 +73,10 @@ fn report_packet_size_distribution() {
             &decoded[edge..pcm.len().min(decoded.len()) - edge],
         )
     } else {
-        (&pcm[..pcm.len().min(decoded.len())], &decoded[..pcm.len().min(decoded.len())])
+        (
+            &pcm[..pcm.len().min(decoded.len())],
+            &decoded[..pcm.len().min(decoded.len())],
+        )
     };
     let corr = signal_correlation(a, b, FRAME_SAMPLES * 4);
     let si = signal_snr_db(a, b);
@@ -125,7 +128,10 @@ fn report_packet_size_distribution() {
 
     // CBR gate: Opus payload size must be constant so ciphertext length
     // does not track speech (DTX remains off).
-    assert_eq!(unique, 1, "CBR expected a single Opus payload size, got {unique}");
+    assert_eq!(
+        unique, 1,
+        "CBR expected a single Opus payload size, got {unique}"
+    );
     assert_eq!(min, max, "CBR size range {min}..={max}");
     assert!(
         (bitrate_kbps - 32.0).abs() < 0.05,
