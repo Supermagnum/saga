@@ -26,6 +26,7 @@ CI builds without `live-audio` and runs the host WAV round-trip tests only
 | alice | `15550100011` | `ee52f46c…` |
 | thor | `15550100012` | (none — cellular only; never Iroh) |
 | laptop | `15550100020` | `43676d15…` |
+| charlene | `15550100030` | `e4f3e33e…` |
 
 Thor keeps the original cellular fixture number. Laptop uses a separate label
 so cellular contacts never resolve to an Iroh identity.
