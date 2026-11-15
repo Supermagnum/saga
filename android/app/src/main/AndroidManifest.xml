@@ -75,6 +75,11 @@
         </activity>
 
         <activity
+            android:name=".ui.VoiceDisguiseSettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+
+        <activity
             android:name=".ui.SagaInCallActivity"
             android:exported="true"
             android:launchMode="singleTask"
