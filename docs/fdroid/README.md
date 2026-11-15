@@ -30,8 +30,10 @@ signature** (`Binaries:` pointing at the GitHub release APK, plus
 `AllowedAPKSigningKeys:` with the signing certificate SHA-256 hex). That way
 an install from GitHub and one from F-Droid can update each other.
 
-Placeholders live as comments at the top of [`org.saga.yml`](org.saga.yml).
-Fill them after the maintainer signs (see [`../release.md`](../release.md)).
+[`org.saga.yml`](org.saga.yml) sets `Binaries:` to the GitHub arm64-v8a APK and
+`AllowedAPKSigningKeys:` to certificate SHA-256
+`7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a`
+(see [`../release.md`](../release.md) and README “Verifying downloads”).
 Do **not** put keystore material in this repository.
 
 ## Local checks

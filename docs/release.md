@@ -133,8 +133,14 @@ keytool -list -v -keystore /path/to/your-release.keystore \
 # For F-Droid AllowedAPKSigningKeys: hex only, no colons, lowercase.
 ```
 
-After signing, give the agent: signed APK path(s) + certificate SHA-256.
-**Do not** publish the GitHub pre-release until those are provided.
+### Preview.1 signing certificate (recorded)
+
+| Field | Value |
+|-------|-------|
+| Certificate SHA-256 | `7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a` |
+| Schemes observed | APK Signature Scheme **v3** only (`v1`/`v2` false). minSdk 29 is fine with v3; re-sign with v2+v3 later if desired. |
+
+Do **not** commit the keystore. Signed APKs are release assets only (not git).
 
 ## F-Droid note
 
