@@ -42,7 +42,7 @@ Branch: `feat/nitrokey-session-token` (from main after #45 messaging evaluation)
 | PIN UI screenshot | **PASS** real dialog | `docs/screenshots/nitrokey-pin.png` |
 | Release `.so` hygiene (nitrokey marker present; mock absent) | **PASS** | `scripts/check-release-so.sh` on x86_64 release NDK `.so` |
 | USB passthrough on emulator | **NEEDS_HARDWARE** | Not verified this run |
-| CI rust + android | (fill after PR) | |
+| CI rust + android | **PASS** | [PR #46](https://github.com/Supermagnum/saga/pull/46) run `43691174307` |
 
 ### Not verified / needs real hardware
 
