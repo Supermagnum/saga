@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only TEST_* intent filters. Merged into debug APK only; absent from release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <activity android:name="org.saga.ui.MainActivity">
+            <intent-filter>
+                <action android:name="org.saga.TEST_IROH_CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="org.saga.TEST_FORCE_IROH_SIM_PATH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="org.saga.TEST_MIDCALL_REHANDSHAKE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- exported=true only in debug so TEST_IN_CALL_UI can be started via adb. -->
+        <activity
+            android:name="org.saga.ui.SagaInCallActivity"
+            android:exported="true"
+            tools:replace="android:exported">
+            <intent-filter>
+                <action android:name="org.saga.TEST_IN_CALL_UI" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

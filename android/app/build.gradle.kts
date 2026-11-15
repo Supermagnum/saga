@@ -93,6 +93,12 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Debuggable must stay false so FLAG_DEBUGGABLE gates hold.
+            isDebuggable = false
+        }
+        debug {
+            isDebuggable = true
+            applicationIdSuffix = ""
         }
     }
 
@@ -107,6 +113,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     sourceSets {
@@ -190,6 +197,28 @@ tasks.register("verifyNativeLibsInApk") {
         logger.lifecycle(
             "OK: libsaga_iroh_core.so present for ${abis.joinToString(" and ")} in ${apk.name}"
         )
+    }
+}
+
+tasks.register("verifyReleaseApkHygiene") {
+    group = "verification"
+    description = "Grep release APK/manifest for debug hooks (TEST_*, mock-token markers)"
+    dependsOn("assembleRelease")
+    doLast {
+        val candidates = listOf(
+            layout.buildDirectory.file("outputs/apk/release/app-release-unsigned.apk").get().asFile,
+            layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        )
+        val found = candidates.firstOrNull { it.isFile }
+            ?: throw GradleException("Release APK not found under outputs/apk/release/")
+        val script = rootProject.file("../scripts/check-release-apk.sh")
+        val pb = ProcessBuilder("bash", script.absolutePath, found.absolutePath)
+            .inheritIO()
+            .directory(rootProject.projectDir)
+        val code = pb.start().waitFor()
+        if (code != 0) {
+            throw GradleException("check-release-apk.sh failed for ${found.name} (exit=$code)")
+        }
     }
 }
 

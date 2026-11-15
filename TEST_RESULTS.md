@@ -1,9 +1,53 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Part 4 Nitrokey SessionToken)
+**Last updated:** 2026-11-15 (Part 5 F-Droid readiness)
 
-**Status:** `feat/nitrokey-session-token` — first production `SessionToken`
-(`saga-token-usb` / `NitrokeySessionToken`). Debug/E2E still uses `mock-token`.
+**Status:** `feat/fdroid-readiness` — F-Droid packaging prep (not submitted).
+`applicationId` remains `org.saga` pending maintainer decision.
+
+---
+
+## 2026-11-15 — Part 5 F-Droid readiness (`feat/fdroid-readiness`)
+
+Branch: `feat/fdroid-readiness` (from main after #46 Nitrokey).
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| Adaptive launcher icon | New assets under `android/app/src/main/res/` (not `icons/`); preview `docs/screenshots/launcher/saga-launcher-preview.jpg` |
+| Release hygiene | Debug source set for PCM inject/receivers; TEST_* intent filters debug-manifest-only; release stubs no-op |
+| `check-release-apk.sh` | Manifest + arm64 `.so` hygiene (nitrokey present; mock/TEST_* absent) |
+| Licences screen | `LicencesActivity` + dialer link; mirrors NOTICE + AGPL source offer |
+| Fastlane metadata | `fastlane/metadata/android/en-US/` title/short/full/changelog + phoneScreenshots |
+| AntiFeatures draft | `docs/fdroid/anti-features.md` recommends `NonFreeNet` for default n0 relays |
+| fdroiddata recipe draft | `docs/fdroid/org.saga.yml` (Navi-style; do not open MR) |
+| Spec | `saga-spec.md` §18 |
+
+### Verification
+
+| Gate | Result | Log / artifact |
+|------|--------|----------------|
+| `assembleDebug` + `testDebugUnitTest` | **PASS** | local Gradle |
+| `assembleRelease` + `verifyReleaseApkHygiene` | **PASS** | `/tmp/saga-part5-apk-hygiene.log` |
+| Step 5 API 35 (`5554`/`5556`) Cases 1–10 + 4b + C1–C5 | **PASS** conference `pass=17 fail=0 needs_hardware=2` (C1/C2) | `/tmp/e2e-step5-part5-api35.log` |
+| Onboarding CASEB Settings UI | Soft-fail (coords / `5558` script); INBOUND_REJECT **PASS** | same log; known flake |
+| Alice API35 → Bob API29 (`5554`/`5560`) Cases 1–7 + 4b | **PASS** (handshake ~1.0s; Case7 in prior API35 run) | `/tmp/e2e-api29-part5.log` |
+| Screenshots looked at | Dialer light/dark, Licences, onboarding, encrypted, group, voice disguise, Nitrokey PIN, cellular, conference | `fastlane/.../phoneScreenshots/` |
+| `fdroid lint` / `fdroid build` Docker | **NOT RUN** | no fdroidserver image on host |
+| Bit-identical reproducible double-build | **NOT COMPLETED** | notes in `docs/fdroid/reproducible-builds.md` |
+
+### Not verified / needs real hardware
+
+- Physical-phone store screenshots and USB Nitrokey Encrypted call
+- fdroidserver Docker lint/build of the draft recipe
+- Final `applicationId` change (blocked on maintainer decision)
+
+### Open decisions for the user
+
+1. **Final applicationId** before F-Droid submission (currently `org.saga`; one-line Gradle + recipe rename).
+2. Confirm AntiFeature label: draft recommends **NonFreeNet** (vs TetheredNet) for default n0 relays.
+3. When to open the fdroiddata MR (maintainer-owned; not from this PR).
 
 ---
 
