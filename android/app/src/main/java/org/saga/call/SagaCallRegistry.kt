@@ -23,6 +23,8 @@ object SagaCallRegistry {
     }
 
     fun updateSnapshot(telecomCallId: String, snapshot: CallSecuritySnapshot) {
+        // Group legs: mirror into the group model so every row has its own padlock.
+        GroupCallRegistry.onLegSnapshot(telecomCallId, snapshot)
         calls[telecomCallId]?.let { existing ->
             calls[telecomCallId] = existing.copy(snapshot = snapshot)
         }
@@ -45,12 +47,24 @@ object SagaCallRegistry {
 
     fun peerIdFromCall(call: Call): String {
         val intentExtras = call.details.intentExtras
-        intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
-            ?.getString(SagaDialer.EXTRA_PEER_ID)?.let { return it }
-        intentExtras?.getString(SagaDialer.EXTRA_PEER_ID)?.let { return it }
+        val outgoing = intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
+        outgoing?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        outgoing?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
+        val incoming = intentExtras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        incoming?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_LOOKUP_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_PEER_ID)?.takeIf { it.isNotBlank() }?.let { return it }
         val handle = call.details.handle ?: return "Unknown"
         if (handle.scheme == SagaCallUri.SCHEME) {
             return handle.schemeSpecificPart ?: handle.toString()
+        }
+        // Non-routable Iroh placeholder (tel:, or legacy tel:iroh) — never treat as peer id.
+        val ssp = handle.schemeSpecificPart.orEmpty()
+        if (ssp == SagaCallUri.IROH_TELECOM_SSP ||
+            ssp.equals(SagaCallUri.LEGACY_UNSAFE_IROH_SSP, ignoreCase = true)
+        ) {
+            return "Unknown"
         }
         if (call.details.accountHandle?.id == SagaPhoneAccountRegistrar.ACCOUNT_ID) {
             return handle.schemeSpecificPart ?: handle.toString()
@@ -58,7 +72,25 @@ object SagaCallRegistry {
         return handle.schemeSpecificPart ?: handle.toString()
     }
 
+    fun displayNameFromCall(call: Call): String {
+        // Group Conference parent: label built from the participants.
+        call.details.extras?.getString(SagaDialer.EXTRA_GROUP_LABEL)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        val intentExtras = call.details.intentExtras
+        val outgoing = intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
+        outgoing?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        val incoming = intentExtras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        intentExtras?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
+        return peerIdFromCall(call)
+    }
+
     fun telecomCallId(call: Call): String {
+        // Group legs and the group Conference carry an explicit unique key (see SagaIrohConnection).
+        call.details.extras?.getString(SagaDialer.EXTRA_TELECOM_CALL_KEY)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
         if (originForTelecomCall(call) == CallOrigin.IROH) {
             val peer = peerIdFromCall(call)
             return normalizeIrohTelecomCallId(peer)
@@ -73,11 +105,21 @@ object SagaCallRegistry {
         return peer
     }
 
-    fun initialSnapshot(origin: CallOrigin, peerId: String = ""): CallSecuritySnapshot {
+    fun initialSnapshot(
+        origin: CallOrigin,
+        peerId: String = "",
+        context: android.content.Context? = null
+    ): CallSecuritySnapshot {
         if (origin == CallOrigin.CELLULAR) {
             return CallSecurityStateResolver.resolve(CallOrigin.CELLULAR)
         }
-        val hasKey = ContactKeyStore.hasResolvableKey(peerId)
+        // Prefer Contacts-aware lookup; the no-Context overload only accepts IrohNodeId shape
+        // and would treat phone lookup keys as KEY_NOT_FOUND (premature call_unsecure).
+        val hasKey = if (context != null) {
+            ContactKeyStore.hasResolvableKey(context, peerId)
+        } else {
+            ContactKeyStore.hasResolvableKey(peerId)
+        }
         return if (hasKey) {
             CallSecurityStateResolver.resolve(
                 origin = CallOrigin.IROH,

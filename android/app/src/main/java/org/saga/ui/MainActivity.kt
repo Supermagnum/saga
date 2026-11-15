@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.util.Log
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -19,19 +20,26 @@ import org.saga.iroh.SagaDialer
 import org.saga.iroh.IrohRelayStatus
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallRehandshakeController
+import org.saga.telecom.SagaPhoneAccountRegistrar
 
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "[Saga Main Activity]"
+        private const val PREFS = "saga_phone_account_ui"
+        private const val KEY_ONBOARDING_SHOWN = "onboarding_shown"
+        /** Open dialer for a second call from InCall; finish after placeCall. */
+        const val EXTRA_ADD_CALL_MODE = "org.saga.EXTRA_ADD_CALL_MODE"
     }
 
     private lateinit var binding: ActivityMainBinding
     private var selectedContactUri: Uri? = null
+    private var addCallMode = false
 
     private val requestDialerRole = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         updateRoleStatus()
+        refreshPhoneAccountUi(launchOnboardingIfNeeded = true)
         if (result.resultCode != RESULT_OK) {
             Toast.makeText(this, R.string.dialer_role_denied, Toast.LENGTH_SHORT).show()
         }
@@ -65,25 +73,119 @@ class MainActivity : AppCompatActivity() {
         binding.pickContact.setOnClickListener { launchContactPicker() }
         binding.dialIroh.setOnClickListener { placeFromInput(preferCellular = false) }
         binding.dialUnencrypted.setOnClickListener { placeFromInput(preferCellular = true) }
+        binding.openVoiceDisguise.setOnClickListener {
+            startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
+        }
+        binding.openPrivacy.setOnClickListener {
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse(getString(R.string.privacy_readme_url)),
+                ),
+            )
+        }
+        binding.openLicences.setOnClickListener {
+            startActivity(Intent(this, LicencesActivity::class.java))
+        }
+        binding.phoneAccountBanner.setOnClickListener {
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+        }
+        org.saga.audio.VoiceDisguiseStore.pushNative(this)
+        wireKeypad()
+        applyAddCallMode(intent)
         updateRoleStatus()
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+    }
+
+    private fun applyAddCallMode(intent: Intent?) {
+        addCallMode = intent?.getBooleanExtra(EXTRA_ADD_CALL_MODE, false) == true
+        if (addCallMode) {
+            binding.title.text = getString(R.string.add_call_title)
+            binding.addCallSubtitle.visibility = View.VISIBLE
+            binding.addCallSubtitle.text = getString(R.string.keypad_hint)
+            binding.requestDialerRole.visibility = View.GONE
+            binding.roleStatus.visibility = View.GONE
+            binding.dialIroh.text = getString(R.string.add_call_place)
+            // Prefer cellular for add-call (second leg is typically carrier).
+            binding.dialUnencrypted.visibility = View.VISIBLE
+            Log.i(TAG, "Add-call dialer mode active")
+        } else {
+            binding.addCallSubtitle.visibility = View.GONE
+        }
+    }
+
+    private fun wireKeypad() {
+        val keys = listOf(
+            binding.key1 to "1", binding.key2 to "2", binding.key3 to "3",
+            binding.key4 to "4", binding.key5 to "5", binding.key6 to "6",
+            binding.key7 to "7", binding.key8 to "8", binding.key9 to "9",
+            binding.keyStar to "*", binding.key0 to "0", binding.keyHash to "#"
+        )
+        keys.forEach { (btn, digit) ->
+            btn.setOnClickListener {
+                selectedContactUri = null
+                binding.peerIdInput.append(digit)
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshPhoneAccountUi(launchOnboardingIfNeeded = true)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        applyAddCallMode(intent)
+        if (intent.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+            return
+        }
         handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+    }
+
+    private fun refreshPhoneAccountUi(launchOnboardingIfNeeded: Boolean) {
+        SagaPhoneAccountRegistrar.register(this)
+        val enabled = SagaPhoneAccountRegistrar.isAccountEnabled(this)
+        binding.phoneAccountBanner.visibility = if (enabled) View.GONE else View.VISIBLE
+        if (enabled) {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_ONBOARDING_SHOWN, true)
+                .apply()
+            return
+        }
+        Log.i(TAG, "PhoneAccount disabled — banner visible")
+        if (!launchOnboardingIfNeeded) return
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val shown = prefs.getBoolean(KEY_ONBOARDING_SHOWN, false)
+        if (!shown || intent?.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
+            prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, true).apply()
+            startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+        }
     }
 
     private fun handleIncomingIntent(intent: Intent?, autoPlace: Boolean) {
         if (intent == null) return
         when (intent.action) {
+            SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING -> {
+                startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
+            }
             "org.saga.TEST_ANSWER_INCOMING" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_ANSWER_INCOMING refused — not a debuggable build")
+                    return
+                }
                 val lookupKey = intent.getStringExtra("lookup_key") ?: return
                 Log.i(TAG, "E2E answer incoming lookup=[$lookupKey]")
                 org.saga.iroh.IrohDialManager.get(this).onIncomingAnswered(lookupKey)
             }
             "org.saga.TEST_CONTACT_CALL" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_CONTACT_CALL refused — not a debuggable build")
+                    return
+                }
                 val name = intent.getStringExtra("contact_name") ?: return
                 val preferCellular = intent.getBooleanExtra("force_unencrypted", false)
                 selectedContactUri = null
@@ -94,16 +196,97 @@ class MainActivity : AppCompatActivity() {
                 )
                 placeFromInput(preferCellular = preferCellular)
             }
+            "org.saga.TEST_ADD_PARTICIPANT" -> {
+                // DEBUG-ONLY (FLAG_DEBUGGABLE): add a Saga contact to the live Iroh call / group.
+                // Extras: contact_name (required), confirm_unencrypted (bool; stands in for the
+                // adder's confirm dialog when the contact has no resolvable key),
+                // introduced_by (name; marks the peer as introduced, shown "X, introduced by Y"
+                // for unknown contacts), roster_fingerprint (64 hex; checked against the link
+                // key, never trusted alone), conference (optional group id).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_ADD_PARTICIPANT refused — not a debuggable build")
+                    return
+                }
+                val name = intent.getStringExtra("contact_name") ?: return
+                val target = DialTargetResolver.fromContactDisplayName(this, name)
+                    ?: DialTargetResolver.fromInput(this, name, preferCellular = false)
+                if (target !is DialTarget.Iroh) {
+                    Log.e(TAG, "TEST_ADD_PARTICIPANT requires an Iroh contact, got [$target]")
+                    Toast.makeText(this, "Iroh contact required", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val outcome = org.saga.telecom.GroupCallCoordinator.requestAdd(
+                    this,
+                    org.saga.telecom.GroupCallCoordinator.AddRequest(
+                        target = target,
+                        confirmedUnencrypted = intent.getBooleanExtra("confirm_unencrypted", false),
+                        introducerName = intent.getStringExtra("introduced_by"),
+                        rosterFingerprintHex = intent.getStringExtra("roster_fingerprint"),
+                        groupId = intent.getStringExtra("conference")
+                    )
+                )
+                Log.i(TAG, "E2E add participant name=[$name] outcome=[$outcome]")
+                if (outcome == org.saga.telecom.GroupCallCoordinator.AddOutcome.REFUSED_MAX_PARTICIPANTS) {
+                    Toast.makeText(this, "Call is full", Toast.LENGTH_LONG).show()
+                }
+            }
+            "org.saga.TEST_GROUP_HANGUP_PARTICIPANT" -> {
+                // DEBUG-ONLY (FLAG_DEBUGGABLE): hang up ONE participant; the group keeps running.
+                // Extras: contact_name (or lookup_key), conference (optional, informational).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_GROUP_HANGUP_PARTICIPANT refused — not a debuggable build")
+                    return
+                }
+                val who = intent.getStringExtra("contact_name")
+                    ?: intent.getStringExtra("lookup_key")
+                    ?: return
+                val ok = org.saga.telecom.GroupCallCoordinator.hangupParticipantByLookup(this, who)
+                Log.i(TAG, "E2E group hangup participant=[$who] ok=[$ok]")
+            }
+            "org.saga.TEST_FORCE_IROH_SIM_PATH" -> {
+                // DEBUG-ONLY: bypass enabled-account gate to measure SIM substitution / modem dial.
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH refused — not a debuggable build")
+                    return
+                }
+                val name = intent.getStringExtra("contact_name") ?: "bob"
+                val ssp = intent.getStringExtra("ssp")
+                val target = DialTargetResolver.fromInput(this, name, preferCellular = false)
+                if (target !is DialTarget.Iroh) {
+                    Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH requires Iroh contact, got [$target]")
+                    return
+                }
+                Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH contact=[$name] ssp=[$ssp]")
+                SagaDialer.placeIrohCallForceSimPathForDebug(
+                    this,
+                    target.peerId,
+                    target.lookupKey,
+                    target.contactName ?: target.lookupKey,
+                    sspOverride = ssp
+                )
+            }
             "org.saga.TEST_IROH_CALL" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_IROH_CALL refused — not a debuggable build")
+                    return
+                }
                 Log.e(TAG, "TEST_IROH_CALL rejected — use TEST_CONTACT_CALL with contact_name (bob/alice/thor)")
                 Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()
             }
             "org.saga.TEST_RELAY_QUERY" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_RELAY_QUERY refused — not a debuggable build")
+                    return
+                }
                 val ready = IrohRelayStatus.pollReady()
                 IrohRelayStatus.writeStatus(applicationContext, ready)
                 Log.i(TAG, "E2E relay query ready=[$ready]")
             }
             "org.saga.TEST_MIDCALL_REHANDSHAKE" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_MIDCALL_REHANDSHAKE refused — not a debuggable build")
+                    return
+                }
                 val lookupKey = intent.getStringExtra("lookup_key")
                     ?: intent.getStringExtra("peer_id")
                     ?: return
@@ -113,6 +296,43 @@ class MainActivity : AppCompatActivity() {
                     failureMode = intent.getStringExtra("failure_mode")
                 )
                 SagaMidCallRehandshakeController.trigger(this, callId, lookupKey, outcome)
+            }
+            "org.saga.TEST_PEER_DISGUISE" -> {
+                // DEBUG-ONLY: simulate peer §16 disguise chip (does not touch padlock).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PEER_DISGUISE refused — not a debuggable build")
+                    return
+                }
+                val session = intent.getStringExtra("session_id") ?: "test-iroh-1"
+                val active = intent.getBooleanExtra("active", true)
+                org.saga.audio.VoiceDisguiseStore.onPeerDisguise(session, active)
+                Log.i(TAG, "TEST_PEER_DISGUISE session=[$session] active=$active")
+            }
+            "org.saga.TEST_PCM_INJECT" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_INJECT refused — not a debuggable build")
+                    return
+                }
+                val path = intent.getStringExtra("path")
+                org.saga.audio.SagaPcmDebug.setInjectWav(path)
+                Log.i(TAG, "TEST_PCM_INJECT path=[$path]")
+            }
+            "org.saga.TEST_PCM_DUMP" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_DUMP refused — not a debuggable build")
+                    return
+                }
+                val path = intent.getStringExtra("path")
+                org.saga.audio.SagaPcmDebug.setDumpPath(path)
+                Log.i(TAG, "TEST_PCM_DUMP path=[$path]")
+            }
+            "org.saga.TEST_PCM_DUMP_FINISH" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_DUMP_FINISH refused — not a debuggable build")
+                    return
+                }
+                org.saga.audio.SagaPcmDebug.finishDump()
+                Log.i(TAG, "TEST_PCM_DUMP_FINISH")
             }
             Intent.ACTION_DIAL, Intent.ACTION_VIEW, Intent.ACTION_CALL -> {
                 val data = intent.data
@@ -133,6 +353,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isDebuggableBuild(): Boolean =
+        (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
     private fun placeFromInput(preferCellular: Boolean = false) {
         if (!isDialerRoleHeld()) {
             Toast.makeText(this, R.string.need_dialer_role, Toast.LENGTH_SHORT).show()
@@ -152,8 +375,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun placeResolved(target: DialTarget) {
-        Log.i(TAG, "Placing call target=[$target]")
-        SagaDialer.placeCall(this, target)
+        Log.i(TAG, "Placing call target=[$target] addCallMode=[$addCallMode]")
+        // Add-call from InCall: prefer cellular second leg unless Iroh was chosen.
+        val effective = if (addCallMode && target is DialTarget.Iroh) {
+            // Keep Iroh if user tapped Call (encrypted); unencrypted button already prefers cellular.
+            target
+        } else {
+            target
+        }
+        SagaDialer.placeCall(this, effective)
+        if (addCallMode) {
+            // Return to the single InCall composition after placing the second call.
+            finish()
+        }
     }
 
     private fun launchContactPicker() {

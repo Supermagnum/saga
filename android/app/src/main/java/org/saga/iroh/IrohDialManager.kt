@@ -10,17 +10,22 @@ import kotlinx.coroutines.launch
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecuritySnapshot
 import org.saga.call.CallSecurityStateResolver
+import org.saga.call.GroupCallRegistry
+import org.saga.call.PadlockDisplayState
 import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.handshake.EncryptionEstablishedStore
 import org.saga.handshake.SagaHandshakeCoordinator
 import org.saga.handshake.SagaHandshakeState
 import org.saga.handshake.SagaTestFlags
+import org.saga.audio.SagaCallMediaController
 import org.saga.security.DowngradeEventLog
 import org.saga.security.midcall.MidCallRehandshakeOutcome
 import org.saga.security.midcall.SagaMidCallSecurityAudioWarning
+import org.saga.telecom.GroupCallCoordinator
 import org.saga.telecom.SagaIrohConnection
 import android.telecom.Connection
+import android.telecom.DisconnectCause
 import java.util.concurrent.ConcurrentHashMap
 
 class IrohDialManager private constructor(context: Context) {
@@ -75,6 +80,9 @@ class IrohDialManager private constructor(context: Context) {
         }
         connection.setActive()
         Log.i(TAG, "CHECKPOINT incoming Connection setActive key=[$telecomCallKey]")
+        val sessionId = sessions[telecomCallKey]?.sessionId
+        // Flush pre-answer JB + signal caller before AudioTrack/mic attach.
+        SagaCallMediaController.onLocalAnswered(appContext, telecomCallKey, sessionId)
         pendingIncomingActivation.remove(telecomCallKey)?.let { state ->
             publishHandshakeState(
                 lookupKeys[telecomCallKey] ?: telecomCallKey,
@@ -100,10 +108,27 @@ class IrohDialManager private constructor(context: Context) {
         if (connection.state == Connection.STATE_RINGING) {
             pendingIncomingActivation[telecomCallKey] = state
             connection.onHandshakeState(state)
-            Log.i(
-                TAG,
-                "Incoming handshake settled to [$state] while RINGING — waiting for answer"
-            )
+            // Open RoQ ReceiveFlow + JB now so caller RTP is not lost before answer.
+            // AudioRecord/AudioTrack attach in publishHandshakeState on answer.
+            if (state == SagaHandshakeState.Encrypted ||
+                state == SagaHandshakeState.NeverEncrypted
+            ) {
+                SagaCallMediaController.startNativeReceive(
+                    telecomCallId = telecomCallKey,
+                    rustSessionId = sessions[telecomCallKey]?.sessionId,
+                    state = state,
+                    userContinuedPast5a = false
+                )
+                Log.i(
+                    TAG,
+                    "Incoming handshake settled to [$state] while RINGING — RX media armed, waiting for answer"
+                )
+            } else {
+                Log.i(
+                    TAG,
+                    "Incoming handshake settled to [$state] while RINGING — waiting for answer"
+                )
+            }
             return
         }
         publishHandshakeState(lookupKey, telecomCallKey, state, connection, activateConnection = true)
@@ -119,30 +144,138 @@ class IrohDialManager private constructor(context: Context) {
         val session = IrohSessionFactory.create(peerId)
         sessions[telecomCallKey] = session
         lookupKeys[telecomCallKey] = lookupKey
-        publishSecuring(lookupKey, telecomCallKey)
+        publishConnecting(lookupKey, telecomCallKey)
 
         session.connect(
             onConnected = {
+                publishSecuring(lookupKey, telecomCallKey)
                 handshakeCoordinator.start(lookupKey, session.sessionId) { state ->
                     onHandshakeSettled(lookupKey, telecomCallKey, state, connection)
                 }
             },
-            onFailed = {
-                onHandshakeSettled(
-                    lookupKey,
-                    telecomCallKey,
-                    handshakeCoordinator.resolveFailure(lookupKey),
-                    connection
-                )
+            onFailed = { reason ->
+                // Connect-phase failure is reachability, not §5a downgrade / cellular fallback.
+                failNotReachable(lookupKey, telecomCallKey, connection, reason)
             }
         )
     }
 
-    fun endCall(telecomCallKey: String) {
+    /**
+     * Native-mesh path for a group leg: no per-peer 1:1 native session is opened. The link id
+     * stands in for the session id; link state arrives via [onMeshLinkState].
+     *
+     * TODO(mesh-jni): media for mesh links still goes through the per-session
+     * SagaCallMediaController path keyed by link id until native mesh media is wired.
+     */
+    fun registerMeshLink(
+        groupId: String,
+        peerId: IrohNodeId,
+        linkId: String,
+        telecomCallKey: String,
+        lookupKey: String
+    ) {
+        sessions[telecomCallKey] = MeshLinkSession(groupId, peerId, linkId)
+        lookupKeys[telecomCallKey] = lookupKey
+        publishConnecting(lookupKey, telecomCallKey)
+    }
+
+    /** Translate a native mesh link state into the same handshake outcomes as the 1:1 path. */
+    fun onMeshLinkState(
+        telecomCallKey: String,
+        meshState: Int,
+        connection: SagaIrohConnection?
+    ) {
+        val lookupKey = lookupKeys[telecomCallKey] ?: return
+        when (meshState) {
+            IrohNativeBridge.MESH_PEER_PENDING -> publishSecuring(lookupKey, telecomCallKey)
+            IrohNativeBridge.MESH_PEER_ENCRYPTED -> {
+                val state = if (ContactKeyStore.hasResolvableKey(appContext, lookupKey)) {
+                    encryptionStore.markEncryptionEstablished(lookupKey)
+                    SagaHandshakeState.Encrypted
+                } else {
+                    SagaHandshakeState.NeverEncrypted
+                }
+                if (connection != null) {
+                    onHandshakeSettled(lookupKey, telecomCallKey, state, connection)
+                } else {
+                    publishHandshakeState(lookupKey, telecomCallKey, state, null, false)
+                }
+            }
+            IrohNativeBridge.MESH_PEER_FAILED -> {
+                val state = handshakeCoordinator.resolveFailure(lookupKey)
+                if (connection != null) {
+                    onHandshakeSettled(lookupKey, telecomCallKey, state, connection)
+                } else {
+                    publishHandshakeState(lookupKey, telecomCallKey, state, null, false)
+                }
+            }
+        }
+    }
+
+    /**
+     * Outgoing peer never answered the QUIC dial (discovery miss, budget exhausted, etc.).
+     * Disconnect cleanly with InCall status "Not reachable" — never open the §5a padlock path.
+     */
+    private fun failNotReachable(
+        lookupKey: String,
+        telecomCallKey: String,
+        connection: SagaIrohConnection,
+        reason: String
+    ) {
+        Log.w(
+            TAG,
+            "NOT_REACHABLE lookup=[$lookupKey] key=[$telecomCallKey] reason=[$reason]"
+        )
+        val status = appContext.getString(org.saga.R.string.call_not_reachable)
+        val snapshot = CallSecuritySnapshot(
+            padlockState = PadlockDisplayState.KEY_NOT_FOUND,
+            statusText = status,
+            playSecureCue = false,
+            playUnsecureCue = false,
+            showDowngradeModal = false
+        )
+        SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        SagaCallEventHub.emit(
+            SagaCallEventHub.SecurityUpdate(
+                telecomCallKey,
+                snapshot,
+                playConnectCue = false
+            )
+        )
         sessions.remove(telecomCallKey)?.disconnect()
+        lookupKeys.remove(telecomCallKey)
+        try {
+            connection.setDisconnected(
+                DisconnectCause(DisconnectCause.ERROR, status)
+            )
+            connection.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "failNotReachable disconnect failed: ${e.message}")
+        }
+        // Group leg: drop only this link; the rest of the conference keeps running.
+        GroupCallCoordinator.onLegEnded(appContext, telecomCallKey)
+    }
+
+    fun endCall(telecomCallKey: String) {
+        val session = sessions.remove(telecomCallKey)
+        val sessionId = session?.sessionId
+        SagaCallMediaController.stop(telecomCallKey, sessionId)
+        session?.disconnect()
         lookupKeys.remove(telecomCallKey)
         incomingConnections.remove(telecomCallKey)
         pendingIncomingActivation.remove(telecomCallKey)
+    }
+
+    fun continueUnencryptedMedia(telecomCallKey: String, lookupKey: String) {
+        val sessionId = sessions[telecomCallKey]?.sessionId
+        SagaCallMediaController.onSecurityResolved(
+            context = appContext,
+            telecomCallId = telecomCallKey,
+            rustSessionId = sessionId,
+            state = SagaHandshakeState.Downgraded,
+            userContinuedPast5a = true
+        )
+        Log.i(TAG, "§5a continue → plain RTP media call=[$telecomCallKey] lookup=[$lookupKey]")
     }
 
     fun sessionIdForCall(telecomCallKey: String): String? = sessions[telecomCallKey]?.sessionId
@@ -150,10 +283,21 @@ class IrohDialManager private constructor(context: Context) {
     fun lookupKeyForCall(telecomCallKey: String): String? = lookupKeys[telecomCallKey]
 
     fun findTelecomCallKey(lookupKey: String): String? {
+        if (sessions.containsKey(lookupKey)) return lookupKey
         lookupKeys.entries.firstOrNull { it.value == lookupKey }?.key?.let { return it }
-        val peerUri = SagaCallUri.forPeer(IrohNodeId.parse(lookupKey) ?: return null).toString()
-        if (sessions.containsKey(peerUri)) return peerUri
+        val digits = lookupKey.filter { it.isDigit() }
+        if (digits.isNotEmpty()) {
+            lookupKeys.entries.firstOrNull { it.value.filter { ch -> ch.isDigit() } == digits }
+                ?.key
+                ?.let { return it }
+            sessions.keys.firstOrNull { it.filter { ch -> ch.isDigit() } == digits }?.let { return it }
+        }
+        IrohNodeId.parse(lookupKey)?.let { id ->
+            val peerUri = SagaCallUri.forPeer(id).toString()
+            if (sessions.containsKey(peerUri)) return peerUri
+        }
         return sessions.keys.firstOrNull { it.contains(lookupKey) }
+            ?: sessions.keys.singleOrNull()
     }
 
     fun handleMidCallRehandshake(
@@ -182,7 +326,11 @@ class IrohDialManager private constructor(context: Context) {
                     delay(300)
                     val poll = IrohNativeBridge.pollHandshake(sessionId)
                     if (poll == IrohNativeBridge.HANDSHAKE_ENCRYPTED) {
-                        Log.i(TAG, "Mid-call re-handshake succeeded — no interruption")
+                        val us = IrohNativeBridge.rekeyMedia(sessionId)
+                        Log.i(
+                            TAG,
+                            "Mid-call re-handshake succeeded — rekey_swap_us=$us (budget <100000)"
+                        )
                     } else {
                         Log.w(TAG, "Mid-call re-handshake expected success but poll=[$poll]")
                     }
@@ -200,6 +348,7 @@ class IrohDialManager private constructor(context: Context) {
                 }
             }
             IrohNativeBridge.setForceHandshakeFail(SagaTestFlags.isForceHandshakeFail(appContext))
+            IrohNativeBridge.setForceBindingPerturb(SagaTestFlags.isForceBindingPerturb(appContext))
         }
     }
 
@@ -241,12 +390,16 @@ class IrohDialManager private constructor(context: Context) {
         }
         connection?.onHandshakeState(state)
         val snapshot = snapshotForHandshake(lookupKey, state)
+        // Group leg that settled without encryption: media stays off until the adder confirms.
+        val groupGatesPlainMedia = GroupCallRegistry.gateUnencryptedMedia(telecomCallKey, state)
         SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        // Play connect cue for Encrypted / NeverEncrypted / Downgraded (§5a).
+        // Downgrade modal still shows; Continue uses playOnce so the wav is not doubled.
         SagaCallEventHub.emit(
             SagaCallEventHub.SecurityUpdate(
                 telecomCallKey,
                 snapshot,
-                playConnectCue = state != SagaHandshakeState.Downgraded
+                playConnectCue = state != SagaHandshakeState.Securing
             )
         )
         if (state != SagaHandshakeState.Securing) {
@@ -267,6 +420,34 @@ class IrohDialManager private constructor(context: Context) {
                 )
             }
         }
+        // Media only after security resolves. Downgraded waits for §5a Continue.
+        if (!groupGatesPlainMedia &&
+            (state == SagaHandshakeState.Encrypted || state == SagaHandshakeState.NeverEncrypted)
+        ) {
+            val sessionId = sessions[telecomCallKey]?.sessionId
+            SagaCallMediaController.onSecurityResolved(
+                context = appContext,
+                telecomCallId = telecomCallKey,
+                rustSessionId = sessionId,
+                state = state,
+                userContinuedPast5a = false
+            )
+        }
+    }
+
+    /** Discovery / QUIC dial in progress — not yet a security handshake. */
+    private fun publishConnecting(lookupKey: String, telecomCallKey: String) {
+        val snapshot = CallSecuritySnapshot(
+            padlockState = PadlockDisplayState.SECURING,
+            statusText = appContext.getString(org.saga.R.string.call_connecting),
+            playSecureCue = false,
+            playUnsecureCue = false,
+            showDowngradeModal = false
+        )
+        SagaCallRegistry.updateSnapshot(telecomCallKey, snapshot)
+        SagaCallEventHub.emit(
+            SagaCallEventHub.SecurityUpdate(telecomCallKey, snapshot, playConnectCue = false)
+        )
     }
 
     private fun publishSecuring(lookupKey: String, telecomCallKey: String) {
@@ -298,6 +479,21 @@ class IrohDialManager private constructor(context: Context) {
             SagaHandshakeState.Securing -> CallSecurityStateResolver.resolve(
                 CallOrigin.IROH, handshakeSecuring = true, contactKeyResolvable = hasKey
             )
+        }
+    }
+
+    /** Session stand-in for one link of a native mesh group (no 1:1 native session). */
+    private class MeshLinkSession(
+        private val groupId: String,
+        override val peerId: IrohNodeId,
+        override val sessionId: String
+    ) : IrohCallSession {
+        override fun connect(onConnected: () -> Unit, onFailed: (String) -> Unit) {
+            // Link is opened by IrohNativeBridge.meshAddPeer; state arrives via notifyMeshPeerState.
+        }
+
+        override fun disconnect() {
+            IrohNativeBridge.meshRemovePeer(groupId, sessionId)
         }
     }
 

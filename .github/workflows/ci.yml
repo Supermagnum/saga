@@ -16,13 +16,16 @@ env:
   CARGO_TERM_COLOR: always
   # Fail native builds hard; never ship StubIrohCallSession from CI.
   SAGA_REQUIRE_NATIVE: "1"
+  # audiopus_sys vendors Opus with an old cmake_minimum_required; modern
+  # CMake on GH runners needs this to configure (cold cache after lock changes).
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   rust:
     name: rust (fmt / clippy / test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -30,16 +33,63 @@ jobs:
           toolchain: "1.94.0"
           components: rustfmt, clippy
 
+      - name: Install cmake (libopus via audiopus_sys)
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
+            saga-session
             saga-iroh-core
+            saga-media
+            saga-token-usb
             testing/mock-token
-          shared-key: saga-rust-host
+            tools/saga-peer
+          shared-key: saga-rust-host-v5
+          cache-targets: true
+
+      # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
+      - name: Cache saga-media target (libopus)
+        uses: actions/cache@v6
+        with:
+          path: saga-media/target
+          key: saga-media-target-${{ runner.os }}-${{ hashFiles('saga-media/Cargo.lock') }}-test-opt2
+          restore-keys: |
+            saga-media-target-${{ runner.os }}-
+
+      # saga-peer reuses saga-media/iroh; keep its target warm separately (WAV-only CI; no live-audio).
+      - name: Cache saga-peer target
+        uses: actions/cache@v6
+        with:
+          path: tools/saga-peer/target
+          key: saga-peer-target-${{ runner.os }}-${{ hashFiles('tools/saga-peer/Cargo.lock') }}-test-opt2
+          restore-keys: |
+            saga-peer-target-${{ runner.os }}-
+
+      - name: saga-session fmt / clippy / test
+        working-directory: saga-session
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
 
       - name: mock-token fmt / clippy / test
         working-directory: testing/mock-token
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      - name: saga-token-usb fmt / clippy / test
+        working-directory: saga-token-usb
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --features test-card -- -D warnings
+          cargo test --features test-card
+
+      - name: saga-media fmt / clippy / test
+        working-directory: saga-media
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
@@ -50,24 +100,34 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
+          cargo clippy --all-targets --features iroh-transport -- -D warnings
+          cargo clippy --all-targets --features iroh-transport,nitrokey -- -D warnings
           cargo test --features iroh-transport,mock-token
+
+      # Default features only (no live-audio/cpal). [profile.test] opt-level=2 for Opus speed.
+      - name: saga-peer fmt / clippy / host tests
+        working-directory: tools/saga-peer
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --offline || cargo test
 
   android:
     name: android (assembleDebug + unit tests + native .so)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Standalone validation; keep actions/cache for Gradle (faster than setup-gradle alone).
       - name: Validate Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
-          # CI packages x86_64 only (emulator). Release/F-Droid still build arm64+x86_64.
-          targets: x86_64-linux-android
+          # CI packages x86_64 for debug APK; also arm64 for release .so hygiene check.
+          targets: x86_64-linux-android,aarch64-linux-android
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -77,7 +137,7 @@ jobs:
           cache-targets: true
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -99,7 +159,7 @@ jobs:
         run: cargo install cargo-ndk --locked --version 3.5.4
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -129,3 +189,15 @@ jobs:
             exit 1
           fi
           echo "OK: libsaga_iroh_core.so present for x86_64 (CI)"
+
+      - name: Release arm64 .so hygiene (nitrokey, no mock-token)
+        working-directory: saga-iroh-core
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          cargo ndk -o /tmp/saga-ndk-release-ci -t arm64-v8a \
+            build --release --features iroh-transport,nitrokey
+          bash ../scripts/check-release-so.sh \
+            /tmp/saga-ndk-release-ci/arm64-v8a/libsaga_iroh_core.so

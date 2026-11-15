@@ -1,8 +1,1303 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-12 (Phase 1 — CI speed + PhoneAccount UX gap)
+**Last updated:** 2026-11-15 (release compile-out of Iroh group calls)
 
-**Status:** Emulator E2E Cases 1–6 **PASS** on this branch (local relay, fresh `Saga_Alice`/`Saga_Bob` AVDs). Phase 1 adds gating GitHub Actions CI. Not ready to ship — needs Phase 1.5 handshake wire alignment, real audio path, release hygiene, physical devices. **PhoneAccount stays disabled without adb** — [#2](https://github.com/Supermagnum/saga/issues/2); fix before Phase 2.
+**Status:** Iroh group calls compiled out of **release** (debug keeps them).
+Part 1 (multi-peer) is **INCOMPLETE** — see G1–G11 table below and issue
+[#30](https://github.com/Supermagnum/saga/issues/30). Part B (preview APK)
+waits for this PR to merge; preview notes will state group calls are not
+included. Open flake: [#49](https://github.com/Supermagnum/saga/issues/49)
+(API 29 Case 2/2b relay warm-up).
+
+---
+
+## 2026-11-15 — Release compile-out of Iroh group calls
+
+Branch: `fix/release-compile-out-group-calls` (from main after #50).
+
+### Why
+
+G4/G5 failures mean a group call could show Encrypted without every
+participant's key verified. Release must never show that misleading padlock.
+User decision: neither (a) full fixes nor (b) experimental toggle for preview —
+compile the surface out of release instead. Carrier conference (Phase 4) stays.
+
+### What landed
+
+| Item | Release | Debug |
+|------|---------|-------|
+| Add participant UI / strings | Absent (debug source-set) | Present |
+| `GroupCallCoordinator` / Iroh `Conference` | No-op stubs | Full |
+| Native mesh (`saga/mesh-join/1`, roster) | Not linked (`mock-token` off) | Present |
+| Carrier conference (C1–C5) | Unchanged | Unchanged |
+
+Hygiene: `check-release-apk.sh` forbids `Add participant` / `Add to call` in
+resources; `check-release-so.sh` forbids `saga/mesh-join/1` and
+`saga-mesh-roster-v1`.
+
+### Verification
+
+| Gate | Result | Log / artifact |
+|------|--------|----------------|
+| `verifyReleaseApkHygiene` | **PASS** | includes group-call string + mesh markers |
+| Release InCall UI dump | **PASS** — no Add participant; `btn_add_participant` not in hierarchy | `/tmp/saga-release-incall.xml`, `/tmp/saga-release-incall.png` |
+| API 35 Step5 Cases 1–10 + 4b + C3–C5 + onboarding | **PASS** (C1/C2 NEEDS_HARDWARE); conference `pass=17 fail=0 needs_hardware=2` | `/tmp/e2e-step5-group-compileout-api35.log` |
+| G-suite | **Not required** this PR (group is debug-only) | — |
+
+### Part 1 (multi-peer) — **INCOMPLETE**
+
+Authoritative G suite: 2026-11-15 privacy Step5 (`SAGA_RUN_GROUP=1`),
+`/tmp/e2e-step5-privacy-api35.log`, summary `pass=77 fail=5 pending_mesh=7`.
+
+| Case | Result | Notes |
+|------|--------|-------|
+| G1 Alice→Bob 1:1 | **PASS** | Handshake ~1.0s Encrypted both; no group markers |
+| G2 Alice adds Charlene | **PASS** + **PENDING_MESH** | Alice Encrypted to bob+charlene; B↔C absent (pairwise adder-only) |
+| G3 Bob↔Charlene direct | **PENDING_MESH** | mesh JNI not shipped on Android; host_mesh covers model |
+| G4 introduced-by / roster FP | **PENDING** | Bob learns Charlene only via mesh roster; G4b FP check mesh-only |
+| G5 wrong key / confirm-to-admit | **FAIL** | Wrong key still Encrypted on alice; G5b first=PLACED second=REFUSED_DUPLICATE — **app** |
+| G6 4 participants | **PASS** + **PENDING_MESH** | Alice 3 Encrypted links; full 6-link mesh needs NATIVE_MESH |
+| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS` |
+| G8 leave continues | **FAIL** | G8a: no `remaining=1` after bob left — **app**; G8b needs mesh |
+| G9 mute / hold | **PASS** mute / **FAIL** hold | hold got `held=true` but no `held=false` after resume — **app** |
+| G10 group + carrier | **PASS** | Carrier held group; no Merge |
+| G11 callee adds laptop | **FAIL** | Charlene→laptop PLACED but not Encrypted; A/B auto-link needs mesh — **app** |
+
+Remaining work (est. 1–2+ weeks): true mesh links, roster verification, trust UI,
+leave/hold-resume, G5 wrong-key marking. Tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
+
+---
+
+## 2026-11-15 — Privacy docs + Opus CBR (`privacy-docs-cbr`, issue #40)
+
+Branch: `privacy-docs-cbr` (from main after #47 F-Droid readiness).
+Precondition: API 29 DNS hotfix #42 (`bindProcessToNetwork` removed; explicit
+`Network` for `DnsResolver`) is on main.
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| README Privacy section | Exposure table, VPN provider table, Nitrokey/Galdralag FS note, CBR note |
+| Settings → Privacy | Opens README anchor `#privacy-what-saga-does-and-doesnt-protect` |
+| Fastlane full_description | Honest IP/metadata sentence |
+| Opus VBR → CBR | `set_vbr(false)`, 32 kbps, DTX still off; shared by 1:1 and group encode-once |
+| `relay-options.md` Future options | Watch Rust crate; `nym-smoldvpn` spike candidate; mixnet unsuitable |
+| `saga-spec.md` | Media pipeline CBR + privacy pointer |
+
+### Opus CBR before/after (LibriSpeech host fixture)
+
+| Mode | Bitrate | Packet sizes (Opus payload) | STOI | corr / SI-SNR |
+|------|---------|-----------------------------|------|---------------|
+| VBR (before) | 27.08 kbps | min 31 max 109 mean 67.7 std 21.4; **60** unique | 0.9946 | 0.960 / 10.8 dB |
+| CBR (after) | **32.00 kbps** | **min=max=80; std 0; 1 unique** | 0.9918 | 0.959 / 10.5 dB |
+
+Host gate: `cargo test -p saga-media --test cbr_packet_sizes` asserts constant size.
+Group/mesh uses the same `OpusEncoder::new()` (encode once).
+
+### Emulator verification
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (`5554`/`5556`) Cases 1–10 + 4b + C1–C5 + onboarding | **PASS** (C1/C2 NEEDS_HARDWARE); conference `pass=17 fail=0 needs_hardware=2` | `/tmp/e2e-step5-privacy-api35.log` |
+| API 35 Case 7 alice↔bob (CBR) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=**0.9915** | same log |
+| API 35 group G1–G11 (`SAGA_RUN_GROUP=1`) | G1/G2/G6/G7/G9-mute/G10 PASS; known mesh PENDING/FAIL (pairwise scaffold) | same log; summary `pass=77 fail=5 pending_mesh=7` |
+| API 29 Step5 Alice35→Bob29 (`5554`/`5560`) | Cases 3–6 + 4b + 8–10 + C3–C5 + onboarding **PASS**; Case 2/2b early **RELAY:FAIL** (bob warm-up after long suite); Case 7 first pass SI-SNR alice→bob 9.5 (flake) | `/tmp/e2e-step5-privacy-api29.log` — tracked as [#49](https://github.com/Supermagnum/saga/issues/49) |
+| API 29 Case 7 re-run (warm relay) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=0.9915 | `/tmp/e2e-api29-privacy-case7.log` |
+| VPN WireGuard emulator test | **NOT VERIFIED** (README recommendation marked not yet verified with a VPN) | No `sudo` / `wireguard-tools` on host; no WireGuard APK on AVDs. Extra latency not measured. |
+
+### CI
+
+PR #48 — rust + android checks **PASS** (after rustfmt fix on `cbr_packet_sizes`).
+
+### Not verified / open
+
+- Emulator WireGuard VPN → public-relay call + pcap (no UDP/53 outside tunnel)
+- Physical phones
+- Part B preview APK (not started; waits on group-call decision + #49 awareness)
+- [#49](https://github.com/Supermagnum/saga/issues/49) — API 29 Case 2/2b relay warm-up flake (`native=0` after 120s; can affect a real first call before home relay is up)
+
+---
+
+## 2026-11-15 — Part 5 F-Droid readiness (`feat/fdroid-readiness`)
+
+Branch: `feat/fdroid-readiness` (from main after #46 Nitrokey).
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| Adaptive launcher icon | New assets under `android/app/src/main/res/` (not `icons/`); preview `docs/screenshots/launcher/saga-launcher-preview.jpg` |
+| Release hygiene | Debug source set for PCM inject/receivers; TEST_* intent filters debug-manifest-only; release stubs no-op |
+| `check-release-apk.sh` | Manifest + arm64 `.so` hygiene (nitrokey present; mock/TEST_* absent) |
+| Licences screen | `LicencesActivity` + dialer link; mirrors NOTICE + AGPL source offer |
+| Fastlane metadata | `fastlane/metadata/android/en-US/` title/short/full/changelog + phoneScreenshots |
+| AntiFeatures draft | `docs/fdroid/anti-features.md` recommends `NonFreeNet` for default n0 relays |
+| fdroiddata recipe draft | `docs/fdroid/org.saga.yml` (Navi-style; do not open MR) |
+| Spec | `saga-spec.md` §18 |
+
+### Verification
+
+| Gate | Result | Log / artifact |
+|------|--------|----------------|
+| `assembleDebug` + `testDebugUnitTest` | **PASS** | local Gradle |
+| `assembleRelease` + `verifyReleaseApkHygiene` | **PASS** | `/tmp/saga-part5-apk-hygiene.log` |
+| Step 5 API 35 (`5554`/`5556`) Cases 1–10 + 4b + C1–C5 | **PASS** conference `pass=17 fail=0 needs_hardware=2` (C1/C2) | `/tmp/e2e-step5-part5-api35.log` |
+| Onboarding CASEB Settings UI | Soft-fail (coords / `5558` script); INBOUND_REJECT **PASS** | same log; known flake |
+| Alice API35 → Bob API29 (`5554`/`5560`) Cases 1–7 + 4b | **PASS** (handshake ~1.0s; Case7 in prior API35 run) | `/tmp/e2e-api29-part5.log` |
+| Screenshots looked at | Dialer light/dark, Licences, onboarding, encrypted, group, voice disguise, Nitrokey PIN, cellular, conference | `fastlane/.../phoneScreenshots/` |
+| `fdroid lint` / `fdroid build` Docker | **NOT RUN** | no fdroidserver image on host |
+| Bit-identical reproducible double-build | **NOT COMPLETED** | notes in `docs/fdroid/reproducible-builds.md` |
+
+### Not verified / needs real hardware
+
+- Physical-phone store screenshots and USB Nitrokey Encrypted call
+- fdroidserver Docker lint/build of the draft recipe
+- Final `applicationId` change (blocked on maintainer decision)
+
+### Open decisions for the user
+
+1. **Final applicationId** before F-Droid submission (currently `org.saga`; one-line Gradle + recipe rename).
+2. Confirm AntiFeature label: draft recommends **NonFreeNet** (vs TetheredNet) for default n0 relays.
+3. When to open the fdroiddata MR (maintainer-owned; not from this PR).
+
+---
+
+## 2026-11-15 — Part 4 Nitrokey support (`feat/nitrokey-session-token`)
+
+Branch: `feat/nitrokey-session-token` (from main after #45 messaging evaluation).
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| `docs/nitrokey.md` | Design, models/firmware sources, fingerprint/hash/DER notes, NFC skip |
+| `saga-token-usb` | Production crate; phone ECDH + AUT INTERNAL AUTHENTICATE |
+| Host interop | Software AUT ↔ `MockSessionToken` session-key match (P-256) |
+| Unknown signer | Rejected (fingerprint / unknown signer) |
+| Android USB CCID + PIN UI | `UsbCcidTransport`, `TokenUsbBridge`, `NitrokeyPinActivity` |
+| Release features | Gradle release → `iroh-transport,nitrokey`; marker in `.so` hygiene |
+| NFC OpenPGP | Not implemented (documented) |
+
+### Host verification
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-session` test/clippy | **PASS** | phone_handshake helpers |
+| `saga-token-usb --features test-card` | **PASS** | 3 interop + algo unit |
+| Live PC/SC Nitrokey | **DEFERRED** | Card present (`20a0:42b2`, fw v1.8.3, AUT BrainpoolP256r1); needs `SAGA_NITROKEY_PIN` (not set in this run) |
+| usbip virtual NK3 | **NOT USED** | Real NK3 on host PC/SC |
+
+### Emulator / CI
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 API 35 (`5554`/`5556`) | **PASS** pass=17 fail=0 needs_hardware=2 (C1/C2) | `/tmp/e2e-step5-nitrokey.log` |
+| Step 5 Alice API35→Bob API29 (`5554`/`5560`) | **PASS** pass=17 fail=0 needs_hardware=2 (C1/C2); Case7 corr=0.960 | `/tmp/e2e-api29-nitrokey.log` |
+| Onboarding CASEB (script hardcodes `5558`/`5556`) | Soft-fail Settings UI coords; suite uses `\|\| true` | same API29 log; not Part 4 regression |
+| PIN UI screenshot | **PASS** real dialog | `docs/screenshots/nitrokey-pin.png` |
+| Release `.so` hygiene (nitrokey marker present; mock absent) | **PASS** | `scripts/check-release-so.sh` on x86_64 release NDK `.so` |
+| USB passthrough on emulator | **NEEDS_HARDWARE** | Not verified this run |
+| CI rust + android | **PASS** | [PR #46](https://github.com/Supermagnum/saga/pull/46) run `43691174307` |
+
+### Not verified / needs real hardware
+
+- USB OTG Nitrokey on a physical phone (permission + CCID + PIN + Encrypted call)
+- Live PC/SC INTERNAL AUTH with the owner's PIN (`SAGA_NITROKEY_PIN`)
+- Emulator QEMU USB host passthrough
+- Real Galdralag Dabao CCID (same filter `1d50:6197`; blocked on xous-core#937)
+
+### Open decisions for the user
+
+1. Provide `SAGA_NITROKEY_PIN` (or run the ignored PC/SC test locally) to confirm live AUT sign on the attached NK3.
+2. Confirm whether release 1:1 dial should **require** a token (fail closed) or keep today's "Not encrypted" when the card is absent.
+3. When to flip native mesh off `mock-token`-only onto the production Nitrokey path.
+
+---
+
+## 2026-11-15 — Part 3 text messaging evaluation (`docs/messaging-evaluation`)
+
+Branch: `docs/messaging-evaluation` (from main after #44 voice disguise).
+Implements issue #29 Step 1 / saga-spec §17. **No messaging code.**
+
+### Deliverable
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `docs/messaging-evaluation.md` | **PASS** | Sourced tables for Delta Chat, Briar, SimpleX, Conversations/Cheogram, Jami, Molly, Session, Iroh-based chats |
+| Criteria 1–8 coverage | **PASS** | Per issue #29 table |
+| A/B/C recommendation | **C** | Criterion 3 fails for all as Saga-aligned HW identity; A/B rejected |
+| Debug Message prototype | **N/A** | Allowed only if A looks right; not implemented |
+| `saga-spec.md` §17 | **PASS** | Evaluation gate recorded; owner decision pending on #29 |
+
+### Emulator regression (docs-only change; full suite still run)
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 Cases 1–10 + 4b | **PASS** | `/tmp/e2e-step5-messaging-eval.log` |
+| Step 5 C3–C5 | **PASS** (C1–C2 NEEDS_HARDWARE as usual) | same |
+| Onboarding INBOUND_REJECT | **PASS** | same |
+| Onboarding Case B Settings UI | **FAIL** env (Settings dump coords; same class of flake as Part 2) | same |
+| API 29 Alice(API35)→Bob(API29) Encrypted | **PASS** | `/tmp/e2e-api29-messaging-eval.log` |
+| CI rust + android | **PASS** | https://github.com/Supermagnum/saga/actions/runs/43682225552 |
+
+### Not verified / needs real hardware
+
+- Third-party messenger installs and live intent handoff (deferred; A not recommended)
+- Hardware-token messaging (Nitrokey / Galdralag) — Part 4 / issue #41 if C confirmed
+
+### Open decisions for the user
+
+1. Confirm **A / B / C** on issue #29 (report recommends **C**).
+2. If C: schedule issue #41 after Parts 4–5 (or as agreed); choose offline-delivery model before coding it.
+3. If weak-A convenience handoff is desired despite criterion 3: pick SimpleX or `xmpp:` explicitly.
+
+---
+
+## 2026-11-15 — Part 2 voice disguise (`feat/voice-disguise`)
+
+Branch: `feat/voice-disguise` (from main after #43 multi-peer). Implements
+saga-spec §16.
+
+### Host DSP
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-media` disguise unit tests | **PASS** | off noop, random α differs, end_call zeroizes, pitch changes samples |
+| `cargo test -p saga-media --test voice_disguise` | **PASS** | WAVs + per-frame latency |
+| Per-frame latency (all modes) | **PASS** | 0.005–0.14 ms ≪ 20 ms budget (`docs/voice-disguise/HOST_METRICS.md`) |
+| Random-each-call α | **PASS** | Distinct CSPRNG draws; not logged in release |
+| Licence | **PASS** | In-tree DSP only (no GPL/commercial DSP crate) |
+
+### STOI vs LibriSpeech fixture (`testing/e2e/pcm_score.py`)
+
+| Mode | corr | STOI |
+|------|-----:|-----:|
+| pitch_m3 | 0.086 | 0.311 |
+| formant_mild | 0.990 | 0.978 |
+| formant_medium | 0.990 | 0.978 |
+| formant_strong | 0.989 | 0.978 |
+| formant_pitch_medium | 0.062 | 0.232 |
+
+Listening fixtures: `docs/voice-disguise/*.wav` (inspected energy; formant
+preserves intelligibility; pitch modes intentionally alter timbre).
+
+### Peer chip / media control
+
+`MEDIA_TAG_DISGUISE` (`SAGAVD01` + on/off byte) on the Saga media datagram path
+(not ephemeral-session). Informational only — padlock / security unchanged.
+
+### Emulator (API 35 + one API 29)
+
+Screenshots under `docs/screenshots/voice-disguise/` (settings modes, contact
+override, in-call toggle + local chip, peer chip, cellular disabled). Looked at
+each before accepting.
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 Cases 1–10 + 4b | **PASS** | `/tmp/e2e-step5-voice-disguise.log` |
+| Step 5 C3–C5 | **PASS** (C1–C2 NEEDS_HARDWARE as usual) | same |
+| Onboarding INBOUND_REJECT | **PASS** | same |
+| Onboarding Case B Settings UI | **FAIL** env (emulator-5558 dump; not disguise-related) | same |
+| API 29 settings launch | **PASS** | `api29-settings.png` |
+| API 29 Alice(API35)→Bob(API29) Encrypted | **PASS** | `/tmp/e2e-api29-voice-disguise.log` |
+
+### Not verified / needs real hardware
+
+- Subjective listening on a handset speaker / Bluetooth
+- Neural voice-conversion latency (explicitly deferred in §16.6)
+
+### Open decisions for the user
+
+1. Whether Mild/Medium/Strong McAdams α ranges need retuning after listening
+   to the committed WAVs.
+2. Pitch STOI is low by design (timbre change); confirm the −3 semitone default
+   after listening to `pitch_m3.wav`.
+
+---
+
+## 2026-11-15 — Part 1 multi-peer encrypted calls (`feat/multi-peer-calls`) — **INCOMPLETE**
+
+Branch: `feat/multi-peer-calls` (from main after #42 dns-api29 + #39 relay Option A).
+Implements issue #30 / saga-spec §14.2 (decisions §14.2.1).
+**Status:** INCOMPLETE — see G1–G11 table (privacy Step5) and release compile-out
+section above. Group calls remain debug-only until mesh/trust work lands.
+
+### Host CI (in-process mesh)
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-session` roster unit tests | **PASS** 6/6 | HMAC `saga-mesh-roster-v1`, max-4, tamper |
+| `saga-media --test mesh` | **PASS** 8/8 | encode-once fan-out, mix, pre-answer, mute/hold, 5th refuse |
+| `tools/saga-peer --test host_mesh` | **PASS** 5/5 | 3-peer + 4-peer encrypted, leave-continues, 5th refuse, unencrypted confirm | ~4.5s |
+| Android `GroupCallStateTest` | **PASS** 37/37 | aggregate padlock, max-4, introduced-by, never-merge |
+
+### Emulator G suite (local, 3 AVDs + optional saga-peer)
+
+Alice `emulator-5554`, Bob `emulator-5556`, Charlene `emulator-5558` (Saga_PA_Test AVD,
+identity `15550100030`). **Authoritative re-run:** 2026-11-15 privacy Step5 with
+`SAGA_RUN_GROUP=1` — `/tmp/e2e-step5-privacy-api35.log`, artifacts
+`/tmp/saga-group-e2e/`, summary `pass=77 fail=5 pending_mesh=7`. Earlier partial
+logs: `/tmp/saga-group-e2e2.log`. Screencaps under `docs/screenshots/group-mesh/`
+and `/tmp/saga-group-e2e/screencaps/`.
+
+| Case | Result | Notes |
+|------|--------|-------|
+| G1 Alice→Bob 1:1 | **PASS** | Handshake ~1.0s Encrypted both; no group markers |
+| G2 Alice adds Charlene | **PASS** + **PENDING_MESH** | Alice Encrypted to bob+charlene; B↔C absent (pairwise adder-only) |
+| G3 Bob↔Charlene direct | **PENDING_MESH** | mesh JNI not shipped on Android; host_mesh covers model |
+| G4 introduced-by / roster FP | **PENDING_MESH** | Bob learns Charlene only via mesh roster; G4b FP check mesh-only |
+| G5 wrong key / confirm-to-admit | **FAIL** | Wrong key still Encrypted on alice; G5b first=PLACED second=REFUSED_DUPLICATE (`g5-*.logcat`) — **app** |
+| G6 4 participants | **PASS** + **PENDING_MESH** | Alice 3 Encrypted links; full 6-link mesh needs NATIVE_MESH + mesh-capable peer |
+| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS`; host_mesh also PASS |
+| G8 leave continues | **FAIL** / **PENDING_MESH** | G8a: no `remaining=1` after bob left (`g8a-*.logcat`) — **app**; G8b B+C continue needs mesh |
+| G9 mute / hold | **PASS** mute / **FAIL** hold | Mute engines=2; hold got `held=true` but no `held=false` after resume (`g9-alice.logcat`) — **app** (harness message counts duplicate lines) |
+| G10 group + carrier | **PASS** | Carrier held group; no Merge |
+| G11 callee adds laptop | **FAIL** + **PENDING_MESH** | Charlene→laptop PLACED but not Encrypted (`g11-*.logcat`); A/B auto-link needs mesh — **app** |
+
+### Screenshots inspected
+
+- `g2-3person-alice.png` — header Encrypted; bob + charlene rows Encrypted + REMOVE
+- `g2-3person-bob.png` / `g2-3person-charlene.png` — still 1:1 with alice (pairwise; no group roster on callee)
+- `g7-full-alice.png` — bob, charlene, laptop Encrypted (4 total)
+
+### Not verified / needs real hardware
+
+- CPU/battery/thermal with 3 incoming Opus streams on a physical phone
+- Real LTE upload (~3×32 kbps) under cell radio
+- Bluetooth audio with a local mix
+- Bob↔Charlene mesh-join ringing/Telecom attach on device (native mesh JNI exists;
+  Android still prefers pairwise for invite ring)
+- Full API 29 G suite (one API 29 run still required for Part 1 acceptance)
+- API 35 Cases 1–10 + 4b + C3–C5 + onboarding full re-gate (running /tmp/e2e-step5-api35-multippeer.log)
+
+### Open decisions for the user
+
+1. When to flip Android `GroupCallCoordinator.backendNow()` to `NATIVE_MESH` (needs
+   ringing voice-ALPN invite mode on `meshAddPeer`, or Telecom synthetic legs for
+   mesh-join).
+2. Whether callee devices should show the full group roster in pairwise mode
+   (today only the adder hosts the Conference children).
+3. Confirm issue #30 open questions are closed by §14.2.1 (starter leave continues;
+   anyone may add; confirm-to-admit unencrypted).
+
+---
+
+## 2026-11-15 — API 29 local-relay regression hotfix (`fix/dns-api29`)
+
+Branch: `fix/dns-api29` (from main after #37 / #39).
+
+### Root cause (#37 API 29 regression)
+
+1. `AndroidDnsBridge.applyNetwork` called
+   `ConnectivityManager.bindProcessToNetwork`. On API 29 AVDs that wedged the
+   process default network and broke local-relay UDP (`PermissionDenied` on
+   `sendmsg`).
+2. Vendored `noq-udp` path: API 29 (kernel 4.14) can return `EPERM` for
+   unsupported `IP_TOS`/ECN cmsgs; upstream only fell back on `EINVAL`/`EIO`.
+3. Cold `-wipe-data` also cleared wedged AVD network state that produced
+   persistent `EPERM` even without ECN cmsgs.
+
+### Fix
+
+- Track active `Network` for explicit `DnsResolver` query/rawQuery only; flush
+  cache on change; **do not** bind the process.
+- `[patch.crates-io] noq-udp` → `vendor/noq-udp` (EPERM treated like EINVAL for
+  the no-`IP_TOS` fallback; halt GSO on EPERM). See `vendor/noq-udp/README.saga.md`.
+
+### Re-run gates
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| API 35 `run-e2e-step5.sh` | **PASS** | Cases 1–10 + 4b + C3–C5 + onboarding; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api35-dnsfix.log` |
+| API 29 `run-e2e-step5.sh` (cold wipe) | **PASS** Cases 1–7 + 4b + onboarding | Case 8/10 FAIL `inbound_accepted` (telecom flake); Case 9 incomplete (bob AVD offline mid-seed); C3 RELAY FAIL after bob AVD hung/offline; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api29-dnsfix.log` |
+| API 35 emu↔peer public ×10 each dir, Private DNS `one.one.one.one` | **PASS** 20/20 | `/tmp/saga-public-relay-emu-peer-api35-dnsfix/summary.txt`, `/tmp/saga-public-relay-peer-emu-api35-dnsfix/summary.txt` |
+| API 29 emu→peer public ×5, Private DNS ON | Partial | Alice **public relay-ready** after wipe; call connect **0/5** (~46s budget). Log: `/tmp/saga-public-relay-emu-peer-api29-dnsfix/summary.txt` |
+| API 29 peer→emu / network-change | Not completed | Follow-on after call-connect fails; alice relay later native=0 under churn |
+| API 35 network-change airplane×3 + wifi×3 | **PASS** 6/6 | Recover max 2944ms (airplane) / 610ms (wifi). `/tmp/saga-network-change-api35-dnsfix/summary.txt` |
+| Pcap Private DNS ON (API 35, post-DoT warm) | **PASS** | `udp port 53` capture during public call: **0** packets (`/tmp/dns53b-api35.pcap`). Bootstrap-only UDP/53 for `one.one.one.one` seen before warm. |
+| WireGuard VPN on emulator | **Not verified** | No WireGuard app/config on host/AVD this session; needs setup or hardware |
+
+### Not verified / needs hardware
+
+- API 29 public-relay **call** connect after relay-ready (DNS path OK; connect path open)
+- API 29 Case 8/9/10 + C3–C5 clean re-pass after long-suite AVD churn
+- C1/C2 conference (emulator RIL) — NEEDS_HARDWARE
+- WireGuard / always-on VPN call + DNS-in-tunnel
+
+### Open decisions
+
+- Keep vendored `noq-udp` until upstream accepts EPERM fallback; then drop patch.
+- Whether API 29 public call-connect 0/5 is AVD path/MTU vs app regression (API 35 20/20 on same build).
+
+---
+
+## 2026-11-14 — Android platform DNS (`fix/android-dns`)
+
+Branch: `fix/android-dns` (from main after #36).
+
+### Choice
+
+iroh 1.x exposes `DnsResolver::custom` / `EndpointBuilder::dns_resolver`. Saga
+implements `AndroidDnsBridge` (JNI → `android.net.DnsResolver` + cache) and
+keeps `presets::N0` (PkarrPublisher HTTPS + DnsAddressLookup TXT). Pkarr-over-HTTPS
+alone still needs A/AAAA for `*.relay.n0.iroh.link`, so a platform resolver is
+required either way; routing TXT through the same backend keeps one path that
+honours user DNS settings. No hard-coded Cloudflare/Google resolvers.
+
+### Gates
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Host `android_dns` unit tests (mock backend) | **PASS** 3/3 | |
+| Emu→peer public ×10, Private DNS `one.one.one.one` | **PASS** 10/10 | `/tmp/saga-public-relay-emu-peer/summary.txt` |
+| Peer→emu public ×10, Private DNS ON | **PASS** 10/10 | `/tmp/saga-public-relay-peer-emu/summary.txt` |
+| Pcap Private DNS ON | **PASS** | Emulator `udp port 53` capture: **0** packets; DoT to `1.0.0.1:853` observed |
+| Private DNS OFF + no peer | **PASS** | `Not reachable` ~19.7s; Telecom reason `Not reachable` |
+| Private DNS OFF + peer (Telenor Nettvern) | Observed | ISP DNS filter returns captive answers for some n0 hostnames → HTTPS probes `UnknownIssuer` (see `docs/design/relay-options.md`). euc1 path may still connect intermittently; README: enable Private DNS |
+| Private DNS OFF + no peer | **PASS** | `Not reachable` ~19.7s; Telecom reason `Not reachable` |
+| API 35 `run-e2e-step5.sh` (Cases 1–10 + 4b + C3–C5 + onboarding) | **PASS** | Case 7 speech corr=0.960 SI-SNR=10.7 STOI=0.994 both dirs; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api35-android-dns.log` |
+| Network-change recovery (airplane ×5, WiFi ×5) | **PASS** 10/10 | Relay recover max 3721ms (airplane) / 548ms (WiFi); all call_ok after. Log: `/tmp/saga-network-change-recovery/summary.txt` |
+
+### DNS concurrency
+
+Unbounded parallel `DnsResolver` bursts on some AVDs with Private DNS return
+`ECONNREFUSED` after the first success. The bridge allows up to **3** in-flight
+lookups so relay A/AAAA and discovery TXT can overlap without that flake.
+
+### Not verified
+
+- Cross-machine LAN public-relay ×10
+
+---
+
+## 2026-11-14 — Public reachability follow-up
+
+Branch: `fix/public-reachability`.
+
+### Connect / UX
+
+| Change | Detail |
+|--------|--------|
+| Connect budget | 18s wall; 8s/attempt; ≤3 attempts (was ~40s) |
+| UX | InCall **Connecting…** during discovery; `setInitializing` (no early ringback); offline → `Not reachable` |
+| Add call | InCall → Saga dialer (`EXTRA_ADD_CALL_MODE`) with contacts / search / keypad |
+
+### Public N0 soaks
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Host peer↔peer `--public-relay` ×10 each dir | **PASS** 20/20 | Peer under `bwrap` + clean DNS; home `euc1-1` ~3s |
+| Emu↔peer public ×10 (system DNS + Private DNS DoT) | **FAIL** 0/10 | Alice never relay-ready; logcat `UnknownIssuer` on N0 HTTPS probes. JNI context + `ACCESS_NETWORK_STATE` installed; iroh still queries `LinkProperties` nameserver IPs (`10.0.2.3` → host ISP) and bypasses DoT. Evidence: `/tmp/saga-public-relay-emu-peer-systemdns/summary.txt`. Pinned Cloudflare/Google **not** shipped (would leak discovery lookups). |
+| Prior pinned-resolver emu soak (not shipped) | 10/10 | Shown only as contrast; regresses privacy |
+
+### Offline Not reachable ×5
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Alice → laptop, no peer | **PASS** 5/5 | Wall ~17–18s; Telecom reason `Not reachable`; no §5a |
+
+### API 35 Step5 suite (local relay)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b | **PASS** |
+| Cases 8–10 | **PASS** |
+| C3–C5 | **PASS** (C1/C2 **NEEDS_HARDWARE**) |
+| Onboarding + `INBOUND_REJECT` | **PASS** |
+
+### Not verified
+
+- Cross-machine LAN public-relay ×10 (no second host this session)
+- Shipping in-app pinned DNS as a workaround (rejected for privacy)
+
+### Suites
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 `run-e2e-step5.sh` | **PASS** (C1/C2 NEEDS_HARDWARE); Case 7 not yet in suite | agent terminal Step5 run 2026-11-14 |
+
+---
+
+## 2026-11-13 — Phase 4: production reachability + carrier conference
+
+Branch: `phase-4-conference`.
+
+### Production dial / Not reachable
+
+| Change | Detail |
+|--------|--------|
+| Connect budget | ~40s wall clock; 12s/attempt; addressing misses ≤3 tries |
+| UX | Outgoing connect failure → `DisconnectCause(ERROR, "Not reachable")`; no §5a downgrade |
+| Release discovery | Still `Endpoint::builder(presets::N0)` (PkarrPublisher + DnsAddressLookup) |
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| Public N0 Case 2/2b ×10 cold | **STOPPED** after 0/2 | Callee home relay drop / reconnect deadlines on emulator (`Lost connection to relay`, `native=0` pre-dial). Per plan: do not paper over with custom-relay-only hacks. |
+| Offline callee → Not reachable | **PASS** ~40s | Force-stop all bob-identity emulators; alice dial → `NOT_REACHABLE` + Telecom reason `Not reachable`; no Downgraded path. Log evidence in session. |
+| Local-relay Case 2/2b | Used for conference + full suite | Default harness mode |
+
+### Conference UI (C1–C5)
+
+Script: `testing/e2e/run-e2e-conference.sh`. Screenshots under
+`/tmp/saga-conference-screencaps/`.
+
+| Case | Result | Notes |
+|------|--------|-------|
+| C1 | **NEEDS_HARDWARE** | GSM second-incoming not confirmed on emulator RIL |
+| C2 | **NEEDS_HARDWARE** | Merge not offered (no conferenceableCalls/children) |
+| C3 | **PASS** | Iroh + GSM hold path (`held=` in logcat); screencap c3 |
+| C4 | **PASS** | Merge absent from UI dump with Iroh+carrier |
+| C5 | **PASS** | Add call → dialer intent |
+
+Log: `/tmp/saga-conference-e2e3.log`. Screenshots: `/tmp/saga-conference-screencaps/`.
+
+### Needs real hardware
+
+- Real carrier merge / `getChildren()` / VoLTE conference
+- Dual-SIM multi-call edge cases
+- Reliable public N0 discovery soak on device (emulator public relay flaky)
+
+### Suites
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (1–10 + 4b + C1–C5 + onboarding) | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api35-phase4.log` (~10m) |
+| API 29 Step5 once | **PASS** (C1/C2 NEEDS_HARDWARE) | `/tmp/e2e-api29-phase4.log` (~9m) |
+
+### Open decisions
+
+- Whether to keep public-relay soak as optional nightly only (local remains default)
+- Exact Add-call UX (dialer vs inline number pad)
+
+---
+
+## 2026-11-13 — RING flake root cause (issue #20) + Phase 2 complete
+
+Branch: `fix/ring-flake`. Extends #20 to Cases 6, 4b, 10.
+
+### Root cause (app)
+
+Failed runs always missed **`inbound_accepted` first** (then every later
+Telecom checkpoint). Captures (`dump_ring_failure`): logcat both devices,
+`dumpsys telecom`, ordered checkpoint timestamps.
+
+Two app bugs:
+
+1. **`RELAY_POLL` latched Ready** after the first `endpoint.online()`. Callee
+   could lose the home relay (`Lost connection to relay` / reconnect deadlines)
+   while the harness still saw Ready and dialed → no inbound accept.
+2. **Connect used `EndpointAddr::from(PublicKey)` only**, so dial depended on
+   pkarr/DNS. Emulators often hit `No addressing information available` (pkarr
+   to `dns.iroh.link` times out) even when both peers shared the local relay.
+
+Harness (not the ring miss itself): RING wait already required the right
+checkpoints; on fail it now dumps artifacts. Also bounded API 29 `adb logcat -d`
+/ `cleanup-stuck-calls` (those hung the cold suite), and re-check callee relay
++ clear callee logcat immediately before dial.
+
+### Fix
+
+- Live `home_relay_status` sample in `poll_relay_ready()` + disconnect/reconnect
+  watcher logs.
+- `endpoint_addr_for_peer`: hint custom/home relay URL on connect (and RoQ).
+- `wait_for_incoming_ringing` → `dump_ring_failure` on FAIL.
+- `testing/e2e/run-ring-flake-regression.sh` (Cases 6/4b/10 × N cold).
+
+### 20/20 cold RING (API 35 Alice/Bob)
+
+| Case | Result | Log |
+|------|--------|-----|
+| 4b | **20/20** | `/tmp/ring-flake-regression2-full.log` |
+| 6 | **20/20** | same |
+| 10 | **20/20** | same |
+
+### Suites after wipe / unwedge
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 (1–10 + 4b + onboarding / INBOUND_REJECT) | **ALL PASS**; Case1 cue once | `/tmp/e2e-api35-ringfix-full.log` |
+| API 29 cold Step5 (wipe-data AVDs; same cases) | **ALL PASS**; Case1 cue once | `/tmp/e2e-api29-ringfix-full3.log` |
+
+Issue #20 closed with this fix.
+
+---
+
+## 2026-11-13 — Phase 2 close-out (historical; open items at time of writing)
+
+Branch: `phase-2-closeout`. Logs: `/tmp/preanswer-gate.log`,
+`/tmp/pcm-preanswer-metrics2.log`, `/tmp/echo-rtt3.log`, `/tmp/rx-fault2.log`,
+`/tmp/e2e-api35-final.log`, `/tmp/onboard-api35-final.log`, `/tmp/tree-release-shaped.txt`.
+
+### A. Pre-answer media (follow-up to item 2)
+
+Confirmed: before this change the caller started AudioRecord/send at Encrypted
+(while callee still RINGING). Fix:
+
+- Caller: native RX at Encrypted; **send/playout gated** until explicit
+  answered signal (`MEDIA_TAG_ANSWERED` / `SAGAANS1`).
+- Callee: RX at Encrypted while RINGING; on answer **flush JB + playback ring**,
+  send answered signal, then arm send/playout + Audio I/O.
+- Callee capture stays off until answer (**PASS**).
+
+| Check | Result | Log |
+|-------|--------|-----|
+| caller sent=0 while RINGING (both dirs) | **PASS** | `/tmp/preanswer-gate.log` |
+| callee audio I/O off while RINGING | **PASS** | same |
+| flush + answered signal on answer | **PASS** | same |
+| post-answer metrics alice→bob / bob→alice | corr **0.960** / 10.7 dB / STOI 0.994 / lost=0 / jb≈20–60 | `/tmp/pcm-preanswer-metrics2.log` |
+
+### 1. Release randomness and dependencies
+
+- Release-shaped `cargo tree -e features --features iroh-transport`:
+  `galdr-core` **default only** — **no `test-hal`** (`/tmp/tree-release-shaped.txt`).
+- Host test `production_trng_two_handshakes_differ_ephemeral_pubkeys` **PASS**.
+- Production: `OsTrng` + `MemoryVaultStorage` in `saga-session`. Fake* only in
+  `testing/mock-token`.
+- **galdr-vault / vsss-rs**: required via `ephemeral-session` for LT/vault
+  handshake material — kept (not mock-only).
+- `scripts/check-release-so.sh`: FakeTrng, FakeVaultStorage, test-hal,
+  saga-echo-mode, saga-rx-fault.
+
+### 2. alice→bob asymmetry (FIXED) + pre-answer gate above
+
+Root cause: caller sent before callee ReceiveFlow existed. RX-at-Encrypted while
+RINGING + answered-signal send gate. Steady metrics unchanged at 0.960 / 10.7.
+
+### 3. Echo mouth-to-ear (emulator only; not phone-representative)
+
+| Path | RTT | RTT/2 | JB target | Log |
+|------|-----|-------|-----------|-----|
+| alice↔bob | 117.8 ms | 58.9 ms | 40 ms | `/tmp/echo-rtt3.log` |
+| bob↔alice | 91.8 ms | 45.9 ms | 40 ms | same |
+
+Hygiene: `saga-echo-mode` in `check-release-so.sh`.
+
+### 4. Receive-side fault injector (5% + ~30 ms)
+
+| Path | corr | SI-SNR | STOI | JB med/max | late | lost | Log |
+|------|------|--------|------|------------|------|------|-----|
+| alice→bob | 0.850 | 4.2 | 0.967 | 60/100 | 0 | ~14 | `/tmp/rx-fault2.log` |
+| bob→alice | 0.845 | 4.0 | 0.968 | 60/100 | 0 | ~14 | same |
+
+### 5. Connect-cue dedupe
+
+Committed (`DEDUPE_MS=2500`). Root cause: API 29 double-fired connect
+SecurityUpdate / resume → same cue twice.
+
+- API 35 Case 1: **PASS** cue once (`/tmp/e2e-api35-final.log`).
+- API 29 Case 1: previously **PASS** cue once on cold suite
+  (`/tmp/e2e-closeout-api29-cold.log`); **re-run blocked** this session — API 29
+  emulators wedged on `adb`/`run-as` (timeout added to relay poll).
+
+### Suites (this session)
+
+| Gate | Result |
+|------|--------|
+| API 35 Cases 1–6 + 2b/2c/4/5/6 | Case1–6,2b,2c,4,5 **PASS**; **Case4b RING flake**; (`/tmp/e2e-api35-final.log`) |
+| API 35 Case 8 / 9 | **PASS** (`gap_ms=0`; hold) |
+| API 35 Case 10 | **RING flake** (`/tmp/e2e-case10.log`) |
+| API 35 onboarding + INBOUND_REJECT | **PASS** (`/tmp/onboard-api35-final.log`) |
+| API 29 cold + onboard | **not re-verified this session** (emulator adb hang) |
+
+### Needs real hardware
+
+- Phone mouth-to-ear with AEC/NS/AGC
+- Speaker / earpiece acoustics
+- Cellular hold on a real modem / dual-SIM
+- Sustained loss/jitter on real mobile networks
+- xous-core#937 items (unchanged)
+
+---
+
+## 2026-11-13 — Phase 2 Step 5 verification (complete)
+
+### A. Adaptive JB
+
+- Playout target separate from loss; starts ~50 ms (`TARGET_MS_MIN`/`HIGH` =
+  40/60); tracks high-percentile inter-arrival deviation + margin; grows on
+  late/underrun; shrinks when stable. Loss only after playout deadline. Cap
+  **300 ms**.
+- Unit tests (`cargo test --lib jitter::` in `saga-media`): **8/8 PASS**
+  including `steady_link_target_converges_near_60ms`,
+  `jitter_burst_grows_then_shrinks`, `target_never_exceeds_cap`.
+- Live emulator: steady bob→alice settles at `jb_target_ms=40` (≤60 ms).
+  alice→bob often starts with startup loss and climbs toward cap then shrinks
+  (`jb_target_ms` 300→260 observed).
+
+### B. What `lag_ms` = 433.6 was
+
+`pcm_score.py` `lag_ms` is **cross-correlation alignment** between the
+LibriSpeech reference and the decoded dump (sample lag / 48 kHz) so corr /
+SI-SNR / STOI compare the same speech. On paced inject it is **identical
+(~433.6 ms) on every path** because inject start, dump arming, and JB priming
+share the same harness schedule. It is **not** mouth-to-ear latency.
+
+### Real mouth-to-ear (emulator only)
+
+Click marker via `org.saga.TEST_PCM_MARKER`: inject splices a 2 ms impulse and
+logs `LATENCY_MARKER inject_ns=…`; dump side detects peak and logs
+`LATENCY_MARKER dump_… dump_frame=…` (cross-device; clocks are not synced, so
+subtracting `elapsedRealtimeNanos` across emulators is invalid). Controllable
+playout delay is `jb_target_ms`. **Emulator timings are not representative of
+phones.**
+
+Per-stage breakdown (order of magnitude, emulator):
+
+| Stage | Est. |
+|-------|------|
+| Capture buffer | ~20 ms frame |
+| Opus encode | ~20 ms |
+| Network / RoQ | LAN few ms; `emu network delay umts` ~35–200 ms |
+| JB | `jb_target_ms` (40–300) |
+| Opus decode / PLC | ~20 ms |
+| AudioTrack | tens of ms (ring) |
+
+Observed marker detect (API 35, `/tmp/pcm-step5d.log`): alice→bob dump peak at
+`dump_frame=295`; bob→alice at `dump_frame=403` (frame index from dump arm,
+not one-way M2E alone).
+
+### C. Four paths + impaired network (API 35, relay `http://192.168.1.191:3340`)
+
+Logs: `/tmp/pcm-step5d.log`, `/tmp/peer-step5d.log`, `/tmp/pcm-netdelay2.log`.
+`lag_ms` column = alignment only.
+
+| Path | corr | SI-SNR | STOI | jb med/max (ms) | late | lost | latency notes |
+|------|------|--------|------|-----------------|------|------|---------------|
+| alice→bob | 0.860 | 4.5 dB | 0.936 | 260/280; target 260–300 | 0 | ~22–35 startup | marker dump_frame=295 |
+| bob→alice | **0.960** | **10.7 dB** | **0.994** | 20/40; target **40** | 0 | 0 | marker dump_frame=403 |
+| alice→peer | **0.960** | **10.7 dB** | **0.994** | peer ≤40 | 0 | 0 | inject WAV |
+| peer→alice | **0.960** | **10.8 dB** | **0.995** | ≤40 | 0 | 0 | inject WAV |
+| emu `network delay umts` A→B | 0.860 | 4.5 dB | 0.936 | 260/280; target 260–300 | 0 | ~35 startup | same as clean A→B |
+| emu `network delay umts` B→A | **0.960** | **10.7 dB** | **0.994** | 20/40; target 40 | 0 | 0 | delay 35–200 ms |
+
+`tc netem` 5% loss + 30 ms: **skipped** (`sudo` password required). Emulator
+`network delay umts` used as jitter/latency proxy (no packet-loss control).
+
+### D. Cases 8–10 + screenshots
+
+| Gate | Result |
+|------|--------|
+| Case 8 rekey PCM gap | **PASS** `gap_ms=0` with continuous 440 Hz tone (LibriSpeech natural ~920 ms pause was a false positive). `/tmp/case8-tone2.log` |
+| Case 9 cellular hold | **PASS** `held=` path (`EMU gsm call`); screenshot On hold |
+| Case 10 mute/unmute | **PASS** `muted=true/false`; capture gated |
+| Screenshots (looked at) | `docs/screenshots/step5/`: Encrypted active; **Muted** + UNMUTE; **Speaker** + EARPIECE; **Speaker · On hold** + RESUME |
+
+### E. Spec + suites
+
+| Gate | Result |
+|------|--------|
+| `saga-spec.md` media pipeline + diagram | Present (adaptive JB 40–60 ms, cap 300 ms; lag_ms vs marker) |
+| Full suite API 35 | **PASS** Cases 1–10 + 4b + onboarding **INBOUND_REJECT** (`/tmp/e2e-step5-api35-full.log`) |
+| Full suite API 29 | **PASS** Cases 2–10 + 4b + onboarding INBOUND_REJECT after PhoneAccount Settings-UI enable + stuck-GSM cleanup; Case 1 fixed by connect-cue dedupe (`/tmp/e2e-step5-api29-full3.log`; Case 1 recheck cue_count=1 after dedupe) |
+
+Harness fixes for API 29: `enable_saga_phone_account` (Settings UI fallback —
+`cmd telecom set-phone-account-enabled` is unimplemented on API 29);
+`clear_stuck_telephony_calls` (CASE1 left ACTIVE GSM that blocked Iroh
+`placeCall`); connect-cue 2.5 s dedupe.
+
+### Needs real hardware
+
+- Mouth-to-ear latency on phones (AEC/NS/AGC)
+- Speaker / earpiece acoustic quality
+- Cellular hold while Iroh active on dual-SIM / real modem
+- Sustained 5% loss + jitter on mobile networks (`tc netem` / field)
+
+---
+
+## 2026-11-12 — Phase 2 Step 3b: STOI measurement + JB cap 300 ms (#27)
+
+### STOI fix (`testing/e2e/pcm_score.py`)
+
+Prior STOI ≈0.14 with corr 0.960 was a **measurement bug**: pystoi ran on unaligned 48 kHz windows.
+Fix: apply the **same lag** as corr/SI-SNR, trim equal length, resample **both** 48 kHz → 16 kHz, then pystoi.
+
+Reference: LibriSpeech fixture `saga-media/fixtures/speech_clip_48k.wav` (48 kHz mono s16).
+
+Sanity:
+```
+python3 testing/e2e/pcm_score.py --ref saga-media/fixtures/speech_clip_48k.wav --self-stoi
+# self_stoi: stoi=1.0000 sr_in=48000 sr_stoi=16000
+
+python3 testing/e2e/pcm_score.py --ref saga-media/fixtures/speech_clip_48k.wav \
+  --deg-wav saga-media/target/stoi/deg-clean.wav --label host_clean
+# host_clean: corr=0.960 si_snr_db=10.8 stoi=0.9946  (lag-aligned)
+# legacy stoi_eval.py (no lag) on same pair: STOI=0.9312
+```
+
+Exact score command (all four paths):
+```
+python3 testing/e2e/pcm_score.py \
+  --ref saga-media/fixtures/speech_clip_48k.wav \
+  --deg-raw <path.pcm> \
+  --label <label>
+```
+
+### JB cap = 300 ms (keep loss-window fix)
+
+- Reorder/loss wait remains ~200 ms (10 ticks) then jump-forward.
+- Cap **300 ms** (15 × 20 ms): wait window + 100 ms headroom for a short burst; not 1 s (would soak test backlog into call latency).
+- Overflow drops **nearest** (jump-forward), not farthest (which punched future holes).
+- RoQ tick recv drain capped (≤5 datagrams / stop before JB full) so catch-up bursts do not force overflow.
+
+### Metrics (API 35, LAN `http://192.168.1.191:3340`) — `/tmp/pcm-cap300c.log`, `/tmp/peer-cap300b.log`
+
+Mouth-to-ear ≈ `lag_ms` from pcm_score (emulator scheduling; **not** representative of phones).
+
+| Path | corr | SI-SNR | STOI | jb med/max (ms) | late | lost | lag_ms (M2E est.) |
+|------|------|--------|------|-----------------|------|------|-------------------|
+| alice→bob | **0.960** | **10.7 dB** | **0.9940** | 260 / 280 | 0 | 0 | 433.6 |
+| bob→alice | **0.960** | **10.7 dB** | **0.9940** | 260 / 280 | 0 | 0 | 433.6 |
+| alice→peer | **0.960** | **10.7 dB** | **0.9940** | peer ≤20 max | 0 | 0 | 433.6 |
+| peer→alice | **0.960** | **10.8 dB** | **0.9946** | 80 / 100 | 0 | 0 | 433.6 |
+
+### Gates (after cap change)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-cap300.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-cap300-{1..5}.log`) |
+| Merge #27? | **Hold** — do not merge |
+
+---
+
+## 2026-11-12 — Phase 2 Step 3b: Android RoQ verification (#27) — hold fixes
+
+### RoQ noise bisect (T1–T6)
+
+| Stage | Result |
+|-------|--------|
+| T1 JNI LE unpack | **OK** (inject_verify corr=1.000; `JniPcmByteOrderTest` + host ramp test) |
+| T2 local Opus | **OK** (`roq_bisect_stages` / codec loopback) |
+| T3/T4 RTP/SRTP | **OK** (tamper=0, wrong_mode=0 when healthy) |
+| T5/T6 decoded dump | **First bad** |
+
+**Root causes (T5/T6):**
+1. RoQ `select!` starved recv/playout when capture stayed ready
+2. JB premature loss (`ahead>=8`) + 200 ms cap dropped bursted emulator datagrams (`played≈100` while peer `sent≈400`)
+3. Emulator `AudioRecord` returned immediately → inject burned WAV into a tiny capture queue
+
+**Fix:** tick-only media loop; silence/`Wait` before first decode; loss only after ~200 ms then jump-forward; capture paced to 20 ms; capture channel 512; peer `--wav-out` finalized on SIGTERM/Drop. JB cap later set to **300 ms** (see section above; briefly 1 s during diagnosis).
+
+### Metrics (superseded — see STOI + 300 ms section above)
+
+Earlier table reported STOI ≈0.14 due to unaligned pystoi; audio corr/SI-SNR were already ~0.960 / 10.7 dB.
+
+AudioRecord/AudioTrack logged 48 kHz mono PCM16, frame 960, `ByteOrder.nativeOrder()` (= LE).
+
+### Relay
+
+- Bind `0.0.0.0:3340`; advertise LAN URL via `lan-relay-url.sh` / `saga-peer relay-host`
+- E2E `push_iroh_relay_pref` generates LAN prefs (no `127.0.0.1` / `10.0.2.2` ads)
+
+### Gates (earlier hold)
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** (`/tmp/e2e-full-hold27-rerun2.log`) |
+| Onboarding INBOUND_REJECT | **5/5 PASS** (`/tmp/onboarding-final-{1..5}.log`) |
+| CI | **green** https://github.com/Supermagnum/saga/actions/runs/43283426003 (`ba7946f`) |
+| Merge #27? | **Hold** — do not merge |
+
+---
+
+## 2026-11-12 — Phase 2 Step 3: Android audio I/O + Telecom
+
+### Pre-Step-3 checks (#23)
+
+| Item | Result |
+|------|--------|
+| LibriSpeech fixture | **Committed** at `saga-media/fixtures/speech_clip_48k.wav` + `ATTRIBUTION.md` (CC BY 4.0). Tests load the local WAV — no OpenSLR network fetch. |
+| Warm-cache GHA rust job | **~177 s** on attempt 2 of [run 43225104217](https://github.com/Supermagnum/saga/actions/runs/43225104217/job/131211748804) (`rust (fmt / clippy / test)` 13:22:56Z→13:25:53Z) |
+
+### Audio API choice
+
+**AudioRecord + AudioTrack** with `VOICE_COMMUNICATION` / `USAGE_VOICE_COMMUNICATION`, PCM via JNI direct `ByteBuffer`s.
+
+| Option | Why not / why |
+|--------|----------------|
+| **AudioRecord/AudioTrack (chosen)** | Session IDs for `AcousticEchoCanceler` / `NoiseSuppressor` / AGC; matches Telecom-managed call audio; no per-frame heap alloc; `THREAD_PRIORITY_URGENT_AUDIO` |
+| Oboe | Extra NDK surface; platform AEC attach is still AudioRecord-session oriented for voice-comm |
+| cpal | Reserved for Linux peer (spec §10); weak VOICE_COMMUNICATION / Telecom integration on Android |
+
+### Platform AEC/NS (emulator probe)
+
+Instrumented `VoiceEffectsProbeTest` on `sdk_gphone64_x86_64` (API 35):
+
+```
+aecAvailable=false aecAttached=false nsAvailable=false nsAttached=false agcAvailable=false agcAttached=false
+```
+
+Engine still starts on `VOICE_COMMUNICATION` and logs attach results at runtime. Physical devices typically report available=true.
+
+### Telecom
+
+- Mute: `InCallService.setMuted` + engine gates send (capture/playback streams stay up)
+- Route: `CallAudioState` / `setAudioRoute`; API 34+ `requestCallEndpointChange` when endpoints known
+- Hold: `Connection.onHold` / `onUnhold` + `Call.STATE_HOLDING` → pause Iroh media; cellular can hold/resume an Iroh call
+- Media starts only after security resolves (Encrypted→SRTP mode 1; NeverEncrypted / §5a Continue→plain RTP mode 2)
+
+### §5b re-key
+
+Media **keeps flowing** during §5b re-handshake: the call is not paused for the
+crypto round-trip. On successful re-key, `rekey_srtp` installs new send/receive
+SRTP contexts immediately and keeps the previous **receive** context
+(`decrypt_prev`) briefly so in-flight packets on the old keys still decrypt.
+Send switches to the new keys at the swap; there is no “hold media until
+handshake completes” gate.
+
+Host test `tests/rekey.rs` measures only the **key-swap** duration
+(**rekey_swap_us ≈ 6–12 µs**). That is not the audible gap. **Step 5 Case 8**
+must measure the gap in **decoded PCM at the receiver** across the re-key
+(target under ~100 ms), not the key-swap timer.
+
+### §16 disguise
+
+Implemented in Part 2 (`feat/voice-disguise`): see top-of-file Part 2 section
+and `docs/voice-disguise/`.
+
+### In-call UI screenshots (looked at)
+
+`docs/screenshots/step3/`: `incall_base.png`, `incall_muted.png` (Muted / UNMUTE), `incall_speaker.png` (Muted · Speaker / EARPIECE), `incall_held.png` (Muted · Speaker · On hold / RESUME).
+
+### E2E
+
+| Gate | Result |
+|------|--------|
+| Cases 1–6 + 4b + Phase 3 | **PASS** `/tmp/e2e-step3-full2.log` |
+| Case 5a/5b mid-call rekey | **PASS** (rekey_swap_us≈1 µs on device bridge; host pipeline ≈6–12 µs) |
+| PhoneAccount onboarding | **PASS** `/tmp/e2e-onboarding-step3.log` |
+
+Root cause for Case 5 regression: JNI pull wrote PCM without advancing `ByteBuffer` position; `flip()` then `get()` threw `BufferUnderflowException` on `saga-playback`, killing the process before mid-call rehandshake.
+
+---
+
+## 2026-11-12 — Phase 2 Step 2 follow-ups (LibriSpeech, STOI, CI, unsecured)
+
+### Speech fixture (LibriSpeech CC BY 4.0)
+
+| Field | Value |
+|-------|--------|
+| File | `saga-media/fixtures/speech_clip_48k.wav` |
+| Utterance | `5694-64038-0005` (`dev-clean-2`, OpenSLR 31) |
+| Transcript | HE WALKED UP AND SAYS HELLO BOYS WHAT IS IT BOSS |
+| Attribution | `fixtures/ATTRIBUTION.md` + NOTICE |
+
+espeak fixture **not kept** — LibriSpeech is the CI gate; espeak only useful as a zero-download smoke generator when OpenSLR is unreachable (do not commit).
+
+### Re-baselined speech CI gates
+
+| Test | corr | SI-SNR | Gate |
+|------|------|--------|------|
+| Tone full pipeline | 0.987 | 15.7 dB | corr ≥ 0.85, SI-SNR ≥ 15 dB |
+| LibriSpeech speech | **0.961** | **11.1 dB** | corr ≥ 0.85, SI-SNR ≥ 10 dB |
+
+### STOI (local, not CI) — pystoi MIT
+
+Speech-mode STOI at 16 kHz on the LibriSpeech clip after Opus/SRTP/JB path:
+
+| Condition | STOI |
+|-----------|------|
+| clean | **0.9312** |
+| 5% loss | **0.8847** |
+| 15% loss | **0.8436** |
+
+**Exact command (reuse in Phase 5):**
+
+```bash
+cd saga-media
+cargo test --test stoi_export -- --ignored --nocapture
+python3 scripts/stoi_eval.py \
+  --ref fixtures/speech_clip_48k.wav \
+  --deg target/stoi/deg-clean.wav \
+  --deg target/stoi/deg-5pct.wav \
+  --deg target/stoi/deg-15pct.wav \
+  --labels clean,5pct,15pct
+```
+
+Deps: `pip install pystoi soundfile numpy`. ViSQOL not used (binary unavailable); STOI chosen instead.
+
+### CI speed (saga-media)
+
+| | Wall |
+|--|------|
+| Cold (`cargo clean` then `cargo test -j 2`) | **354 s** (local; dominated by libopus cmake + dep compile) |
+| Warm (target populated, `[profile.test] opt-level = 2`) | **~6.8 s** |
+
+CI: Swatinem rust-cache `shared-key: saga-rust-host-v2` + dedicated `actions/cache` on `saga-media/target` keyed by `Cargo.lock`.
+
+### Unsecured Iroh media decision
+
+Plain RTP inside RoQ after not-encrypted resolution (QUIC still encrypts transport; no token/SRTP). Spec §5/§6 updated. Host tests in `tests/unsecured.rs` (policy, §5a decline, no silent downgrade, plain↔SRTP tag reject).
+
+---
+
+## 2026-11-12 — Phase 2 Step 2: saga-media host pipeline (initial)
+
+### Crate / stack
+
+| Item | Choice |
+|------|--------|
+| Crate | `saga-media/` (host-testable; not inside `saga-iroh-core`) |
+| Opus | `opus` **0.3.1** + `audiopus_sys` (cmake/cc from source — F-Droid-safe; same stack as iroh-roq tests). 48 kHz mono, 20 ms, **CBR 32 kbps** (was VBR; privacy #40), in-band FEC on, **DTX off**, `Application::Voip`, complexity 10 |
+| SRTP | `webrtc-srtp` **0.17.3** `ProtectionProfile::AeadAes256Gcm` |
+| RoQ | fork `c9b02963…` — `try_send_payload` (non-blocking; never `send_rtp_wait` on media path), `read_bytes`, `max_datagram_size` |
+| Keys | HKDF-SHA256 over `saga_session_key`; info = direction label + `transcript_hash`; labels `saga-srtp-caller-to-callee-v1` / `saga-srtp-callee-to-caller-v1` |
+
+### Loss / security / limits
+
+| Test | Result |
+|------|--------|
+| 5% loss + jitter/reorder | corr ≈ 0.99; JB bounded |
+| 15% loss + jitter/reorder | corr ≈ 0.77 (≥ 0.30); no panic |
+| Tamper / replay / wrong-key | counters; all wrong-key rejected |
+| Tiny `max_datagram_size` | `DatagramTooLarge`; `media_failed` |
+| Forced blocked drops | `datagram_blocked_drops` |
+
+---
+
+## 2026-11-12 — Phase 2 Step 1: iroh-roq → iroh 1.x
+
+- Fork: https://github.com/Supermagnum/iroh-roq @ `408d8ccccd3c6ee6a44d7da4a960d34e0c36e971` (superseded by `c9b02963…` in Step 2)
+- Upstream draft (not opened): `docs/upstream/iroh-roq-port.md`
+- Source diff vs upstream: +118 / −48 (7 files, excl. lock)
+- Fork tests: datagram (10 + 1000), stream, opus — PASS
+- Case 6 RING flake tracked: https://github.com/Supermagnum/saga/issues/20 (0/3 in dedicated full runs; 1 prior Step0 FAIL)
+
+---
+
+## 2026-11-12 — Phase 2 Step 0: saga-session production crate
+
+### Layout
+
+| Crate | Role |
+|-------|------|
+| `saga-session/` | `SessionToken`, `HandshakeOutput`, channel binding, confirmation MAC + stream driver |
+| `testing/mock-token/` | `MockSessionToken`, `MockIdentity`, synthetic media probe (debug/E2E) |
+| `saga-iroh-core/` | Depends on `saga-session` always; `mock-token` feature for debug/E2E only |
+
+Release Cargo features: `--features iroh-transport` (no `mock-token`, no iroh `test-utils`). Debug/E2E: `iroh-transport,mock-token`.
+
+`cargo tree -e normal --features iroh-transport`: includes `saga-session` + `ephemeral-session` + `galdr-core`/`galdr-vault` (firmware types for production handshake). **No** `mock-token`. `vsss-rs` appears via `galdr-vault` (firmware dep, not the mock).
+
+Release arm64 `.so` hygiene (`scripts/check-release-so.sh`): absent `MockSessionToken`, `saga-dev-v1`, `insecure_skip_verify`, `saga-synthetic-audio-v1`.
+
+### Expected release behaviour
+
+No production `SessionToken` backend wired yet (FakeTrng / USB token still behind `mock-token` or future Galdralag) → every Iroh call handshake fails → "not encrypted" + `call_unsecure` (and §5a when prior encrypted history). Documented; not a regression of the UX rules for when a token *is* present (debug/E2E with mock).
+
+### Emulator E2E (API 35, after move)
+
+| Case | Result | Notes |
+|------|--------|-------|
+| 1–5, 2b, 2c, 4b | PASS | Full suite `/tmp/e2e-phase2-step0.log` |
+| 6 | PASS | Suite timed out RING once (flake after Case 5); standalone re-run PASS `/tmp/e2e-case6-retry.log` |
+| Phase 3 | PASS | |
+| Handshake budget | PASS | case2 372 ms; case2b 336 ms (≤2 s target) |
+
+---
+
+## 2026-11-12 — Pre-merge #16 (confirmation MAC, deps, NOTICE)
+
+### Confirmation MAC (spec §12)
+
+After ephemeral-session key derivation + EndpointId channel binding, both sides exchange HMAC-SHA256 confirmation MACs on the Iroh bi-stream (`confirm_key` from dedicated HKDF info `saga-iroh-confirm-v1`, role labels `saga-confirm-initiator-v1` / `saga-confirm-responder-v1`). Compare with `subtle` constant-time. Security state reaches Encrypted only after both MACs verify (inside §8 2 s / 4 s). Mismatch → `TokenError::ConfirmationFailed` → key-not-found / §5a.
+
+| Host test | Result |
+|-----------|--------|
+| Same handshake, different EndpointId sets | confirmation fails |
+| Tampered MAC / wrong role | `ConfirmationFailed` |
+| `force_binding_perturb` on one side | both fail |
+
+#### a) Emulator fault-injection (Case 4b)
+
+Debug-only `force_binding_perturb` SharedPreferences on one side (perturbed
+EndpointId binding input). Expected: confirmation MAC fails → NOT Encrypted,
+`call_unsecure.wav` once, §5a modal for a previously-encrypted contact.
+
+Re-run log: `/tmp/e2e-phase15-budget.log` — **PASS** (see Full E2E below).
+
+### Zeroize + debug-only hash-prefix logs
+
+- `HandshakeOutput` / `ConfirmationKey`: `Zeroize` + `ZeroizeOnDrop` (confirmation key zeroised after successful exchange).
+- Hash-prefix logs are compiled only under `#[cfg(debug_assertions)]` — sites in `testing/mock-token/src/handshake_io.rs`, `mock_session.rs`, and `saga-iroh-core/src/iroh_transport.rs`. Release/`ci` profiles omit them; E2E relies on media round-trip.
+
+### Contact-key migration
+
+No Room schema. Debug builds: `TestContactSeeder` delete+reinsert bob/alice/thor on launch (replaces legacy phone-label DATA1 with 64-hex fingerprints). Documented on `ContactKeyRepository`. Production: wipe app data / clear Contacts manually if upgrading a debug install with label rows.
+
+### Dependencies (galdr-vault / galdr-core)
+
+Not type-only helpers. `ephemeral-session` alone is insufficient for the software mock: `InitiatorSession`/`ResponderSession` need `HardwareTrng` + `VaultStorage`, and LT Brainpool key gen uses `galdr-vault`. `galdr-core` with `test-hal` supplies `FakeTrng` / `FakeVaultStorage` (not re-exported by `ephemeral-session`). Keep both direct deps on `mock-token`.
+
+`cargo tree -e normal --features iroh-transport` (production-shaped; no `mock-token`):
+
+```
+saga-iroh-core
+├── blake3 …
+├── iroh …
+├── jni …
+├── log …
+└── tokio …
+```
+
+**`vsss-rs` is not in that tree.** It appears only when `--features mock-token` pulls `galdr-vault` (E2E / current Android build still enables `mock-token` until Phase 6 hygiene).
+
+### arm64-v8a release link
+
+```bash
+cd saga-iroh-core && cargo ndk -o /tmp/saga-ndk-release -t arm64-v8a \
+  build --release --features iroh-transport,mock-token
+```
+
+Result: `libsaga_iroh_core.so` — ELF aarch64 shared object, links (`liblog`/`libdl`/`libm`/`libc`), exports JNI including `nativeSetForceBindingPerturb`.
+
+### NOTICE
+
+Root `NOTICE` lists Galdralag GPL-3.0, iroh, RustCrypto, blake3, icons AGPL, Android/Jetpack. In-app licences screen deferred to Phase 6.
+
+### Onboarding / guard suite (API 35 re-run)
+
+```bash
+SERIAL_PA=emulator-5558 SERIAL_PEER=emulator-5556 \
+  bash testing/e2e/run-e2e-phone-account-onboarding.sh
+```
+
+Log: `/tmp/e2e-pa-api35-rerun.log`. **PASS** — BLOCK / SETTINGS_UI enable / CASEB / URI `tel:,` / inbound reject while disabled / caller not Encrypted.
+
+### P256r1 vector
+
+Committed: `testing/mock-token/tests/fixtures/p256_vector_c0_d0.json` (FakeTrng `0xC0`/`0xD0`) alongside `p384_vector_c1_d1.json`. Host `vectors.rs` covers both.
+
+### Full E2E (API 35, with Case 4b) + handshake budget
+
+```bash
+SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
+```
+
+#### b) Re-run after key confirmation (API 35)
+
+Log: `/tmp/e2e-phase15-budget.log` — **PASS** Cases 1–6 + Case 4b + Phase 3.
+
+| Case | Result |
+|------|--------|
+| 1–3, 5–6 | PASS |
+| 4 | PASS (force_fail downgrade) |
+| **4b** | **PASS** — binding perturb → confirmation MAC failed → not Encrypted → `call_unsecure` once → §5a (previously-encrypted contact; modal title asserted when UI dump available) |
+
+Handshake wall time (InitMessage → `Handshake settled to [Encrypted]`, includes confirmation MACs). Spec §8: **2 s target / 4 s hard**:
+
+| Direction | Time | Budget |
+|-----------|------|--------|
+| Case 2 alice→bob | **346 ms** | PASS ≤2 s target / ≤4 s hard |
+| Case 2b bob→alice | **328 ms** | PASS ≤2 s target / ≤4 s hard |
+
+Harness: `record_handshake_budget` in `testing/e2e/e2e-common.sh`.
+
+---
+
+## 2026-11-12 — Phase 1.5 ephemeral-session in mock-token
+
+### Pin
+
+| Field | Value |
+|-------|--------|
+| Repo | `https://github.com/Supermagnum/Galdralag-firmware` |
+| Rev | `b781bf6fa5ccf8700a5fb061583c31cfa00241a1` |
+| Date | 2026-10-22 |
+| Crates | `ephemeral-session`, `galdr-core` (`test-hal`), `galdr-vault` |
+| Licence | GPL-3.0 (compatible with Saga AGPL-3.0) |
+| Host build | `cargo test` in `testing/mock-token` — OK |
+| Android ABIs | `cargo ndk -t arm64-v8a -t x86_64` smoke of the same crates — OK |
+
+Default curve: **BrainpoolP384r1**. Both P256r1 and P384r1 covered by host tests.
+
+Channel binding: Saga HKDF over `profile_prk` + sorted Iroh EndpointIds (`saga-iroh-channel-v1`); no wire change. See saga-spec.md §6.
+
+### Host verified
+
+```bash
+cd testing/mock-token && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd saga-iroh-core && cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings && cargo test --features iroh-transport,mock-token
+```
+
+Test vector source: `testing/mock-token/tests/fixtures/p384_vector_c1_d1.json` (FakeTrng `0xC1`/`0xD1`, labels `vector-alice`/`vector-bob`). Firmware citation: `ephemeral-session/tests/session_protocol.rs` and `examples/export_session_kdf_vectors.rs` on the same rev.
+
+### Emulator verified (API 35)
+
+```bash
+SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
+```
+
+Cases 1–6 + Phase 3 **PASS** (`/tmp/e2e-phase15-full.log`). Case 2 media round-trip OK; session_key_hash_prefix matched on both peers (e.g. `6c8e`).
+
+### CI
+
+PR: https://github.com/Supermagnum/saga/pull/16  
+Green run: https://github.com/Supermagnum/saga/actions/runs/43155401742 — rust ~2m8s, android ~1m51s (wall ~2m).
+
+### Needs real hardware / blocked on xous-core#937
+
+- a real Galdralag handshake over USB CCID on Android
+- byte-identity of real-token output vs the software mock
+- the §8 handshake latency benchmark (T_generate + T_sign + T_verify + T_ecdh)
+- PIN/unplug/timeout behaviour with a real token
+
+### Known gaps before Phase 2
+
+- No Opus / iroh-roq / SRTP media path yet (consumes `HandshakeOutput`)
+- Release still carries `test-utils` / `mock-token` / `TEST_*` (Phase 6 hygiene)
+
+---
+
+## 2026-11-12 — PhoneAccount security fix (#2)
+
+Treated as a security bug: disabled Saga `PhoneAccount` must never let an Iroh dial fall through to SIM telephony.
+
+### Fix summary
+
+| Area | Change |
+|------|--------|
+| Gate | `SagaDialer` refuses `placeCall` unless account registered **and** enabled; launches onboarding |
+| URI | Managed account uses `tel:,` (PAUSE). After `convertKeypadLettersToDigits` + `stripSeparators` there are **no ASCII digits 0-9**. Legacy `tel:iroh` → `4764` / modem `ATD4764` — must not be used. `tel:@` rejects even enabled Saga dials (`ErrorDialogActivity`). `tel:+` triggers modem USSD `AT+CUSD`. Evaluated: `saga:` placeCall does **not** invoke ConnectionService on API 35; `tel:` + explicit handle does. Removed `+15550100999` placeholder |
+| SIM abort | `SagaInCallService` disconnects any non-Saga account call that follows a recent Iroh dial (`IROH_ABORT_SIM_SUBSTITUTION`) — **backstop only**; too late to stop modem dial when digits exist (see forensics) |
+| Incoming | Early Rust session insert; Kotlin `disconnect` on disabled / `SecurityException`; caller does not hang Encrypted |
+| UI | `PhoneAccountOnboardingActivity` + persistent MainActivity banner; re-check on resume |
+
+### Modem / RIL forensics (API 35 `Saga_PA_Test`, forced SIM path)
+
+Debug-only: account left disabled; `TEST_FORCE_IROH_SIM_PATH` bypasses the pre-dial enable gate so Telecom substitutes the SIM account. Script: `testing/e2e/run-modem-ssp-forensics.sh` (`SSP=...`).
+
+| SSP | Digits after keypad+strip | Telecom handle | Modem / RIL (exact string) | InCall abort |
+|-----|---------------------------|----------------|----------------------------|--------------|
+| `iroh` (legacy, before) | `4764` | `tel:4764` (dumpsys `tel:**64`) | `RILJ > DIAL`; **`AT> ATD4764;`**; `+CLCC: …,4764,129` ACTIVE | `placeCallDeltaMs=39` (re-run 71); handle already `tel:4764` |
+| `@` (rejected) | *(empty)* | `tel:%40` → Telecom `ErrorDialogActivity` — also breaks **enabled** Saga dials | No `ATD*` | No abort |
+| `+` (rejected) | none (keeps `+`) | `tel:%2B` → SIM START_CONNECTION | **`AT> AT+CUSD=1,"+"`** (USSD) | abort ~75 ms |
+| `,` (production, after) | none (keeps PAUSE `,`) | `tel:%2C` → SIM START_CONNECTION then LOCAL disconnect | **No `ATD*`, no `CUSD`**; radio only `AT> AT+CLCC` (hangup poll). Telephony briefly DIALING→DISCONNECTED without `RILJ > DIAL` | `placeCallDeltaMs=68`; handle `tel:%2C` |
+
+**Timing (`iroh` → modem):** placeCall `04:02:35.649` → abort `04:02:35.689` (+39 ms) → `RILJ > DIAL` / `AT> ATD4764;` at `04:02:35.799`–`.802` (~110 ms after placeCall, **~70 ms after abort**). The backstop disconnect does **not** prevent a carrier dial attempt when the SSP yields digits; the pre-dial enable check is the primary guard, and the SSP must leave no dialable digits if substitution ever occurs.
+
+### Onboarding E2E (local one-off, not CI)
+
+Harness: `testing/e2e/run-e2e-phone-account-onboarding.sh` (blocked dial, Settings-UI enable, incoming-while-disabled). Peer: `Saga_Bob` (`emulator-5556`).
+
+| AVD | Serial | API | Result |
+|-----|--------|-----|--------|
+| `Saga_PA_Test` | `emulator-5558` | 35 | **PASS** — BLOCK / SETTINGS_UI enable / CASEB ring+connect / URI `tel:,` / inbound reject while disabled |
+| `Saga_PA_API29` | `emulator-5554` | 29 | **PASS** — same checks (All calling accounts → Saga switch; `tel:,` placeCall) |
+
+Logs: `/tmp/e2e-pa-api35.log`, `/tmp/e2e-pa-api29.log`. Screenshots: `/tmp/saga-phone-account-screens/onboarding.png`, `banner.png`, `bob-ringing-after-enable.png`.
+
+### Full E2E Cases 1–6 with `tel:,` (API 35, local one-off)
+
+AVDs: `Saga_Alice` / `Saga_Bob` (`emulator-5554` / `emulator-5556`). Log: `/tmp/e2e-full-api35-tel-comma.log`.
+
+```
+CASE1:PASS … CASE2:PASS … CASE2b:PASS … CASE2c:PASS …
+CASE3:PASS … CASE4:PASS … CASE5:PASS … CASE6:PASS … PHASE3:PASS
+```
+
+Also fixed: `initialSnapshot` now uses Contacts-aware key lookup (avoids premature `call_unsecure` on phone lookup keys); InCallActivity defers Iroh KEY_NOT_FOUND connect cue until handshake settles; harness polls callee `setActive` and force-stops bob after Case 4/5 for clean mid-suite state.
 
 ---
 
@@ -87,10 +1382,11 @@ First attempt on fresh AVDs failed RING (Saga PhoneAccount still `[ ]` disabled 
 
 - Real phones, Galdralag token, Nitrokey USB
 - Production relay TLS (still `test-utils` / insecure path in debug)
+- OEM Telecom/telephony handling of `tel:,` (PAUSE SSP): vendor stacks may reject it or behave differently than the emulator RIL; re-verify on a physical device that no `ATD` / USSD is emitted on a real modem if SIM substitution ever occurs
 
-### Known gaps before Phase 2
+### Known gaps before Phase 2 (historical note from PR #15 era)
 
-- Phase 1.5: replace homemade mock-token wire with real `ephemeral-session` Brainpool bytes
+- ~~Phase 1.5: replace homemade mock-token wire~~ — done (see Phase 1.5 section above)
 - No Opus / iroh-roq / SRTP media path yet
 - Release still carries `test-utils` / `mock-token` / `TEST_*` (Phase 6 hygiene)
 
