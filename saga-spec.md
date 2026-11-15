@@ -97,7 +97,7 @@ Saga is the default dialer. Two call origins share one `InCallService` UI:
 ```
 Capture (AudioRecord VOICE_COMMUNICATION, 48 kHz mono PCM16)
    → disguise_pcm_inplace (§16 voice disguise; Off by default)
-   → Opus encode (20 ms / 960 samples, VBR ~24–32 kbps, in-band FEC)
+   → Opus encode (20 ms / 960 samples, CBR 32 kbps, DTX off, in-band FEC)
    → RTP + SRTP AEAD_AES_256_GCM  —or—  plain RTP (not-encrypted Iroh)
    → iroh-roq datagram (non-blocking; drop + count on full)
         ⋮  QUIC / relay
@@ -113,6 +113,13 @@ shrinks slowly when stable (shed excess depth one frame at a time). A
 packet is lost only when its playout deadline passes while a hole remains
 (then PLC/FEC). Empty underruns wait without advancing so a late packet is
 not marked already-played. Hard cap **300 ms**.
+
+**Opus CBR (privacy):** media uses Opus **CBR 32 kbps** with **DTX off** for
+all Encrypted and not-encrypted Iroh calls (including mesh/group encode-once).
+Constant payload size reduces speech-content leakage via encrypted packet
+lengths. IP/metadata exposure and VPN guidance are documented in the README
+[Privacy](README.md#privacy-what-saga-does-and-doesnt-protect) section (issue
+#40) — not a claim of network untraceability.
 
 **Latency:** mouth-to-ear on emulators uses a capture-side click marker
 (`LATENCY_MARKER` inject + dump peak). Cross-emulator

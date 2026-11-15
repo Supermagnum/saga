@@ -76,6 +76,14 @@ class MainActivity : AppCompatActivity() {
         binding.openVoiceDisguise.setOnClickListener {
             startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
         }
+        binding.openPrivacy.setOnClickListener {
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse(getString(R.string.privacy_readme_url)),
+                ),
+            )
+        }
         binding.openLicences.setOnClickListener {
             startActivity(Intent(this, LicencesActivity::class.java))
         }

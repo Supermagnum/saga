@@ -1,5 +1,6 @@
-//! Opus encode/decode at 48 kHz, 20 ms, VBR ~24–32 kbps, in-band FEC on.
+//! Opus encode/decode at 48 kHz, 20 ms, CBR 32 kbps, in-band FEC on.
 //! DTX is off for v1 (simpler loss tests; avoid silence-burst edge cases).
+//! CBR keeps encrypted packet sizes from tracking speech content (privacy).
 
 use crate::error::{MediaError, Result};
 
@@ -8,7 +9,7 @@ pub const CHANNELS: opus::Channels = opus::Channels::Mono;
 pub const FRAME_MS: u32 = 20;
 /// Mono 20 ms at 48 kHz.
 pub const FRAME_SAMPLES: usize = SAMPLE_RATE as usize * FRAME_MS as usize / 1000;
-/// Target bitrate at the top of the 24–32 kbps VBR band (host quality).
+/// Constant bitrate target (host quality). Same numeric target as the former VBR peak.
 pub const TARGET_BITRATE: i32 = 32_000;
 
 /// §16 voice-disguise hook — sender-side transform before Opus (see [`crate::disguise`]).
@@ -29,7 +30,8 @@ impl OpusEncoder {
     pub fn new() -> Result<Self> {
         let mut inner = opus::Encoder::new(SAMPLE_RATE, CHANNELS, opus::Application::Voip)?;
         inner.set_bitrate(opus::Bitrate::Bits(TARGET_BITRATE))?;
-        inner.set_vbr(true)?;
+        // CBR: encrypted frame sizes must not follow speech (privacy §).
+        inner.set_vbr(false)?;
         let _ = inner.set_complexity(10);
         inner.set_inband_fec(true)?;
         inner.set_packet_loss_perc(5)?;
