@@ -8,7 +8,7 @@ import android.util.Base64
 import android.util.Log
 
 /**
- * Ensures bob, alice, laptop, and thor exist for E2E/manual testing.
+ * Ensures bob, alice, laptop, charlene, and thor exist for E2E/manual testing.
  *
  * Saga key rows store the ephemeral-session long-term fingerprint (64 lowercase
  * hex ASCII), Base64-wrapped in DATA1. Iroh dial still uses phone-digit labels.
@@ -29,6 +29,7 @@ object TestContactSeeder {
     private val FINGERPRINT_BOB = "80342e72c8388b728d66df256f8231258f250f760cd45613e34ab5d2ed9f4fa8"
     private val FINGERPRINT_ALICE = "ee52f46cbefba6e71b8e0a727a021f9cc99e85771114ff1c0b12fcc83418458b"
     private val FINGERPRINT_LAPTOP = "43676d156721e149e722ad891a441287df5dcbe66f8daf155f1ba0168274d471"
+    private val FINGERPRINT_CHARLENE = "e4f3e33e7d3e50990571c0f6058993d47a5b24c55cc55b7a5df8c8cbc0bbdf32"
 
     private data class SeedContact(
         val displayName: String,
@@ -42,6 +43,8 @@ object TestContactSeeder {
         SeedContact("alice", "+15550100011", FINGERPRINT_ALICE),
         // Linux saga-peer; unused by cellular fixtures (thor stays +15550100012).
         SeedContact("laptop", "+15550100020", FINGERPRINT_LAPTOP),
+        // Third call peer (emulator-5558); distinct from thor and laptop.
+        SeedContact("charlene", "+15550100030", FINGERPRINT_CHARLENE),
         SeedContact("thor", "+15550100012", null)
     )
 

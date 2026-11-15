@@ -15,8 +15,15 @@ pub const LABEL_LAPTOP: &str = "15550100020";
 pub const FINGERPRINT_LAPTOP: &str =
     "43676d156721e149e722ad891a441287df5dcbe66f8daf155f1ba0168274d471";
 
+/// Third call peer (emulator-5558). Distinct from thor (+15550100012) and laptop.
+pub const LABEL_CHARLENE: &str = "15550100030";
+
+/// BrainpoolP384r1 MockIdentity fingerprint for [`LABEL_CHARLENE`].
+pub const FINGERPRINT_CHARLENE: &str =
+    "e4f3e33e7d3e50990571c0f6058993d47a5b24c55cc55b7a5df8c8cbc0bbdf32";
+
 pub fn known_dev_labels() -> &'static [&'static str] {
-    &[LABEL_BOB, LABEL_ALICE, LABEL_LAPTOP]
+    &[LABEL_BOB, LABEL_ALICE, LABEL_LAPTOP, LABEL_CHARLENE]
 }
 
 /// Same BLAKE3 material as `saga-iroh-core` mock-token builds.
