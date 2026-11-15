@@ -118,6 +118,19 @@ Not implemented. Sketch only:
 - **Invest in self-host docs + settings** before treating self-host as the default; ops cost is the main barrier, not code.
 - Emulator public-relay soaks are a weak production proxy; prefer host↔host and real devices for release gates.
 
+## Future options (IP / metadata protection)
+
+Watch for a **Rust crate** that offers low-latency IP/metadata protection suitable
+for live voice. Saga should not invent a custom tunnel while nothing mature exists;
+the interim mitigation is a system-wide privacy-focused VPN (see the README
+[Privacy](../../README.md#privacy-what-saga-does-and-doesnt-protect) section).
+
+- **`nym-smoldvpn`** (pure-Rust, userspace WireGuard over Nym, 1–2 hops) is a
+  candidate for a **later spike**: it can hide the client IP behind Nym hops but
+  gives no timing protection, needs paid zk-nym credentials, and iroh's UDP would
+  have to be routed through it. Not scheduled.
+- **Nym mixnet mode** is unsuitable for live audio (only for small messages).
+
 ## Evidence pointers
 
 - Host public soak harness: `testing/e2e/run-public-relay-peer-soak.sh` (optional host-side `bwrap` + clean `resolv.conf` for the **peer binary only**, not the Android app).

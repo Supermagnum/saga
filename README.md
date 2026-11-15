@@ -38,6 +38,90 @@ It provides a hardened security model relative to typical Android builds, and it
 includes a duress PIN/password feature. Saga does not require GrapheneOS, but it
 is the recommended environment when choosing a device OS.
 
+## Privacy: what Saga does and doesn't protect
+
+Saga encrypts **call content** end to end on Encrypted Iroh calls (SRTP after a
+token-authenticated handshake). It does **not** hide who you talk to, your IP
+address, or call timing/volume. Do not treat Saga as a way to stay untraceable
+on the network.
+
+Opus audio uses **constant bitrate (CBR, 32 kbps)** with DTX off, so encrypted
+packet sizes do not follow speech content. That removes one traffic-analysis
+leak; it does not hide that a call is happening.
+
+### What is exposed today
+
+Iroh prefers a **direct** peer path when NAT allows it, and falls back to a
+**relay** when it does not. Discovery uses n0 pkarr/DNS (`dns.iroh.link`) unless
+you override the relay for labs. DNS on Android goes through the platform
+`DnsResolver` (Private DNS, VPN, and Orbot are honoured; Saga does not pin a
+third-party resolver).
+
+| Who | What they can see | What they cannot see |
+|---|---|---|
+| **The person you call** | Your public IP when the call connects **directly** (preferred when possible) | Call content on Encrypted calls |
+| **Relay operator (n0, when a call is relayed)** | Both parties' IP addresses, EndpointIds, call timing, duration, and data volume | Call content (end-to-end encrypted) |
+| **Discovery service (n0 DNS/pkarr)** | Lookups/publishes for a Saga EndpointId (that someone is trying to reach or announce a given identity), and from which IP | Call content; whether a dial actually connected |
+| **Your DNS resolver** | Which discovery/relay hostnames are looked up (Private DNS hides this from your ISP, not from the resolver operator) | Call content |
+| **Your ISP / network operator** | That you connect to relays or to a peer's IP, plus timing and volume | Call content |
+| **Anyone correlating calls** | Saga EndpointIds are long-lived, so lookups and calls can be linked over time | — |
+| **Carrier (normal phone calls)** | Everything on the phone-network path: those calls are never encrypted by Saga | — |
+
+### Hardware token and forward secrecy
+
+With a **Nitrokey**, Saga has per-call forward secrecy: a fresh ephemeral key is
+generated on the phone for each call and discarded afterwards; the long-term key
+stays on the card and only signs the ephemeral offer. The ephemeral private key
+exists briefly in **phone memory** during the handshake — that is a weaker window
+than on-token ECDH.
+
+**Galdralag** (and a possible future Nitrokey on **Baochip-1x**, the same chip
+family as Galdralag's Dabao target) does the ephemeral key exchange inside the
+token, so the ephemeral key never leaves the hardware. Track Baochip-1x Nitrokey
+support only when such a device exists; no work until then.
+
+### Recommended mitigation: a privacy-focused VPN
+
+Until a suitable low-latency Rust crate for IP/metadata protection exists, use a
+**system-wide VPN** from a privacy-focused provider. Turn on Android **Always-on
+VPN** and **Block connections without VPN** so Saga never dials outside the
+tunnel if the VPN drops. Saga respects the phone's VPN and Private DNS settings.
+
+**What a VPN changes:** the person you call, the relay operator, and your ISP see
+the VPN exit address instead of yours.
+
+**What it does not change:** the VPN provider can see your real IP and which
+relays/peers you connect to; timing and volume metadata remain. Choose a
+provider you trust. Tor is not suitable (latency too high for live voice; no
+UDP/QUIC path for this stack).
+
+#### Suitable providers (run by privacy advocates)
+
+| Provider | Based in | Sign-up | Anonymous payment | No-logs verification | Notes |
+|---|---|---|---|---|---|
+| **Mullvad VPN** | Sweden | Random account number, no email | Cash by post, Monero, Bitcoin | Public audits (Cure53, KPMG) | WireGuard; open-source apps |
+| **IVPN** | Gibraltar | Random account ID, no email | Cash, Monero, Bitcoin | Cure53 audit | WireGuard; open-source apps |
+| **Proton VPN** | Switzerland | Email required (a disposable one works) | Bitcoin (no cash/Monero) | Annual Securitum audits | Open-source apps; free tier available |
+| **RiseupVPN** | Riseup collective (since 1999) | No account | Free, donation-funded | No external audit | Bitmask client (OpenVPN); on F-Droid |
+| **CalyxVPN** | Calyx Institute (non-profit) | No account | Free | No external audit | Bitmask client (OpenVPN); client and server open source |
+| **NymVPN** | Decentralised network | See provider | See provider | — | Use only the fast **two-hop** mode for calls; mixnet mode adds too much delay for live voice |
+
+This table is a starting point, not an endorsement. Re-check each provider's
+current policies and audits before relying on them; review the list about once a
+year.
+
+**Guidance:**
+
+- Prefer **WireGuard** (UDP) for calls; it usually adds less delay. OpenVPN-based
+  services (Riseup, Calyx) work but may add latency, and free capacity can be
+  slower when busy.
+- Pay without linking a bank card where possible (cash, Monero): card payment
+  ties your identity to the account.
+- Use Always-on VPN + block connections without VPN.
+- Also recommended: GrapheneOS, and Private DNS on (see [Troubleshooting](#troubleshooting)).
+- See [docs/design/relay-options.md](docs/design/relay-options.md) for relay/
+  discovery metadata detail and a short note on future Rust IP-protection options.
+
 ## Testing approach (summary)
 
 E2E uses **two AVDs** (`emulator-5554` = alice, `emulator-5556` = bob), `adb`, and the scripts under `testing/e2e/`. Calls are placed by **contact display name** (`bob`, `alice`, `thor`), not raw peer labels.
