@@ -74,6 +74,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/role_status" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/open_licences"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="0dp"
+        android:text="@string/licences_menu"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/open_voice_disguise" />
+
     <TextView
         android:id="@+id/iroh_dial_label"
         android:layout_width="wrap_content"
@@ -82,7 +93,7 @@
         android:text="@string/iroh_dial_label"
         android:textStyle="bold"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/open_voice_disguise" />
+        app:layout_constraintTop_toBottomOf="@id/open_licences" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/peer_id_layout"
