@@ -38,6 +38,10 @@ pub enum TokenError {
     Unavailable,
     /// PIN required or rejected (reserved for real USB backends).
     PinRequired,
+    /// User PIN retries exhausted / card locked (OpenPGP PW1 blocked).
+    CardLocked,
+    /// Card present but AUT key curve/alg is not Brainpool P-256/P-384.
+    CardNotSupported,
     /// Peer signature did not verify under the expected long-term key.
     BadSignature,
     /// Signer fingerprint is not in the local trust material.
@@ -60,6 +64,8 @@ impl std::fmt::Display for TokenError {
             TokenError::Timeout => write!(f, "token handshake timed out"),
             TokenError::Unavailable => write!(f, "token unavailable"),
             TokenError::PinRequired => write!(f, "token PIN required"),
+            TokenError::CardLocked => write!(f, "token card locked"),
+            TokenError::CardNotSupported => write!(f, "token card not supported"),
             TokenError::BadSignature => write!(f, "bad handshake signature"),
             TokenError::UnknownSigner => write!(f, "unknown handshake signer"),
             TokenError::CurveMismatch => write!(f, "handshake curve mismatch"),
@@ -117,14 +123,25 @@ impl HandshakeOutput {
 
 /// Opaque initiator state between offer generation and response completion.
 ///
-/// Backends that keep ephemeral private keys on a USB device may store only a
-/// handle here; the software mock keeps an in-process
-/// [`ephemeral_session::InitiatorSession`].
+/// The software mock keeps an in-process [`ephemeral_session::InitiatorSession`].
+/// Nitrokey / phone-ECDH backends keep the ephemeral keypair in phone RAM
+/// ([`Self::from_phone_ephemeral`]) and zeroise it after ECDH in
+/// [`crate::phone_handshake`].
 pub struct InitiatorPending {
-    pub(crate) inner: ephemeral_session::InitiatorSession,
+    pub(crate) kind: InitiatorPendingKind,
     #[allow(dead_code)] // retained for USB backends that re-check curve on finish
     pub(crate) curve: SessionCurve,
     pub(crate) init_ephemeral_public_key: Vec<u8>,
+}
+
+pub(crate) enum InitiatorPendingKind {
+    /// Vault / on-token ephemeral path (mock + future Galdralag).
+    Session(ephemeral_session::InitiatorSession),
+    /// Phone-generated ephemeral; card only signs (Nitrokey).
+    Phone {
+        ephemeral: crate::phone_handshake::PhoneEphemeral,
+        init_message: InitMessage,
+    },
 }
 
 impl InitiatorPending {
@@ -135,7 +152,24 @@ impl InitiatorPending {
         init_ephemeral_public_key: Vec<u8>,
     ) -> Self {
         Self {
-            inner,
+            kind: InitiatorPendingKind::Session(inner),
+            curve,
+            init_ephemeral_public_key,
+        }
+    }
+
+    /// Phone-side ephemeral ECDH pending state (Nitrokey / OpenPGP AUT sign).
+    pub fn from_phone_ephemeral(
+        ephemeral: crate::phone_handshake::PhoneEphemeral,
+        init_message: InitMessage,
+        curve: SessionCurve,
+    ) -> Self {
+        let init_ephemeral_public_key = init_message.ephemeral_public_key.as_slice().to_vec();
+        Self {
+            kind: InitiatorPendingKind::Phone {
+                ephemeral,
+                init_message,
+            },
             curve,
             init_ephemeral_public_key,
         }
@@ -145,8 +179,32 @@ impl InitiatorPending {
         &self.init_ephemeral_public_key
     }
 
+    pub fn curve(&self) -> SessionCurve {
+        self.curve
+    }
+
     pub fn take_inner(self) -> ephemeral_session::InitiatorSession {
-        self.inner
+        match self.kind {
+            InitiatorPendingKind::Session(s) => s,
+            InitiatorPendingKind::Phone { .. } => {
+                panic!("take_inner called on phone-ephemeral InitiatorPending")
+            }
+        }
+    }
+
+    /// Consume phone-ephemeral pending state.
+    pub fn take_phone_ephemeral(
+        self,
+    ) -> Result<(crate::phone_handshake::PhoneEphemeral, InitMessage), TokenError> {
+        match self.kind {
+            InitiatorPendingKind::Phone {
+                ephemeral,
+                init_message,
+            } => Ok((ephemeral, init_message)),
+            InitiatorPendingKind::Session(_) => Err(TokenError::Protocol(
+                "expected phone-ephemeral pending state".into(),
+            )),
+        }
     }
 }
 
