@@ -1,10 +1,49 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Part 2 voice disguise)
+**Last updated:** 2026-11-15 (Part 3 messaging evaluation)
 
-**Status:** `feat/voice-disguise` — §16 voice disguise (pitch / McAdams formant /
-formant+pitch), settings + in-call toggle/chips, peer `MEDIA_TAG_DISGUISE`
-signal. Host WAVs under `docs/voice-disguise/`.
+**Status:** `docs/messaging-evaluation` — issue #29 Step 1 evaluation only
+(`docs/messaging-evaluation.md`). Recommendation **C** (build in Saga);
+no messaging product code; no Message-action prototype (A not recommended).
+
+---
+
+## 2026-11-15 — Part 3 text messaging evaluation (`docs/messaging-evaluation`)
+
+Branch: `docs/messaging-evaluation` (from main after #44 voice disguise).
+Implements issue #29 Step 1 / saga-spec §17. **No messaging code.**
+
+### Deliverable
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `docs/messaging-evaluation.md` | **PASS** | Sourced tables for Delta Chat, Briar, SimpleX, Conversations/Cheogram, Jami, Molly, Session, Iroh-based chats |
+| Criteria 1–8 coverage | **PASS** | Per issue #29 table |
+| A/B/C recommendation | **C** | Criterion 3 fails for all as Saga-aligned HW identity; A/B rejected |
+| Debug Message prototype | **N/A** | Allowed only if A looks right; not implemented |
+| `saga-spec.md` §17 | **PASS** | Evaluation gate recorded; owner decision pending on #29 |
+
+### Emulator regression (docs-only change; full suite still run)
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 Cases 1–10 + 4b | **PASS** | `/tmp/e2e-step5-messaging-eval.log` |
+| Step 5 C3–C5 | **PASS** (C1–C2 NEEDS_HARDWARE as usual) | same |
+| Onboarding INBOUND_REJECT | **PASS** | same |
+| Onboarding Case B Settings UI | **FAIL** env (Settings dump coords; same class of flake as Part 2) | same |
+| API 29 Alice(API35)→Bob(API29) Encrypted | **PASS** | `/tmp/e2e-api29-messaging-eval.log` |
+| CI rust + android | **PASS** | https://github.com/Supermagnum/saga/actions/runs/43682225552 |
+
+### Not verified / needs real hardware
+
+- Third-party messenger installs and live intent handoff (deferred; A not recommended)
+- Hardware-token messaging (Nitrokey / Galdralag) — Part 4 / issue #41 if C confirmed
+
+### Open decisions for the user
+
+1. Confirm **A / B / C** on issue #29 (report recommends **C**).
+2. If C: schedule issue #41 after Parts 4–5 (or as agreed); choose offline-delivery model before coding it.
+3. If weak-A convenience handoff is desired despite criterion 3: pick SimpleX or `xmpp:` explicitly.
 
 ---
 
