@@ -14,12 +14,22 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Local Iroh relay (E2E/CI) | [`testing/iroh-relay/`](testing/iroh-relay/) |
 | Test results log | [TEST_RESULTS.md](TEST_RESULTS.md) |
 | Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| F-Droid prep (not submitted) | [`docs/fdroid/`](docs/fdroid/) |
+| Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
 
 ## Status
 
-Implementation runs on two Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–6 pass with a **local dev relay** and **native relay-ready polling**; the suite is not production-ready until release hardening and on-device validation beyond emulators. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)).
+Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid packaging is prepared under `docs/fdroid/` — **not** submitted yet. `applicationId` remains `org.saga` until a final ID is chosen.
 
 See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
+
+### Screenshots (emulator)
+
+| | |
+|--|--|
+| Encrypted call | ![Encrypted](fastlane/metadata/android/en-US/images/phoneScreenshots/01-encrypted-call.png) |
+| Group call | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
+| Voice disguise | ![Disguise](fastlane/metadata/android/en-US/images/phoneScreenshots/05-voice-disguise-chip.png) |
 
 ## Recommended OS
 
