@@ -484,6 +484,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "card-backend"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd3ee3a298842065dc489180c34a4fe4bbbb8643bb422009d79558a099fb42e5"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1716,6 +1725,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex-slice"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5491a308e0214554f07a81d8944abe45f552871c12e3c3c6e7e5d354039a6c4c"
 
 [[package]]
 name = "hickory-net"
@@ -3145,6 +3160,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "openpgp-card"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfe28dfe068394559d52390c0d1f3081e161f58e158c368d5da668c426cd81b7"
+dependencies = [
+ "card-backend",
+ "hex-slice",
+ "log",
+ "nom",
+ "secrecy",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4000,6 +4030,7 @@ dependencies = [
  "n0-error",
  "saga-media",
  "saga-session",
+ "saga-token-usb",
  "tokio",
 ]
 
@@ -4032,6 +4063,8 @@ dependencies = [
  "async-trait",
  "ephemeral-session",
  "galdr-core",
+ "galdr-vault",
+ "heapless",
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "log",
@@ -4039,6 +4072,21 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2 0.10.9",
  "subtle",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "saga-token-usb"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "card-backend",
+ "log",
+ "openpgp-card",
+ "saga-session",
+ "secrecy",
+ "thiserror 1.0.69",
  "tokio",
  "zeroize",
 ]
@@ -4084,6 +4132,15 @@ dependencies = [
  "der 0.8.0",
  "hybrid-array",
  "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
  "zeroize",
 ]
 

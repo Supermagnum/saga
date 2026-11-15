@@ -1,10 +1,61 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Part 3 messaging evaluation)
+**Last updated:** 2026-11-15 (Part 4 Nitrokey SessionToken)
 
-**Status:** `docs/messaging-evaluation` — issue #29 Step 1 evaluation only
-(`docs/messaging-evaluation.md`). Recommendation **C** (build in Saga);
-no messaging product code; no Message-action prototype (A not recommended).
+**Status:** `feat/nitrokey-session-token` — first production `SessionToken`
+(`saga-token-usb` / `NitrokeySessionToken`). Debug/E2E still uses `mock-token`.
+
+---
+
+## 2026-11-15 — Part 4 Nitrokey support (`feat/nitrokey-session-token`)
+
+Branch: `feat/nitrokey-session-token` (from main after #45 messaging evaluation).
+
+### Scope delivered
+
+| Item | Result |
+|------|--------|
+| `docs/nitrokey.md` | Design, models/firmware sources, fingerprint/hash/DER notes, NFC skip |
+| `saga-token-usb` | Production crate; phone ECDH + AUT INTERNAL AUTHENTICATE |
+| Host interop | Software AUT ↔ `MockSessionToken` session-key match (P-256) |
+| Unknown signer | Rejected (fingerprint / unknown signer) |
+| Android USB CCID + PIN UI | `UsbCcidTransport`, `TokenUsbBridge`, `NitrokeyPinActivity` |
+| Release features | Gradle release → `iroh-transport,nitrokey`; marker in `.so` hygiene |
+| NFC OpenPGP | Not implemented (documented) |
+
+### Host verification
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-session` test/clippy | **PASS** | phone_handshake helpers |
+| `saga-token-usb --features test-card` | **PASS** | 3 interop + algo unit |
+| Live PC/SC Nitrokey | **DEFERRED** | Card present (`20a0:42b2`, fw v1.8.3, AUT BrainpoolP256r1); needs `SAGA_NITROKEY_PIN` (not set in this run) |
+| usbip virtual NK3 | **NOT USED** | Real NK3 on host PC/SC |
+
+### Emulator / CI
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 API 35 (`5554`/`5556`) | **PASS** pass=17 fail=0 needs_hardware=2 (C1/C2) | `/tmp/e2e-step5-nitrokey.log` |
+| Step 5 Alice API35→Bob API29 (`5554`/`5560`) | **PASS** pass=17 fail=0 needs_hardware=2 (C1/C2); Case7 corr=0.960 | `/tmp/e2e-api29-nitrokey.log` |
+| Onboarding CASEB (script hardcodes `5558`/`5556`) | Soft-fail Settings UI coords; suite uses `\|\| true` | same API29 log; not Part 4 regression |
+| PIN UI screenshot | **PASS** real dialog | `docs/screenshots/nitrokey-pin.png` |
+| Release `.so` hygiene (nitrokey marker present; mock absent) | **PASS** | `scripts/check-release-so.sh` on x86_64 release NDK `.so` |
+| USB passthrough on emulator | **NEEDS_HARDWARE** | Not verified this run |
+| CI rust + android | **PASS** | [PR #46](https://github.com/Supermagnum/saga/pull/46) run `43691174307` |
+
+### Not verified / needs real hardware
+
+- USB OTG Nitrokey on a physical phone (permission + CCID + PIN + Encrypted call)
+- Live PC/SC INTERNAL AUTH with the owner's PIN (`SAGA_NITROKEY_PIN`)
+- Emulator QEMU USB host passthrough
+- Real Galdralag Dabao CCID (same filter `1d50:6197`; blocked on xous-core#937)
+
+### Open decisions for the user
+
+1. Provide `SAGA_NITROKEY_PIN` (or run the ignored PC/SC test locally) to confirm live AUT sign on the attached NK3.
+2. Confirm whether release 1:1 dial should **require** a token (fail closed) or keep today's "Not encrypted" when the card is absent.
+3. When to flip native mesh off `mock-token`-only onto the production Nitrokey path.
 
 ---
 

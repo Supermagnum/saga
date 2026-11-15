@@ -26,6 +26,9 @@ zeroize = { version = "1", features = ["derive"] }
 ephemeral-session = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1" }
 # HAL traits only (HardwareTrng / VaultStorage). Do NOT enable feature test-hal.
 galdr-core = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-core", default-features = false }
+# Brainpool ECDSA verify for phone-side Nitrokey path (same pin as ephemeral-session).
+galdr-vault = { git = "https://github.com/Supermagnum/Galdralag-firmware", rev = "b781bf6fa5ccf8700a5fb061583c31cfa00241a1", package = "galdr-vault", default-features = false }
+heapless = { version = "0.9", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "test-util", "time"] }

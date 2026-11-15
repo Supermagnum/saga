@@ -16,6 +16,9 @@ env:
   CARGO_TERM_COLOR: always
   # Fail native builds hard; never ship StubIrohCallSession from CI.
   SAGA_REQUIRE_NATIVE: "1"
+  # audiopus_sys vendors Opus with an old cmake_minimum_required; modern
+  # CMake on GH runners needs this to configure (cold cache after lock changes).
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   rust:
@@ -40,9 +43,10 @@ jobs:
             saga-session
             saga-iroh-core
             saga-media
+            saga-token-usb
             testing/mock-token
             tools/saga-peer
-          shared-key: saga-rust-host-v4
+          shared-key: saga-rust-host-v5
           cache-targets: true
 
       # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
@@ -77,6 +81,13 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
+      - name: saga-token-usb fmt / clippy / test
+        working-directory: saga-token-usb
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --features test-card -- -D warnings
+          cargo test --features test-card
+
       - name: saga-media fmt / clippy / test
         working-directory: saga-media
         run: |
@@ -90,6 +101,7 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
           cargo clippy --all-targets --features iroh-transport -- -D warnings
+          cargo clippy --all-targets --features iroh-transport,nitrokey -- -D warnings
           cargo test --features iroh-transport,mock-token
 
       # Default features only (no live-audio/cpal). [profile.test] opt-level=2 for Opus speed.
@@ -178,7 +190,7 @@ jobs:
           fi
           echo "OK: libsaga_iroh_core.so present for x86_64 (CI)"
 
-      - name: Release arm64 .so mock/dev hygiene (no mock-token)
+      - name: Release arm64 .so hygiene (nitrokey, no mock-token)
         working-directory: saga-iroh-core
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -186,6 +198,6 @@ jobs:
         run: |
           set -euo pipefail
           cargo ndk -o /tmp/saga-ndk-release-ci -t arm64-v8a \
-            build --release --features iroh-transport
+            build --release --features iroh-transport,nitrokey
           bash ../scripts/check-release-so.sh \
             /tmp/saga-ndk-release-ci/arm64-v8a/libsaga_iroh_core.so

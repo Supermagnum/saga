@@ -4,6 +4,10 @@
 use std::sync::OnceLock;
 use std::thread;
 
+#[cfg(feature = "nitrokey")]
+#[used]
+static NITROKEY_BACKEND_MARKER: &str = saga_token_usb::NITROKEY_BACKEND_MARKER;
+
 #[cfg(not(feature = "iroh-transport"))]
 use std::time::Duration;
 
