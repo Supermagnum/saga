@@ -92,7 +92,7 @@ Saga is the default dialer. Two call origins share one `InCallService` UI:
 
 ```
 Capture (AudioRecord VOICE_COMMUNICATION, 48 kHz mono PCM16)
-   → disguise_pcm_inplace (no-op until Phase 5)
+   → disguise_pcm_inplace (§16 voice disguise; Off by default)
    → Opus encode (20 ms / 960 samples, VBR ~24–32 kbps, in-band FEC)
    → RTP + SRTP AEAD_AES_256_GCM  —or—  plain RTP (not-encrypted Iroh)
    → iroh-roq datagram (non-blocking; drop + count on full)
@@ -939,8 +939,14 @@ exceed that do not ship. Measure and record latency in `TEST_RESULTS.md`.
   whenever disguise is toggled mid-call. The peer shows a neutral chip:
   "Caller is using voice disguise". Informational only — must not change
   the padlock or security state. Implementation stays in Phase 5.
-- [ ] Confirm chosen DSP libraries' licenses against AGPL-3.0 and F-Droid
-  before dependency lock-in.
+- [x] Confirm chosen DSP libraries' licenses against AGPL-3.0 and F-Droid
+  before dependency lock-in. **Decision: no third-party DSP dependency** —
+  pitch + McAdams-style formant warp are implemented in-tree in
+  `saga-media/src/disguise.rs` (Levinson–Durbin LPC, pole/VTLN warp, pitch
+  resample). Compatible with AGPL-3.0-or-later and F-Droid.
 - [ ] Report neural voice-conversion latency/cost on mid-range targets;
   exclude from shipping modes if over the ~20 ms budget or otherwise
-  unsuitable.
+  unsuitable. (Not required to ship Phase 5 pitch/formant modes.)
+- [x] Peer disguise signal: `MEDIA_TAG_DISGUISE` control datagram on the
+  Saga media path (not ephemeral-session wire). Sent at media start and on
+  every in-call toggle; peer shows "Caller is using voice disguise".

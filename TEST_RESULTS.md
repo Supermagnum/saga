@@ -1,11 +1,72 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Part 1 multi-peer mesh)
+**Last updated:** 2026-11-15 (Part 2 voice disguise)
 
-**Status:** `feat/multi-peer-calls` — full-mesh pairwise group calls (≤4), Charlene
-fixture `15550100030`, host CI mesh tests, Android group Telecom/UI. Emulator G
-suite local-only; Bob↔Charlene direct link still PENDING_MESH on-device (Android
-uses pairwise voice dials for ringing UX; host_mesh covers full 6-link mesh).
+**Status:** `feat/voice-disguise` — §16 voice disguise (pitch / McAdams formant /
+formant+pitch), settings + in-call toggle/chips, peer `MEDIA_TAG_DISGUISE`
+signal. Host WAVs under `docs/voice-disguise/`.
+
+---
+
+## 2026-11-15 — Part 2 voice disguise (`feat/voice-disguise`)
+
+Branch: `feat/voice-disguise` (from main after #43 multi-peer). Implements
+saga-spec §16.
+
+### Host DSP
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-media` disguise unit tests | **PASS** | off noop, random α differs, end_call zeroizes, pitch changes samples |
+| `cargo test -p saga-media --test voice_disguise` | **PASS** | WAVs + per-frame latency |
+| Per-frame latency (all modes) | **PASS** | 0.005–0.14 ms ≪ 20 ms budget (`docs/voice-disguise/HOST_METRICS.md`) |
+| Random-each-call α | **PASS** | Distinct CSPRNG draws; not logged in release |
+| Licence | **PASS** | In-tree DSP only (no GPL/commercial DSP crate) |
+
+### STOI vs LibriSpeech fixture (`testing/e2e/pcm_score.py`)
+
+| Mode | corr | STOI |
+|------|-----:|-----:|
+| pitch_m3 | 0.086 | 0.311 |
+| formant_mild | 0.990 | 0.978 |
+| formant_medium | 0.990 | 0.978 |
+| formant_strong | 0.989 | 0.978 |
+| formant_pitch_medium | 0.062 | 0.232 |
+
+Listening fixtures: `docs/voice-disguise/*.wav` (inspected energy; formant
+preserves intelligibility; pitch modes intentionally alter timbre).
+
+### Peer chip / media control
+
+`MEDIA_TAG_DISGUISE` (`SAGAVD01` + on/off byte) on the Saga media datagram path
+(not ephemeral-session). Informational only — padlock / security unchanged.
+
+### Emulator (API 35 + one API 29)
+
+Screenshots under `docs/screenshots/voice-disguise/` (settings modes, contact
+override, in-call toggle + local chip, peer chip, cellular disabled). Looked at
+each before accepting.
+
+| Gate | Result | Log |
+|------|--------|-----|
+| Step 5 Cases 1–10 + 4b | **PASS** | `/tmp/e2e-step5-voice-disguise.log` |
+| Step 5 C3–C5 | **PASS** (C1–C2 NEEDS_HARDWARE as usual) | same |
+| Onboarding INBOUND_REJECT | **PASS** | same |
+| Onboarding Case B Settings UI | **FAIL** env (emulator-5558 dump; not disguise-related) | same |
+| API 29 settings launch | **PASS** | `api29-settings.png` |
+| API 29 Alice(API35)→Bob(API29) Encrypted | **PASS** | `/tmp/e2e-api29-voice-disguise.log` |
+
+### Not verified / needs real hardware
+
+- Subjective listening on a handset speaker / Bluetooth
+- Neural voice-conversion latency (explicitly deferred in §16.6)
+
+### Open decisions for the user
+
+1. Whether Mild/Medium/Strong McAdams α ranges need retuning after listening
+   to the committed WAVs.
+2. Pitch STOI is low by design (timbre change); confirm the −3 semitone default
+   after listening to `pitch_m3.wav`.
 
 ---
 
@@ -638,7 +699,8 @@ must measure the gap in **decoded PCM at the receiver** across the re-key
 
 ### §16 disguise
 
-`disguise_pcm_inplace` remains a no-op before Opus encode.
+Implemented in Part 2 (`feat/voice-disguise`): see top-of-file Part 2 section
+and `docs/voice-disguise/`.
 
 ### In-call UI screenshots (looked at)
 
