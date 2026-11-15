@@ -31,8 +31,11 @@ import java.util.concurrent.atomic.AtomicReference
  * DnsResolver bursts on some AVDs return ECONNREFUSED after the first success;
  * a small permit count keeps relay + discovery overlapping without that flake.
  *
- * On default-network change: re-bind the process, flush the address/TXT cache,
- * and resolve subsequent queries on the new [Network].
+ * On default-network change: remember the active [Network], flush the
+ * address/TXT cache, and pass that Network explicitly to DnsResolver
+ * query/rawQuery. Does **not** call [ConnectivityManager.bindProcessToNetwork]
+ * (process-wide bind broke local-relay UDP on API 29 AVDs with
+ * PermissionDenied on sendmsg).
  *
  * Discovery choice: keep `presets::N0` (PkarrPublisher HTTPS + DnsAddressLookup
  * TXT) and route all A/AAAA/TXT through this backend.
@@ -69,11 +72,11 @@ object AndroidDnsBridge {
         val app = context.applicationContext
         appContext = app
         val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        applyNetwork(cm, cm.activeNetwork ?: firstValidated(cm), reason = "install")
+        applyNetwork(cm.activeNetwork ?: firstValidated(cm), reason = "install")
         try {
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    applyNetwork(cm, network, reason = "onAvailable")
+                    applyNetwork(network, reason = "onAvailable")
                 }
 
                 override fun onCapabilitiesChanged(
@@ -81,14 +84,14 @@ object AndroidDnsBridge {
                     networkCapabilities: NetworkCapabilities
                 ) {
                     if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                        applyNetwork(cm, network, reason = "onCapabilitiesChanged/validated")
+                        applyNetwork(network, reason = "onCapabilitiesChanged/validated")
                     }
                 }
 
                 override fun onLost(network: Network) {
                     if (cachedNetwork == network) {
                         val next = cm.activeNetwork ?: firstValidated(cm)
-                        applyNetwork(cm, next, reason = "onLost")
+                        applyNetwork(next, reason = "onLost")
                     }
                 }
             })
@@ -99,19 +102,13 @@ object AndroidDnsBridge {
     }
 
     /**
-     * Re-bind process to [network], flush DNS cache when the network identity
-     * changes so stale A/AAAA/TXT from the previous path are not reused.
+     * Track [network] for DnsResolver only (no process-wide bind). Flush the
+     * DNS cache when the network identity changes so stale A/AAAA/TXT from the
+     * previous path are not reused.
      */
-    private fun applyNetwork(cm: ConnectivityManager, network: Network?, reason: String) {
+    private fun applyNetwork(network: Network?, reason: String) {
         val prev = cachedNetwork
         cachedNetwork = network
-        if (network != null) {
-            try {
-                cm.bindProcessToNetwork(network)
-            } catch (e: RuntimeException) {
-                Log.w(TAG, "bindProcessToNetwork failed ($reason): ${e.message}")
-            }
-        }
         if (prev != network) {
             flushCache()
             Log.i(TAG, "network change ($reason): $prev -> $network (DNS cache flushed)")
@@ -124,13 +121,16 @@ object AndroidDnsBridge {
         txtCache.clear()
     }
 
-    /** Current network for DnsResolver (may be null → process default). */
+    /**
+     * Network passed explicitly to [DnsResolver] (API 29+). Never binds the
+     * process; may be null → DnsResolver uses the system default network.
+     */
     private fun resolveNetwork(): Network? {
         val ctx = appContext ?: return cachedNetwork
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val active = cm.activeNetwork
         if (active != null && active != cachedNetwork) {
-            applyNetwork(cm, active, reason = "resolveNetwork/refresh")
+            applyNetwork(active, reason = "resolveNetwork/refresh")
         }
         return cachedNetwork ?: active ?: firstValidated(cm)
     }

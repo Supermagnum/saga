@@ -1,10 +1,59 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-14 (android DNS)
+**Last updated:** 2026-11-15 (API 29 DNS / local-relay hotfix)
 
-**Status:** `fix/android-dns` — iroh DNS via `android.net.DnsResolver`
-(Private DNS / VPN / Orbot). No pinned third-party resolvers. Case 7 speech
-round-trip is in `run-e2e-full.sh`. Local-relay suite remains the CI gate.
+**Status:** `fix/dns-api29` — stop process-wide `bindProcessToNetwork`; vendor
+`noq-udp` EPERM→no-IP_TOS fallback for Linux 4.14 AVDs. Local-relay suite
+remains the CI gate.
+
+---
+
+## 2026-11-15 — API 29 local-relay regression hotfix (`fix/dns-api29`)
+
+Branch: `fix/dns-api29` (from main after #37 / #39).
+
+### Root cause (#37 API 29 regression)
+
+1. `AndroidDnsBridge.applyNetwork` called
+   `ConnectivityManager.bindProcessToNetwork`. On API 29 AVDs that wedged the
+   process default network and broke local-relay UDP (`PermissionDenied` on
+   `sendmsg`).
+2. Vendored `noq-udp` path: API 29 (kernel 4.14) can return `EPERM` for
+   unsupported `IP_TOS`/ECN cmsgs; upstream only fell back on `EINVAL`/`EIO`.
+3. Cold `-wipe-data` also cleared wedged AVD network state that produced
+   persistent `EPERM` even without ECN cmsgs.
+
+### Fix
+
+- Track active `Network` for explicit `DnsResolver` query/rawQuery only; flush
+  cache on change; **do not** bind the process.
+- `[patch.crates-io] noq-udp` → `vendor/noq-udp` (EPERM treated like EINVAL for
+  the no-`IP_TOS` fallback; halt GSO on EPERM). See `vendor/noq-udp/README.saga.md`.
+
+### Re-run gates
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| API 35 `run-e2e-step5.sh` | **PASS** | Cases 1–10 + 4b + C3–C5 + onboarding; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api35-dnsfix.log` |
+| API 29 `run-e2e-step5.sh` (cold wipe) | **PASS** Cases 1–7 + 4b + onboarding | Case 8/10 FAIL `inbound_accepted` (telecom flake); Case 9 incomplete (bob AVD offline mid-seed); C3 RELAY FAIL after bob AVD hung/offline; C1/C2 NEEDS_HARDWARE. Log: `/tmp/e2e-step5-api29-dnsfix.log` |
+| API 35 emu↔peer public ×10 each dir, Private DNS `one.one.one.one` | **PASS** 20/20 | `/tmp/saga-public-relay-emu-peer-api35-dnsfix/summary.txt`, `/tmp/saga-public-relay-peer-emu-api35-dnsfix/summary.txt` |
+| API 29 emu→peer public ×5, Private DNS ON | Partial | Alice **public relay-ready** after wipe; call connect **0/5** (~46s budget). Log: `/tmp/saga-public-relay-emu-peer-api29-dnsfix/summary.txt` |
+| API 29 peer→emu / network-change | Not completed | Follow-on after call-connect fails; alice relay later native=0 under churn |
+| API 35 network-change airplane×3 + wifi×3 | **PASS** 6/6 | Recover max 2944ms (airplane) / 610ms (wifi). `/tmp/saga-network-change-api35-dnsfix/summary.txt` |
+| Pcap Private DNS ON (API 35, post-DoT warm) | **PASS** | `udp port 53` capture during public call: **0** packets (`/tmp/dns53b-api35.pcap`). Bootstrap-only UDP/53 for `one.one.one.one` seen before warm. |
+| WireGuard VPN on emulator | **Not verified** | No WireGuard app/config on host/AVD this session; needs setup or hardware |
+
+### Not verified / needs hardware
+
+- API 29 public-relay **call** connect after relay-ready (DNS path OK; connect path open)
+- API 29 Case 8/9/10 + C3–C5 clean re-pass after long-suite AVD churn
+- C1/C2 conference (emulator RIL) — NEEDS_HARDWARE
+- WireGuard / always-on VPN call + DNS-in-tunnel
+
+### Open decisions
+
+- Keep vendored `noq-udp` until upstream accepts EPERM fallback; then drop patch.
+- Whether API 29 public call-connect 0/5 is AVD path/MTU vs app regression (API 35 20/20 on same build).
 
 ---
 
