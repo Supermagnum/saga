@@ -2,7 +2,6 @@ import java.util.zip.ZipFile
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val sagaIrohCoreDir = rootProject.file("../saga-iroh-core")
