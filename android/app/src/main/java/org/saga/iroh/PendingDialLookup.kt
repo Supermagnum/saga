@@ -5,10 +5,19 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Carries contact lookup key and display name from dial UI to ConnectionService. */
 object PendingDialLookup {
+    /** Group-call leg metadata: set only when the dial is an add-participant leg. */
+    data class GroupLeg(
+        val groupId: String,
+        /** Unique per-leg telecom call key (never just the lookup key). */
+        val legKey: String,
+        val introducerName: String? = null
+    )
+
     data class Pending(
         val lookupKey: String,
         val contactName: String,
-        val createdAtMs: Long = System.currentTimeMillis()
+        val createdAtMs: Long = System.currentTimeMillis(),
+        val groupLeg: GroupLeg? = null
     )
 
     private val pending = ConcurrentHashMap<String, Pending>()
@@ -17,8 +26,13 @@ object PendingDialLookup {
     /** Window for detecting Telecom SIM substitution after an Iroh placeCall attempt. */
     private const val RECENT_IROH_DIAL_MS = 15_000L
 
-    fun put(peerEndpoint: String, lookupKey: String, contactName: String) {
-        pending[peerEndpoint] = Pending(lookupKey, contactName)
+    fun put(
+        peerEndpoint: String,
+        lookupKey: String,
+        contactName: String,
+        groupLeg: GroupLeg? = null
+    ) {
+        pending[peerEndpoint] = Pending(lookupKey, contactName, groupLeg = groupLeg)
         lastIrohDialAtMs.set(System.currentTimeMillis())
     }
 

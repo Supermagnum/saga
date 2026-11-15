@@ -173,6 +173,60 @@ class MainActivity : AppCompatActivity() {
                 )
                 placeFromInput(preferCellular = preferCellular)
             }
+            "org.saga.TEST_ADD_PARTICIPANT" -> {
+                // DEBUG-ONLY (FLAG_DEBUGGABLE): add a Saga contact to the live Iroh call / group.
+                // Extras: contact_name (required), confirm_unencrypted (bool; stands in for the
+                // adder's confirm dialog when the contact has no resolvable key),
+                // introduced_by (name; marks the peer as introduced, shown "X, introduced by Y"
+                // for unknown contacts), roster_fingerprint (64 hex; checked against the link
+                // key, never trusted alone), conference (optional group id).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_ADD_PARTICIPANT refused — not a debuggable build")
+                    return
+                }
+                val name = intent.getStringExtra("contact_name") ?: return
+                val target = DialTargetResolver.fromContactDisplayName(this, name)
+                    ?: DialTargetResolver.fromInput(this, name, preferCellular = false)
+                if (target !is DialTarget.Iroh) {
+                    Log.e(TAG, "TEST_ADD_PARTICIPANT requires an Iroh contact, got [$target]")
+                    Toast.makeText(this, R.string.add_participant_only_saga, Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val outcome = org.saga.telecom.GroupCallCoordinator.requestAdd(
+                    this,
+                    org.saga.telecom.GroupCallCoordinator.AddRequest(
+                        target = target,
+                        confirmedUnencrypted = intent.getBooleanExtra("confirm_unencrypted", false),
+                        introducerName = intent.getStringExtra("introduced_by"),
+                        rosterFingerprintHex = intent.getStringExtra("roster_fingerprint"),
+                        groupId = intent.getStringExtra("conference")
+                    )
+                )
+                Log.i(TAG, "E2E add participant name=[$name] outcome=[$outcome]")
+                if (outcome == org.saga.telecom.GroupCallCoordinator.AddOutcome.REFUSED_MAX_PARTICIPANTS) {
+                    Toast.makeText(
+                        this,
+                        getString(
+                            R.string.group_max_participants,
+                            org.saga.call.GroupCallState.MAX_PARTICIPANTS
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            "org.saga.TEST_GROUP_HANGUP_PARTICIPANT" -> {
+                // DEBUG-ONLY (FLAG_DEBUGGABLE): hang up ONE participant; the group keeps running.
+                // Extras: contact_name (or lookup_key), conference (optional, informational).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_GROUP_HANGUP_PARTICIPANT refused — not a debuggable build")
+                    return
+                }
+                val who = intent.getStringExtra("contact_name")
+                    ?: intent.getStringExtra("lookup_key")
+                    ?: return
+                val ok = org.saga.telecom.GroupCallCoordinator.hangupParticipantByLookup(this, who)
+                Log.i(TAG, "E2E group hangup participant=[$who] ok=[$ok]")
+            }
             "org.saga.TEST_FORCE_IROH_SIM_PATH" -> {
                 // DEBUG-ONLY: bypass enabled-account gate to measure SIM substitution / modem dial.
                 val name = intent.getStringExtra("contact_name") ?: "bob"
@@ -243,6 +297,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun isDebuggableBuild(): Boolean =
+        (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     private fun placeFromInput(preferCellular: Boolean = false) {
         if (!isDialerRoleHeld()) {

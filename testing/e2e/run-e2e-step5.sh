@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Phase 2 Step 5 suite: Cases 1–10 + 4b + onboarding (API from ANDROID_API).
+# Optional: SAGA_RUN_GROUP=1 also runs run-e2e-group.sh (needs emulator-5558; local only, default off).
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,6 +24,12 @@ bash "$E2E_DIR/run-case10-mute.sh" || true
 echo ""
 echo "=== Step 5: Phase 4 conference C1–C5 ==="
 bash "$E2E_DIR/run-e2e-conference.sh" || true
+
+if [[ "${SAGA_RUN_GROUP:-0}" == "1" ]]; then
+  echo ""
+  echo "=== Step 5: multi-peer group calls G1-G11 (3 emulators, local only) ==="
+  bash "$E2E_DIR/run-e2e-group.sh" || true
+fi
 
 echo ""
 echo "=== Step 5: onboarding ==="

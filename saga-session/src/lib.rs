@@ -8,6 +8,7 @@ mod channel_bind;
 mod confirm;
 mod hal_os;
 mod handshake_io;
+mod roster;
 mod token;
 
 pub use channel_bind::{bind_iroh_endpoints, transcript_hash};
@@ -18,6 +19,10 @@ pub use confirm::{
 pub use hal_os::{MemoryVaultStorage, OsTrng};
 pub use handshake_io::{
     perturb_endpoint_id, run_initiator_session, run_responder_session, HandshakeOutcome,
+};
+pub use roster::{
+    read_roster, write_roster, Roster, RosterEntry, RosterError, ROSTER_MAX_PARTICIPANTS,
+    ROSTER_TAG_LEN, ROSTER_VERSION,
 };
 pub use token::{
     HandshakeOutput, InitiatorPending, SessionToken, TokenError, DEFAULT_SESSION_CURVE,

@@ -1,5 +1,9 @@
 //! Saga host media pipeline: Opus over `iroh-roq` datagrams.
 //!
+//! Two-party calls use [`MediaPipeline`]; multi-peer mesh calls (up to 4
+//! participants, pairwise keys, encode once / encrypt per link) use
+//! [`MeshMixer`].
+//!
 //! - **Encrypted:** SRTP AEAD_AES_256_GCM (token-authenticated session keys).
 //! - **Unsecured Iroh:** plain RTP inside RoQ after security resolves to
 //!   not-encrypted (QUIC still encrypts the hop; no SRTP / no token auth).
@@ -11,6 +15,7 @@ mod codec;
 mod error;
 mod jitter;
 mod keys;
+mod mesh;
 mod metrics;
 mod pipeline;
 mod policy;
@@ -27,6 +32,10 @@ pub use codec::{
 pub use error::{MediaError, Result};
 pub use jitter::{JitterBuffer, CAP_MS as JB_CAP_MS, TARGET_MS_HIGH, TARGET_MS_MIN};
 pub use keys::{CallRole, SrtpKeyPair, SrtpMaster, SRTP_MASTER_KEY_LEN, SRTP_MASTER_SALT_LEN};
+pub use mesh::{
+    mesh_link_plain, mesh_link_srtp, mix_saturate_add, LinkIngest, LinkReceiver, LinkSender,
+    MeshEncoder, MeshMixer, PeerId, MESH_MAX_LINKS, MESH_MAX_PARTICIPANTS,
+};
 pub use metrics::{MediaCounters, MediaCountersSnapshot};
 pub use pipeline::MediaPipeline;
 pub use policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};

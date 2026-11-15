@@ -62,6 +62,7 @@ Current E2E uses **phone-digit labels** for Iroh identity:
 | bob (5556) | `15550100010` |
 | alice (5554) | `15550100011` |
 | laptop (saga-peer) | `15550100020` |
+| charlene (5558) | `15550100030` |
 
 Cellular-only **thor** (`+15550100012`) has no Saga key and is **not** mapped to an Iroh identity.
 
@@ -114,3 +115,18 @@ SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 ```
 
 See [`testing/e2e/README.md`](../testing/e2e/README.md) for harness details, forensic scripts, and public-vs-local relay comparison.
+
+## Native mesh (multi-peer calls)
+
+Built with `iroh-transport,mock-token` (`nativeMeshIsAvailable()` is false otherwise, so Kotlin keeps
+the pairwise 1:1 scaffold). Implemented in `src/mesh.rs`; JNI: `nativeMeshOpen/AddPeer/RemovePeer/Close/PeerFingerprint`,
+callback `notifyMeshPeerState` (0 pending, 1 encrypted, 2 failed, 3 left).
+
+- Max 4 participants (3 links per node). One link = QUIC on ALPN `saga/mesh-join/1` (never a Telecom ring)
+  + RoQ. Stream 1: group-id hello + handshake; stream 2: `saga-mesh-roster-v1` roster; later streams: roster updates.
+- `meshAddPeer` dials (caller = initiator). A roster naming an unknown peer makes the smaller EndpointId dial.
+- Media: one `MeshMixer` per group id (encode once, SRTP per link). `nativePushCapturePcm` / `nativePullPlaybackPcm`
+  accept the group id, or a link id (only the oldest attached link of the group services audio; other link ids get silence).
+  Mute / hold / `nativeOnLocalAnswered` / `nativeIsSendArmed` apply per link id (group id = all links).
+- Link ids for roster-introduced links are `{groupId}/{lookupKey}` (same as Kotlin `GroupCallState.legKey`).
+- `meshClose` closes local links only; remaining peers keep their mutual links.

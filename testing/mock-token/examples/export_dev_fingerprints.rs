@@ -1,5 +1,5 @@
 fn main() {
-    for label in ["15550100010", "15550100011", "15550100020"] {
+    for label in ["15550100010", "15550100011", "15550100020", "15550100030"] {
         let id = mock_token::MockIdentity::from_label(label);
         let sec1 = id.verifying_sec1();
         println!(

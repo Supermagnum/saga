@@ -16,8 +16,18 @@ object IrohNativeBridge {
     const val RELAY_READY = 1
     const val RELAY_FAILED = 2
 
+    /** Mesh link states reported by native via [notifyMeshPeerState]. */
+    const val MESH_PEER_PENDING = 0
+    const val MESH_PEER_ENCRYPTED = 1
+    const val MESH_PEER_FAILED = 2
+    const val MESH_PEER_LEFT = 3
+
     @Volatile
     private var libraryLoaded = false
+
+    /** null = not probed yet. */
+    @Volatile
+    private var meshAvailable: Boolean? = null
 
     private val listeners = ConcurrentHashMap<String, Listener>()
 
@@ -154,6 +164,64 @@ object IrohNativeBridge {
         listeners.remove(sessionId)?.onFailed(reason)
     }
 
+    /**
+     * True when the loaded native library exports the mesh JNI (nativeMesh*).
+     *
+     * Dual path (see GroupCallCoordinator): when true, a group is one native mesh with one
+     * link id per peer; otherwise the Kotlin scaffold runs one 1:1 native session per peer.
+     * TODO(mesh-jni): signatures below are the Kotlin-side contract; reconcile with the Rust
+     * agent's final JNI names when it lands, then remove the pairwise scaffold.
+     */
+    fun isMeshNativeAvailable(): Boolean {
+        meshAvailable?.let { return it }
+        if (!ensureLoaded()) return false
+        val available = try {
+            nativeMeshIsAvailable()
+        } catch (e: UnsatisfiedLinkError) {
+            Log.i(TAG, "Mesh JNI not present: ${e.message}")
+            false
+        }
+        meshAvailable = available
+        return available
+    }
+
+    fun meshOpen(groupId: String): Boolean {
+        if (!isMeshNativeAvailable()) return false
+        return nativeMeshOpen(groupId)
+    }
+
+    /** Add (or start dialling) one peer link inside the mesh group. */
+    fun meshAddPeer(groupId: String, linkId: String, peerId: String): Boolean {
+        if (!isMeshNativeAvailable()) return false
+        return nativeMeshAddPeer(groupId, linkId, peerId)
+    }
+
+    /** Close one link only; other links of the mesh keep running. */
+    fun meshRemovePeer(groupId: String, linkId: String) {
+        if (isMeshNativeAvailable()) nativeMeshRemovePeer(groupId, linkId)
+    }
+
+    /** Local user leaves the mesh. Other participants keep their mutual links (no host). */
+    fun meshClose(groupId: String) {
+        if (isMeshNativeAvailable()) nativeMeshClose(groupId)
+    }
+
+    /**
+     * 64-char lowercase hex fingerprint authenticated by this link's handshake, or null when
+     * unknown. Null must never be treated as verified.
+     */
+    fun meshPeerFingerprint(groupId: String, linkId: String): String? {
+        if (!isMeshNativeAvailable()) return null
+        return nativeMeshPeerFingerprint(groupId, linkId)
+    }
+
+    /** Native -> Kotlin: one mesh link changed state (MESH_PEER_*). */
+    @JvmStatic
+    fun notifyMeshPeerState(groupId: String, linkId: String, state: Int) {
+        Log.i(TAG, "notifyMeshPeerState group=[$groupId] link=[$linkId] state=[$state]")
+        org.saga.telecom.GroupCallCoordinator.onMeshPeerState(groupId, linkId, state)
+    }
+
     @JvmStatic
     fun notifyIncomingCall(sessionId: String, lookupKey: String, remoteEndpointId: String) {
         Log.i(
@@ -197,4 +265,10 @@ object IrohNativeBridge {
     private external fun nativeOnLocalAnswered(sessionId: String): Boolean
     private external fun nativeIsSendArmed(sessionId: String): Boolean
     private external fun nativeRekeyMedia(sessionId: String): Long
+    private external fun nativeMeshIsAvailable(): Boolean
+    private external fun nativeMeshOpen(groupId: String): Boolean
+    private external fun nativeMeshAddPeer(groupId: String, linkId: String, peerId: String): Boolean
+    private external fun nativeMeshRemovePeer(groupId: String, linkId: String)
+    private external fun nativeMeshClose(groupId: String)
+    private external fun nativeMeshPeerFingerprint(groupId: String, linkId: String): String?
 }

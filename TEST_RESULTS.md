@@ -1,10 +1,70 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (API 29 DNS / local-relay hotfix)
+**Last updated:** 2026-11-15 (Part 1 multi-peer mesh)
 
-**Status:** `fix/dns-api29` — stop process-wide `bindProcessToNetwork`; vendor
-`noq-udp` EPERM→no-IP_TOS fallback for Linux 4.14 AVDs. Local-relay suite
-remains the CI gate.
+**Status:** `feat/multi-peer-calls` — full-mesh pairwise group calls (≤4), Charlene
+fixture `15550100030`, host CI mesh tests, Android group Telecom/UI. Emulator G
+suite local-only; Bob↔Charlene direct link still PENDING_MESH on-device (Android
+uses pairwise voice dials for ringing UX; host_mesh covers full 6-link mesh).
+
+---
+
+## 2026-11-15 — Part 1 multi-peer encrypted calls (`feat/multi-peer-calls`)
+
+Branch: `feat/multi-peer-calls` (from main after #42 dns-api29 + #39 relay Option A).
+Implements issue #30 / saga-spec §14.2 (decisions §14.2.1).
+
+### Host CI (in-process mesh)
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| `saga-session` roster unit tests | **PASS** 6/6 | HMAC `saga-mesh-roster-v1`, max-4, tamper |
+| `saga-media --test mesh` | **PASS** 8/8 | encode-once fan-out, mix, pre-answer, mute/hold, 5th refuse |
+| `tools/saga-peer --test host_mesh` | **PASS** 5/5 | 3-peer + 4-peer encrypted, leave-continues, 5th refuse, unencrypted confirm | ~4.5s |
+| Android `GroupCallStateTest` | **PASS** 37/37 | aggregate padlock, max-4, introduced-by, never-merge |
+
+### Emulator G suite (local, 3 AVDs + optional saga-peer)
+
+Alice `emulator-5554`, Bob `emulator-5556`, Charlene `emulator-5558` (Saga_PA_Test AVD,
+identity `15550100030`). Logs: `/tmp/saga-group-e2e2.log`, screencaps under
+`docs/screenshots/group-mesh/` (inspected).
+
+| Case | Result | Notes |
+|------|--------|-------|
+| G1 Alice→Bob 1:1 | **PASS*** | Handshake ~1.0s Encrypted both; UI Encrypted on alice. *Harness false-fail fixed; re-run pending with step5. |
+| G2 Alice adds Charlene | **PASS** | Alice Encrypted to bob+charlene; group UI per-participant padlocks. Bob↔Charlene **PENDING_MESH** (pairwise adder-only). |
+| G3 Bob↔Charlene direct | **PENDING_MESH** | Covered by host_mesh 3-peer; Android pairwise scaffold does not dial B↔C. |
+| G4 introduced-by | Partial / not re-run this pass | Harness + UI strings present |
+| G5 wrong key / confirm-to-admit | Partial / not re-run this pass | |
+| G6 4 participants | **PASS** (via G7 setup) | Alice UI shows bob, charlene, laptop Encrypted (`g7-full-alice.png`) |
+| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS`; existing links untouched |
+| G8–G11 | Not fully re-run after NPE fix | Earlier blocked by ConcurrentHashMap null crash |
+
+### Screenshots inspected
+
+- `g2-3person-alice.png` — header Encrypted; bob + charlene rows Encrypted + REMOVE
+- `g2-3person-bob.png` / `g2-3person-charlene.png` — still 1:1 with alice (pairwise; no group roster on callee)
+- `g7-full-alice.png` — bob, charlene, laptop Encrypted (4 total)
+
+### Not verified / needs real hardware
+
+- CPU/battery/thermal with 3 incoming Opus streams on a physical phone
+- Real LTE upload (~3×32 kbps) under cell radio
+- Bluetooth audio with a local mix
+- Bob↔Charlene mesh-join ringing/Telecom attach on device (native mesh JNI exists;
+  Android still prefers pairwise for invite ring)
+- Full API 29 G suite (one API 29 run still required for Part 1 acceptance)
+- API 35 Cases 1–10 + 4b + C3–C5 + onboarding full re-gate (running /tmp/e2e-step5-api35-multippeer.log)
+
+### Open decisions for the user
+
+1. When to flip Android `GroupCallCoordinator.backendNow()` to `NATIVE_MESH` (needs
+   ringing voice-ALPN invite mode on `meshAddPeer`, or Telecom synthetic legs for
+   mesh-join).
+2. Whether callee devices should show the full group roster in pairwise mode
+   (today only the adder hosts the Conference children).
+3. Confirm issue #30 open questions are closed by §14.2.1 (starter leave continues;
+   anyone may add; confirm-to-admit unencrypted).
 
 ---
 

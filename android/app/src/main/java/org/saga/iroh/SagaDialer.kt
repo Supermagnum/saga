@@ -18,6 +18,18 @@ object SagaDialer {
     const val EXTRA_REMOTE_ENDPOINT_ID = "org.saga.EXTRA_REMOTE_ENDPOINT_ID"
     const val EXTRA_CONTACT_NAME = "org.saga.EXTRA_CONTACT_NAME"
 
+    /**
+     * Group-call extras. EXTRA_TELECOM_CALL_KEY is put on group legs and the group Conference
+     * (Connection/Conference extras) so InCall maps a Call to its leg without relying on the
+     * peer lookup key. EXTRA_INTRODUCER_NAME / EXTRA_ROSTER_FINGERPRINT are reserved for
+     * inbound links introduced by a roster peer (filled by the native mesh once it lands).
+     */
+    const val EXTRA_GROUP_ID = "org.saga.EXTRA_GROUP_ID"
+    const val EXTRA_TELECOM_CALL_KEY = "org.saga.EXTRA_TELECOM_CALL_KEY"
+    const val EXTRA_GROUP_LABEL = "org.saga.EXTRA_GROUP_LABEL"
+    const val EXTRA_INTRODUCER_NAME = "org.saga.EXTRA_INTRODUCER_NAME"
+    const val EXTRA_ROSTER_FINGERPRINT = "org.saga.EXTRA_ROSTER_FINGERPRINT"
+
     /** Wall-clock millis when a debug forced SIM-path placeCall was issued (0 = none). */
     @Volatile
     var debugForceSimPlaceCallElapsedRealtimeMs: Long = 0L
@@ -59,6 +71,18 @@ object SagaDialer {
         return extras?.getString(EXTRA_CONTACT_NAME)
     }
 
+    fun groupIdFromConnectionRequest(extras: Bundle?): String? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_GROUP_ID)?.let { return it }
+        return extras?.getString(EXTRA_GROUP_ID)
+    }
+
+    fun introducerNameFromConnectionRequest(extras: Bundle?): String? {
+        val incoming = extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        incoming?.getString(EXTRA_INTRODUCER_NAME)?.let { return it }
+        return extras?.getString(EXTRA_INTRODUCER_NAME)
+    }
+
     fun placeCall(context: Context, target: DialTarget) {
         when (target) {
             is DialTarget.Cellular -> placeCellularCall(context, target.number)
@@ -75,7 +99,8 @@ object SagaDialer {
         context: Context,
         peerId: IrohNodeId,
         lookupKey: String = peerId.raw,
-        contactName: String = lookupKey
+        contactName: String = lookupKey,
+        groupLeg: PendingDialLookup.GroupLeg? = null
     ) {
         if (!SagaPhoneAccountRegistrar.ensureEnabled(context)) {
             Log.e(
@@ -85,7 +110,7 @@ object SagaDialer {
             launchOnboarding(context)
             return
         }
-        PendingDialLookup.put(peerId.raw, lookupKey, contactName)
+        PendingDialLookup.put(peerId.raw, lookupKey, contactName, groupLeg)
         Log.i(TAG, "Placing Iroh call to contact [$contactName] via Saga PhoneAccount")
         placeIrohViaTelecom(context, peerId, lookupKey, contactName, forceSimPath = false)
     }

@@ -19,6 +19,9 @@ use android_logger::Config;
 mod android_dns;
 #[cfg(feature = "iroh-transport")]
 mod iroh_transport;
+/// Native mesh (needs the token handshake, so `mock-token` until a production backend lands).
+#[cfg(feature = "mock-token")]
+mod mesh;
 
 mod media_bridge;
 
@@ -141,6 +144,55 @@ fn notify_incoming_call(session_id: &str, lookup_key: &str, remote_endpoint_id: 
         }
         clear_pending_exception(&mut env, "notifyIncomingCall");
     });
+}
+
+/// Native -> Kotlin: one mesh link changed state (`IrohNativeBridge.notifyMeshPeerState`).
+/// Runs on a fresh attached thread, like `notify_incoming_call`.
+#[cfg(feature = "mock-token")]
+fn notify_mesh_peer_state(group_id: &str, link_id: &str, state: i32) {
+    let Some(vm) = JAVA_VM.get() else {
+        warn!("notifyMeshPeerState: JavaVM not cached (group=[{group_id}] link=[{link_id}] state={state})");
+        return;
+    };
+    let group = group_id.to_string();
+    let link = link_id.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifyMeshPeerState attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            error!("notifyMeshPeerState: IrohNativeBridge class not cached");
+            return;
+        };
+        let Ok(jgroup) = env.new_string(&group) else {
+            return;
+        };
+        let Ok(jlink) = env.new_string(&link) else {
+            return;
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifyMeshPeerState",
+            "(Ljava/lang/String;Ljava/lang/String;I)V",
+            &[
+                JValue::from(&jgroup),
+                JValue::from(&jlink),
+                JValue::from(state),
+            ],
+        ) {
+            error!("notifyMeshPeerState failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifyMeshPeerState");
+    });
+}
+
+#[cfg(feature = "mock-token")]
+pub(crate) fn bridge_notify_mesh_peer_state(group_id: &str, link_id: &str, state: i32) {
+    notify_mesh_peer_state(group_id, link_id, state);
 }
 
 #[cfg(feature = "iroh-transport")]
@@ -483,6 +535,16 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeStartMedia(
             2 => media_bridge::MediaMode::PlainRtp,
             _ => return jni::sys::JNI_FALSE,
         };
+        #[cfg(feature = "mock-token")]
+        if let Some(node) = mesh::global_node() {
+            if let Some(ok) = node.start_media(&session, mode as i32) {
+                return if ok {
+                    jni::sys::JNI_TRUE
+                } else {
+                    jni::sys::JNI_FALSE
+                };
+            }
+        }
         let Some((role, hs, roq_conn)) = iroh_transport::take_media_setup(&session) else {
             log::warn!("nativeStartMedia: no RoQ setup for [{session}]");
             return jni::sys::JNI_FALSE;
@@ -718,6 +780,158 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId
     #[cfg(not(feature = "iroh-transport"))]
     {
         let _ = env;
+        std::ptr::null_mut()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Native mesh JNI (see mesh.rs). Without `mock-token` there is no token
+// backend yet, so the mesh reports unavailable and Kotlin keeps the pairwise
+// 1:1 scaffold.
+// ---------------------------------------------------------------------------
+
+fn jbool(v: bool) -> jboolean {
+    if v {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshIsAvailable(
+    mut env: JNIEnv,
+    _thiz: JObject,
+) -> jboolean {
+    ensure_bridge_class_cached(&mut env);
+    jbool(cfg!(feature = "mock-token"))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshOpen(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    group_id: JString,
+) -> jboolean {
+    ensure_bridge_class_cached(&mut env);
+    let Some(group) = jstring_to_rust(&mut env, &group_id) else {
+        return jni::sys::JNI_FALSE;
+    };
+    #[cfg(feature = "mock-token")]
+    {
+        match mesh::ensure_global_node() {
+            Ok(node) => jbool(node.open(&group)),
+            Err(e) => {
+                error!("nativeMeshOpen group=[{group}] failed: {e}");
+                jni::sys::JNI_FALSE
+            }
+        }
+    }
+    #[cfg(not(feature = "mock-token"))]
+    {
+        let _ = group;
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshAddPeer(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    group_id: JString,
+    link_id: JString,
+    peer_id: JString,
+) -> jboolean {
+    ensure_bridge_class_cached(&mut env);
+    let (Some(group), Some(link), Some(peer)) = (
+        jstring_to_rust(&mut env, &group_id),
+        jstring_to_rust(&mut env, &link_id),
+        jstring_to_rust(&mut env, &peer_id),
+    ) else {
+        return jni::sys::JNI_FALSE;
+    };
+    #[cfg(feature = "mock-token")]
+    {
+        match mesh::ensure_global_node() {
+            Ok(node) => jbool(node.add_peer(&group, &link, &peer)),
+            Err(e) => {
+                error!("nativeMeshAddPeer group=[{group}] link=[{link}] failed: {e}");
+                jni::sys::JNI_FALSE
+            }
+        }
+    }
+    #[cfg(not(feature = "mock-token"))]
+    {
+        let _ = (group, link, peer);
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshRemovePeer(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    group_id: JString,
+    link_id: JString,
+) {
+    let (Some(group), Some(link)) = (
+        jstring_to_rust(&mut env, &group_id),
+        jstring_to_rust(&mut env, &link_id),
+    ) else {
+        return;
+    };
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh::global_node() {
+        node.remove_peer(&group, &link);
+    }
+    #[cfg(not(feature = "mock-token"))]
+    let _ = (group, link);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshClose(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    group_id: JString,
+) {
+    let Some(group) = jstring_to_rust(&mut env, &group_id) else {
+        return;
+    };
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh::global_node() {
+        node.close(&group);
+    }
+    #[cfg(not(feature = "mock-token"))]
+    let _ = group;
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshPeerFingerprint(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    group_id: JString,
+    link_id: JString,
+) -> jni::sys::jstring {
+    let (Some(group), Some(link)) = (
+        jstring_to_rust(&mut env, &group_id),
+        jstring_to_rust(&mut env, &link_id),
+    ) else {
+        return std::ptr::null_mut();
+    };
+    #[cfg(feature = "mock-token")]
+    {
+        let fp = mesh::global_node().and_then(|n| n.peer_fingerprint(&group, &link));
+        match fp {
+            Some(hex) => env
+                .new_string(hex)
+                .map(|s| s.into_raw())
+                .unwrap_or(std::ptr::null_mut()),
+            None => std::ptr::null_mut(),
+        }
+    }
+    #[cfg(not(feature = "mock-token"))]
+    {
+        let _ = (group, link, env);
         std::ptr::null_mut()
     }
 }
