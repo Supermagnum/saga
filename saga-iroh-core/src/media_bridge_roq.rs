@@ -12,8 +12,9 @@ use std::time::Instant;
 
 use log::{info, warn};
 use saga_media::{
-    CallRole, MediaCounters, MediaCountersSnapshot, MediaPipeline, SecurityResolution,
-    FRAME_SAMPLES, SAMPLE_RATE,
+    disguise_begin_call, disguise_end_call, disguise_is_active, set_disguise_settings, CallRole,
+    DisguiseMode, DisguiseSettings, FormantStrength, MediaCounters, MediaCountersSnapshot,
+    MediaPipeline, SecurityResolution, FRAME_SAMPLES, SAMPLE_RATE,
 };
 use saga_session::HandshakeOutput;
 use tokio::sync::{mpsc, Mutex as TokioMutex};
@@ -99,6 +100,12 @@ struct MediaSession {
     send_armed: Arc<AtomicBool>,
     /// False until answer — playout must not reach AudioTrack with pre-answer audio.
     playout_armed: Arc<AtomicBool>,
+    /// §16: peer reports disguise active (informational chip only).
+    peer_disguise: Arc<AtomicBool>,
+    /// Request the media tick to emit a disguise control datagram.
+    disguise_send_pending: Arc<AtomicBool>,
+    /// Last disguise active bit we advertised (or intend to).
+    disguise_send_active: Arc<AtomicBool>,
     capture_tx: mpsc::Sender<Vec<i16>>,
     playback_ring: Arc<StdMutex<VecDeque<Vec<u8>>>>,
     counters: Arc<MediaCounters>,
@@ -154,6 +161,10 @@ pub fn start_media(
             }
         };
 
+    // §16: arm per-call random α / pitch; peer chip is sent once send is armed.
+    disguise_begin_call();
+    let initial_disguise = disguise_is_active();
+
     // ≥ speech-clip length at 20 ms/frame so paced inject cannot overrun when
     // the RoQ tick briefly stalls (was 8 → dump noise on reverse path).
     let (capture_tx, mut capture_rx) = mpsc::channel::<Vec<i16>>(512);
@@ -164,8 +175,14 @@ pub fn start_media(
     let playback_task = playback_ring.clone();
     let send_armed = Arc::new(AtomicBool::new(false));
     let playout_armed = Arc::new(AtomicBool::new(false));
+    let disguise_send_pending = Arc::new(AtomicBool::new(true));
+    let disguise_send_active = Arc::new(AtomicBool::new(initial_disguise));
+    let peer_disguise = Arc::new(AtomicBool::new(false));
     let send_armed_tick = send_armed.clone();
     let playout_armed_tick = playout_armed.clone();
+    let disguise_pending_tick = disguise_send_pending.clone();
+    let disguise_active_tick = disguise_send_active.clone();
+    let peer_disguise_tick = peer_disguise.clone();
     let sid = session_id.to_string();
     let _role = role;
 
@@ -211,6 +228,11 @@ pub fn start_media(
                                             &playout_armed_tick,
                                             &playback_task,
                                         );
+                                    } else if let Some(active) =
+                                        MediaPipeline::parse_disguise_signal(&bytes)
+                                    {
+                                        peer_disguise_tick.store(active, Ordering::Relaxed);
+                                        crate::notify_peer_disguise(&sid, active);
                                     } else {
                                         p.ingest_datagram(&bytes);
                                     }
@@ -241,6 +263,12 @@ pub fn start_media(
                                             &playout_armed_tick,
                                             &playback_task,
                                         );
+                                        true
+                                    } else if let Some(active) =
+                                        MediaPipeline::parse_disguise_signal(&bytes)
+                                    {
+                                        peer_disguise_tick.store(active, Ordering::Relaxed);
+                                        crate::notify_peer_disguise(&sid, active);
                                         true
                                     } else if fault_on {
                                         #[cfg(feature = "mock-token")]
@@ -297,6 +325,16 @@ pub fn start_media(
                         #[cfg(not(feature = "mock-token"))]
                         let echo_on = false;
                         let may_send = send_armed_tick.load(Ordering::Relaxed);
+                        // §16 peer chip: emit disguise state once send is armed (and on toggle).
+                        if may_send
+                            && disguise_pending_tick.swap(false, Ordering::Relaxed)
+                        {
+                            let active = disguise_active_tick.load(Ordering::Relaxed);
+                            if let Err(e) = p.send_disguise_signal(active) {
+                                warn!("[Saga Media] disguise signal send failed: {e}");
+                                disguise_pending_tick.store(true, Ordering::Relaxed);
+                            }
+                        }
                         // Exactly one send per 20 ms tick once answered.
                         // Echo mode replaces mic capture with decoded PCM.
                         if !echo_on {
@@ -383,6 +421,9 @@ pub fn start_media(
         held: AtomicBool::new(false),
         send_armed,
         playout_armed,
+        peer_disguise,
+        disguise_send_pending,
+        disguise_send_active,
         capture_tx,
         playback_ring,
         counters,
@@ -472,6 +513,7 @@ pub fn stop_media(session_id: &str) {
     #[cfg(feature = "mock-token")]
     if let Some(node) = mesh_node_for(session_id) {
         node.stop_media(session_id);
+        disguise_end_call();
         return;
     }
     if let Ok(mut map) = MEDIA.lock() {
@@ -486,6 +528,49 @@ pub fn stop_media(session_id: &str) {
             info!("[Saga Media] stop session=[{session_id}]");
         }
     }
+    // Zeroize per-call α / pitch when the last 1:1 media session ends.
+    if MEDIA.lock().map(|m| m.is_empty()).unwrap_or(true) {
+        disguise_end_call();
+    }
+}
+
+/// Apply §16 settings from Android (mode / pitch / formant / random / in-call toggle).
+pub fn apply_disguise_settings(
+    mode: u8,
+    pitch_semitones: f32,
+    formant_strength: u8,
+    random_each_call: bool,
+    call_enabled: bool,
+) {
+    set_disguise_settings(DisguiseSettings {
+        mode: DisguiseMode::from_u8(mode),
+        pitch_semitones,
+        formant_strength: FormantStrength::from_u8(formant_strength),
+        random_each_call,
+        call_enabled,
+    });
+    let active = disguise_is_active();
+    if let Ok(map) = MEDIA.lock() {
+        for s in map.values() {
+            s.disguise_send_active.store(active, Ordering::Relaxed);
+            s.disguise_send_pending.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+pub fn peer_disguise_active(session_id: &str) -> bool {
+    MEDIA
+        .lock()
+        .ok()
+        .and_then(|m| {
+            m.get(session_id)
+                .map(|s| s.peer_disguise.load(Ordering::Relaxed))
+        })
+        .unwrap_or(false)
+}
+
+pub fn local_disguise_active() -> bool {
+    disguise_is_active()
 }
 
 pub fn set_muted(session_id: &str, muted: bool) {

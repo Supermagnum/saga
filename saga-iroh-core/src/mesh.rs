@@ -1151,6 +1151,9 @@ impl MeshNode {
         if ok && mode == 2 {
             info!("[Saga Mesh] startMedia [{id}] plain requested; mesh links are always SRTP");
         }
+        if ok {
+            saga_media::disguise_begin_call();
+        }
         Some(ok)
     }
 
