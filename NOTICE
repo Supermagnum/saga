@@ -54,6 +54,11 @@ blake3
 Call-state icons (icons/)
   Licence: AGPL — see icons/readme.md
 
+openpgp-card / card-backend / card-backend-pcsc (Nitrokey OpenPGP client)
+  crates.io: openpgp-card, card-backend, card-backend-pcsc
+  Licence: MIT OR Apache-2.0
+  Note: used by saga-token-usb for INTERNAL AUTHENTICATE (AUT) over USB CCID.
+
 Android / Google / Jetpack libraries
   Licence: Apache-2.0 (per artifact)
 
