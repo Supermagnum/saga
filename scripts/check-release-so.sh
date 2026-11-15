@@ -38,6 +38,16 @@ check_absent "fake_hal"
 check_absent "saga-echo-mode"
 check_absent "saga-rx-fault"
 
+# Production Nitrokey backend must be present in release (Part 4).
+# Do not use `rg -q` under `pipefail`: early exit SIGPIPEs `strings` and
+# the pipeline then looks like a miss even when the marker is present.
+if strings "$SO" | rg --fixed-strings "saga-nitrokey-session-token-v1" >/dev/null; then
+  echo "OK: present [saga-nitrokey-session-token-v1]"
+else
+  echo "FAIL: release .so missing production Nitrokey backend marker"
+  fail=1
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi

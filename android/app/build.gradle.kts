@@ -64,11 +64,11 @@ fun sagaCargoProfile(): String {
 
 /**
  * Cargo features for native lib.
- * Release: iroh-transport only (no mock-token / test-utils).
+ * Release: iroh-transport + nitrokey (production SessionToken; no mock-token / test-utils).
  * Debug / CI: iroh-transport,mock-token for E2E SessionToken + local relay TLS.
  */
 fun sagaCargoFeatures(): String {
-    return if (sagaIsReleaseRequested()) "iroh-transport" else "iroh-transport,mock-token"
+    return if (sagaIsReleaseRequested()) "iroh-transport,nitrokey" else "iroh-transport,mock-token"
 }
 
 android {
