@@ -28,6 +28,8 @@ use saga_session::HandshakeOutput;
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 /// Mesh-join links: pairwise mesh links that must never ring Telecom (see `mesh`).
+/// Debug/mock-token only — not registered on release endpoints (see bind_endpoint_async).
+#[cfg(feature = "mock-token")]
 pub const SAGA_MESH_JOIN_ALPN: &[u8] = b"saga/mesh-join/1";
 
 /// Per-attempt connect timeout (QUIC dial).
@@ -452,11 +454,17 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
     // Do not pin third-party resolvers. On Android, route A/AAAA/TXT through
     // android.net.DnsResolver (Private DNS / VPN / Orbot). Elsewhere use iroh defaults.
-    let mut builder = Endpoint::builder(presets::N0).alpns(vec![
+    // Mesh-join ALPN is debug/mock-token only. Release must not advertise or accept
+    // group mesh (G4/G5: Encrypted without every key verified must never ship).
+    #[cfg(feature = "mock-token")]
+    let alpns = vec![
         SAGA_VOICE_ALPN.to_vec(),
         SAGA_MESH_JOIN_ALPN.to_vec(),
         ROQ_ALPN.to_vec(),
-    ]);
+    ];
+    #[cfg(not(feature = "mock-token"))]
+    let alpns = vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()];
+    let mut builder = Endpoint::builder(presets::N0).alpns(alpns);
     #[cfg(target_os = "android")]
     {
         builder = builder.dns_resolver(crate::android_dns::android_iroh_dns_resolver());
@@ -521,7 +529,8 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                                 info!("[Saga Iroh Listen] inbound connecting (QUIC handshake)");
                                 match connecting.await {
                                     Ok(conn) => {
-                                        if conn.alpn() == ROQ_ALPN {
+                                        let alpn = conn.alpn();
+                                        if alpn == ROQ_ALPN {
                                             let remote = conn.remote_id();
                                             if let Ok(mut pending) = PENDING_ROQ.lock() {
                                                 if let Some(tx) = pending.remove(&remote) {
@@ -543,18 +552,21 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                                                 }
                                             }
                                             warn!("unsolicited RoQ from {remote}");
-                                        } else if conn.alpn() == SAGA_MESH_JOIN_ALPN {
-                                            // Mesh-join: never a Telecom ring / notifyIncomingCall.
-                                            #[cfg(feature = "mock-token")]
-                                            match crate::mesh::global_node() {
-                                                Some(node) => node.handle_inbound(conn).await,
-                                                None => {
-                                                    conn.close(0u32.into(), b"saga mesh unavailable")
-                                                }
-                                            }
-                                            #[cfg(not(feature = "mock-token"))]
-                                            conn.close(0u32.into(), b"saga mesh unavailable");
                                         } else {
+                                            #[cfg(feature = "mock-token")]
+                                            if alpn == SAGA_MESH_JOIN_ALPN {
+                                                // Mesh-join: never a Telecom ring / notifyIncomingCall.
+                                                match crate::mesh::global_node() {
+                                                    Some(node) => node.handle_inbound(conn).await,
+                                                    None => {
+                                                        conn.close(
+                                                            0u32.into(),
+                                                            b"saga mesh unavailable",
+                                                        )
+                                                    }
+                                                }
+                                                return;
+                                            }
                                             handle_inbound_connection(conn).await;
                                         }
                                     }

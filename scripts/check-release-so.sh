@@ -56,6 +56,9 @@ check_absent "LATENCY_MARKER"
 check_absent "TEST_PCM"
 check_absent "TEST_ECHO"
 check_absent "TEST_RX_FAULT"
+# Iroh group mesh is debug/mock-token only (G4/G5: never ship Encrypted without key verify).
+check_absent "saga/mesh-join/1"
+check_absent "saga-mesh-roster-v1"
 
 # Production Nitrokey backend must be present in release (Part 4).
 if so_contains "saga-nitrokey-session-token-v1"; then
