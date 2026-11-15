@@ -13,10 +13,8 @@ import android.telecom.CallEndpoint
 import android.telecom.InCallService
 import android.util.Log
 import android.view.View
-import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.util.concurrent.Executors
@@ -27,23 +25,13 @@ import org.saga.audio.VoiceDisguiseStore
 import org.saga.call.CallOrigin
 import org.saga.call.CallSecurityPresenter
 import org.saga.call.CallSecurityStateResolver
-import org.saga.call.CallSecuritySnapshot
-import org.saga.call.ConnectCuePolicy
-import org.saga.call.GroupCallRegistry
-import org.saga.call.GroupCallState
-import org.saga.call.MeshParticipant
 import org.saga.call.PadlockDisplayState
 import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.databinding.ActivityInCallBinding
 import org.saga.databinding.ItemGroupParticipantBinding
-import org.saga.dial.DialTarget
-import org.saga.dial.DialTargetResolver
-import org.saga.dial.IrohContactDirectory
 import org.saga.iroh.IrohDialManager
-import org.saga.telecom.GroupCallCoordinator
 import org.saga.telecom.MultiCallActions
-import org.saga.telecom.SagaIrohConnectionRegistry
 
 class SagaInCallActivity : AppCompatActivity() {
     companion object {
@@ -58,10 +46,6 @@ class SagaInCallActivity : AppCompatActivity() {
     private var callOrigin: CallOrigin = CallOrigin.CELLULAR
     private var connectCuePlayed = false
     private var downgradeModalShown = false
-
-    /** Per-participant dialog guards (leg keys): one §5a modal / one confirm per link. */
-    private val groupDowngradeShown = mutableSetOf<String>()
-    private val unencryptedLinkConfirmShown = mutableSetOf<String>()
     private var muted = false
     private var speakerOn = false
     private var held = false
@@ -86,7 +70,7 @@ class SagaInCallActivity : AppCompatActivity() {
         binding.toggleSpeaker.setOnClickListener { toggleSpeaker() }
         binding.toggleHold.setOnClickListener { toggleHold() }
         binding.btnAddCall.setOnClickListener { launchAddCall() }
-        binding.btnAddParticipant.setOnClickListener { onAddParticipantClicked() }
+        GroupCallInCallUi.bind(this, binding) { refreshMultiCallUi() }
         binding.btnSwap.setOnClickListener { swapCalls() }
         binding.btnMerge.setOnClickListener { mergeCalls() }
         binding.btnSplit.setOnClickListener { splitFocused() }
@@ -112,10 +96,8 @@ class SagaInCallActivity : AppCompatActivity() {
         refreshDisguiseUi(origin)
         refreshMultiCallUi()
 
-        // Group model changes (any participant snapshot, add / remove): redraw rows + header.
-        lifecycleScope.launch {
-            GroupCallRegistry.groups.collect { refreshMultiCallUi() }
-        }
+        // Iroh group model (debug only): redraw when participants change.
+        GroupCallInCallUi.collectGroups(this, lifecycleScope) { refreshMultiCallUi() }
         lifecycleScope.launch {
             VoiceDisguiseStore.peerDisguise.collect { refreshDisguiseUi(currentOrigin()) }
         }
@@ -125,16 +107,11 @@ class SagaInCallActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             SagaCallEventHub.securityUpdates.collect { update ->
-                // Group legs: every participant's updates are collected, not only the focused one.
-                val group = GroupCallRegistry.groupForLeg(update.telecomCallId)
-                if (group != null && group.participants.size >= 2) {
-                    onGroupSecurityUpdate(group.groupId, update)
+                if (GroupCallInCallUi.onSecurityUpdate(this@SagaInCallActivity, update) {
+                        refreshMultiCallUi()
+                    }
+                ) {
                     return@collect
-                }
-                // 1:1: remember that this leg's connect-cue slot is consumed so a later
-                // promotion to a group does not play a second cue.
-                if (update.playConnectCue) {
-                    GroupCallRegistry.markLegConnectCueConsumed(update.telecomCallId)
                 }
                 if (update.telecomCallId != callId) return@collect
                 renderSnapshot(update.snapshot)
@@ -315,9 +292,11 @@ class SagaInCallActivity : AppCompatActivity() {
             binding.callSecondaryLine.visibility = View.GONE
         }
 
-        // Iroh group (>= 2 remote links): header = aggregate padlock, rows = per participant.
-        val group = currentGroupForUi()
-        if (group == null && active != null) {
+        // Iroh group (>= 2 remote links, debug only): header = aggregate, rows = per participant.
+        val renderedIrohGroup = GroupCallInCallUi.tryRenderGroup(
+            this, binding, setCallId = { callId = it }, renderSnapshot = { renderSnapshot(it) }
+        )
+        if (!renderedIrohGroup && active != null) {
             callId = SagaCallRegistry.telecomCallId(active)
             binding.callerName.text = SagaCallRegistry.displayNameFromCall(active)
             SagaCallRegistry.get(callId)?.snapshot?.let { renderSnapshot(it) }
@@ -326,36 +305,35 @@ class SagaInCallActivity : AppCompatActivity() {
                 )
         }
 
-        // Participant rows.
+        // Carrier conference children: always Not encrypted (cellular resolver).
         val children = when {
             conference != null -> MultiCallActions.conferenceChildren(conference)
             active != null -> MultiCallActions.conferenceChildren(active)
             else -> emptyList()
         }
-        if (group != null) {
-            renderGroup(group)
-        } else if (children.isNotEmpty()) {
-            // Carrier conference children: always Not encrypted (cellular resolver).
-            binding.groupParticipants.removeAllViews()
-            children.forEach { child ->
-                val snapshot = CallSecurityStateResolver.resolve(MultiCallActions.origin(child))
-                addParticipantRow(
-                    name = SagaCallRegistry.displayNameFromCall(child),
-                    snapshot = snapshot,
-                    statusSuffix = null,
-                    onHangup = {
-                        try {
-                            child.disconnect()
-                        } catch (e: Exception) {
-                            Log.w(TAG, "child disconnect failed: ${e.message}")
+        if (!renderedIrohGroup) {
+            if (children.isNotEmpty()) {
+                binding.groupParticipants.removeAllViews()
+                children.forEach { child ->
+                    val snapshot = CallSecurityStateResolver.resolve(MultiCallActions.origin(child))
+                    addParticipantRow(
+                        name = SagaCallRegistry.displayNameFromCall(child),
+                        snapshot = snapshot,
+                        statusSuffix = null,
+                        onHangup = {
+                            try {
+                                child.disconnect()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "child disconnect failed: ${e.message}")
+                            }
                         }
-                    }
-                )
+                    )
+                }
+                binding.groupParticipants.visibility = View.VISIBLE
+            } else {
+                binding.groupParticipants.removeAllViews()
+                binding.groupParticipants.visibility = View.GONE
             }
-            binding.groupParticipants.visibility = View.VISIBLE
-        } else {
-            binding.groupParticipants.removeAllViews()
-            binding.groupParticipants.visibility = View.GONE
         }
 
         // Second incoming controls.
@@ -366,12 +344,10 @@ class SagaInCallActivity : AppCompatActivity() {
         binding.btnAddCall.visibility =
             if (active != null && ringing.isEmpty()) View.VISIBLE else View.GONE
 
-        // Add participant: Iroh-only. Never offered on a carrier call or carrier conference.
-        val irohFocus = group != null ||
-            (active != null && MultiCallActions.origin(active) == CallOrigin.IROH &&
-                (conference == null || MultiCallActions.origin(conference) == CallOrigin.IROH))
-        binding.btnAddParticipant.visibility =
-            if (irohFocus && ringing.isEmpty()) View.VISIBLE else View.GONE
+        // Add participant: Iroh-only, debug builds only (release stub keeps GONE).
+        GroupCallInCallUi.refreshVisibility(
+            binding, active, conference, ringingEmpty = ringing.isEmpty()
+        )
 
         // Swap when active + held.
         binding.btnSwap.visibility =
@@ -403,56 +379,10 @@ class SagaInCallActivity : AppCompatActivity() {
         )
     }
 
-    // ---- Iroh group call (mesh) UI -------------------------------------------------------
-
-    /** Group shown as a conference only once at least two remote links exist. */
-    private fun currentGroupForUi(): GroupCallState? =
-        GroupCallRegistry.current()?.takeIf { it.participants.size >= 2 }
-
-    private fun renderGroup(group: GroupCallState) {
-        callId = group.groupId
-        binding.callerName.text = group.title()
-        // Header padlock = worst link; Encrypted only when EVERY link is encrypted + confirmed.
-        group.aggregateSnapshot()?.let { renderSnapshot(it) }
-
-        binding.groupParticipants.removeAllViews()
-        val introducedByFmt = getString(R.string.introduced_by_fmt)
-        group.participants.forEach { participant ->
-            val notes = mutableListOf<String>()
-            if (participant.awaitingUnencryptedConfirmation) {
-                notes.add(getString(R.string.participant_awaiting_confirmation))
-            }
-            if (participant.needsKeyCheckNote()) {
-                notes.add(getString(R.string.participant_key_unverified))
-            }
-            addParticipantRow(
-                name = participant.displayLabel(introducedByFmt),
-                snapshot = participant.effectiveSnapshot(),
-                statusSuffix = notes.takeIf { it.isNotEmpty() }?.joinToString(" · "),
-                onHangup = { GroupCallCoordinator.hangupParticipant(this, participant.telecomCallKey) }
-            )
-        }
-        binding.groupParticipants.visibility = View.VISIBLE
-
-        // Per-participant modals: §5a once per previously-encrypted contact, and the
-        // not-encrypted link confirmation once per link.
-        group.participants.forEach { participant ->
-            if (participant.effectiveSnapshot().showDowngradeModal &&
-                groupDowngradeShown.add(participant.telecomCallKey)
-            ) {
-                showGroupDowngradeModal(participant)
-            }
-            if (participant.awaitingUnencryptedConfirmation &&
-                unencryptedLinkConfirmShown.add(participant.telecomCallKey)
-            ) {
-                showLinkUnencryptedConfirm(group.groupId, participant)
-            }
-        }
-    }
-
+    /** Carrier conference (and debug Iroh group) participant row. */
     private fun addParticipantRow(
         name: String,
-        snapshot: CallSecuritySnapshot,
+        snapshot: org.saga.call.CallSecuritySnapshot,
         statusSuffix: String?,
         onHangup: () -> Unit
     ) {
@@ -466,174 +396,6 @@ class SagaInCallActivity : AppCompatActivity() {
             getString(CallSecurityPresenter.padlockContentDescription(snapshot))
         row.participantHangup.setOnClickListener { onHangup() }
         binding.groupParticipants.addView(row.root)
-    }
-
-    /**
-     * Security update for any leg of the group. The connect cue is claimed once per conference
-     * by the first leg that settles; late joiners, swap and unhold never replay it.
-     */
-    private fun onGroupSecurityUpdate(groupId: String, update: SagaCallEventHub.SecurityUpdate) {
-        if (update.playConnectCue && GroupCallRegistry.claimConnectCue(groupId)) {
-            if (ConnectCuePolicy.shouldPlay(update.snapshot, irohOrigin = true)) {
-                CallSecurityPresenter.applyConnectSnapshot(applicationContext, update.snapshot)
-            }
-        }
-        if (update.snapshot.statusText == getString(R.string.call_not_reachable)) {
-            val name = GroupCallRegistry.groupById(groupId)
-                ?.participantForLeg(update.telecomCallId)?.displayName
-            if (name != null) {
-                Toast.makeText(
-                    this,
-                    getString(R.string.participant_not_reachable_fmt, name),
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-        refreshMultiCallUi()
-    }
-
-    private fun showGroupDowngradeModal(participant: MeshParticipant) {
-        if (isFinishing) return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.saga_downgrade_title)
-            .setMessage(getString(R.string.saga_downgrade_message, participant.displayName))
-            .setCancelable(false)
-            .setPositiveButton(R.string.saga_continue_unencrypted) { dialog, _ ->
-                dialog.dismiss()
-                val continued = CallSecurityStateResolver.resolve(
-                    origin = CallOrigin.IROH,
-                    handshakeFailed = true,
-                    hasEncryptionHistory = true,
-                    contactKeyResolvable = true
-                ).copy(showDowngradeModal = false)
-                // No connect cue here: the conference already claimed its single cue.
-                GroupCallRegistry.onLegSnapshot(participant.telecomCallKey, continued)
-                IrohDialManager.get(this)
-                    .continueUnencryptedMedia(participant.telecomCallKey, participant.telecomCallKey)
-            }
-            .setNegativeButton(R.string.participant_remove) { dialog, _ ->
-                dialog.dismiss()
-                // Leave this one link; the rest of the call continues.
-                GroupCallCoordinator.hangupParticipant(this, participant.telecomCallKey)
-            }
-            .show()
-    }
-
-    /** A link settled without encryption: audio stays off until the user explicitly allows it. */
-    private fun showLinkUnencryptedConfirm(groupId: String, participant: MeshParticipant) {
-        if (isFinishing) return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.confirm_unencrypted_link_title)
-            .setMessage(getString(R.string.confirm_unencrypted_link_message, participant.displayName))
-            .setCancelable(false)
-            .setPositiveButton(R.string.confirm_unencrypted_link_positive) { dialog, _ ->
-                dialog.dismiss()
-                GroupCallRegistry.confirmUnencrypted(groupId, participant.telecomCallKey)
-                IrohDialManager.get(this)
-                    .continueUnencryptedMedia(participant.telecomCallKey, participant.telecomCallKey)
-            }
-            .setNegativeButton(R.string.participant_remove) { dialog, _ ->
-                dialog.dismiss()
-                GroupCallCoordinator.hangupParticipant(this, participant.telecomCallKey)
-            }
-            .show()
-    }
-
-    private fun onAddParticipantClicked() {
-        val group = GroupCallRegistry.current()
-        if (group != null && !group.canAddMore()) {
-            showGroupFullDialog()
-            return
-        }
-        val exclude = buildSet {
-            group?.participants?.forEach { add(it.lookupKey) }
-            SagaIrohConnectionRegistry.soleLiveLeg()?.let { add(it.lookupKey) }
-        }
-        val hasContacts = ContextCompat.checkSelfPermission(
-            this, android.Manifest.permission.READ_CONTACTS
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        val contacts = if (hasContacts) IrohContactDirectory.list(this, exclude) else emptyList()
-        val labels = contacts.map { it.displayName } + getString(R.string.add_participant_other)
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.add_participant_pick_title)
-            .setItems(labels.toTypedArray()) { dialog, which ->
-                dialog.dismiss()
-                if (which < contacts.size) {
-                    submitAddParticipant(contacts[which].target, confirmedUnencrypted = false)
-                } else {
-                    promptOtherParticipant()
-                }
-            }
-            .setNegativeButton(R.string.cancel_call, null)
-            .show()
-    }
-
-    private fun promptOtherParticipant() {
-        val input = EditText(this).apply {
-            hint = getString(R.string.add_participant_other_hint)
-            setSingleLine()
-        }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.add_participant)
-            .setView(input)
-            .setPositiveButton(R.string.add_participant_ok) { dialog, _ ->
-                dialog.dismiss()
-                // Iroh only: a carrier number resolves to Cellular and is refused.
-                val target = DialTargetResolver.fromInput(
-                    this, input.text?.toString().orEmpty(), preferCellular = false
-                )
-                if (target is DialTarget.Iroh) {
-                    submitAddParticipant(target, confirmedUnencrypted = false)
-                } else {
-                    Toast.makeText(this, R.string.add_participant_only_saga, Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton(R.string.cancel_call, null)
-            .show()
-    }
-
-    private fun submitAddParticipant(target: DialTarget.Iroh, confirmedUnencrypted: Boolean) {
-        val name = target.contactName ?: target.lookupKey
-        val outcome = GroupCallCoordinator.requestAdd(
-            this,
-            GroupCallCoordinator.AddRequest(target, confirmedUnencrypted)
-        )
-        when (outcome) {
-            GroupCallCoordinator.AddOutcome.PLACED -> Unit
-            GroupCallCoordinator.AddOutcome.NEEDS_UNENCRYPTED_CONFIRMATION -> {
-                // No resolvable encrypted key: only the person adding can allow an unencrypted join.
-                MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.confirm_add_unencrypted_title)
-                    .setMessage(getString(R.string.confirm_add_unencrypted_message, name))
-                    .setPositiveButton(R.string.confirm_add_unencrypted_positive) { dialog, _ ->
-                        dialog.dismiss()
-                        submitAddParticipant(target, confirmedUnencrypted = true)
-                    }
-                    .setNegativeButton(R.string.cancel_call, null)
-                    .show()
-            }
-            GroupCallCoordinator.AddOutcome.REFUSED_MAX_PARTICIPANTS -> showGroupFullDialog()
-            GroupCallCoordinator.AddOutcome.REFUSED_DUPLICATE ->
-                Toast.makeText(
-                    this, getString(R.string.add_participant_already_fmt, name), Toast.LENGTH_SHORT
-                ).show()
-            GroupCallCoordinator.AddOutcome.REFUSED_CELLULAR ->
-                Toast.makeText(this, R.string.add_participant_carrier_refused, Toast.LENGTH_LONG).show()
-            GroupCallCoordinator.AddOutcome.REFUSED_NO_IROH_CALL ->
-                Toast.makeText(this, R.string.add_participant_no_iroh_call, Toast.LENGTH_LONG).show()
-            GroupCallCoordinator.AddOutcome.REFUSED_PHONE_ACCOUNT,
-            GroupCallCoordinator.AddOutcome.FAILED ->
-                Toast.makeText(this, R.string.add_participant_failed, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun showGroupFullDialog() {
-        if (isFinishing) return
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.group_max_title)
-            .setMessage(getString(R.string.group_max_participants, GroupCallState.MAX_PARTICIPANTS))
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
     }
 
     private fun launchAddCall() {
@@ -705,12 +467,7 @@ class SagaInCallActivity : AppCompatActivity() {
     }
 
     private fun endFocusedCall() {
-        val group = currentGroupForUi()
-        if (group != null) {
-            // Leave the group: close our links only. No host, others keep their mesh.
-            GroupCallCoordinator.leaveGroup(this, group.groupId)
-            return
-        }
+        if (GroupCallInCallUi.leaveIfGroup(this)) return
         val call = focusedCall()
         if (call != null) {
             try {
@@ -740,16 +497,7 @@ class SagaInCallActivity : AppCompatActivity() {
     private fun toggleMute() {
         muted = !muted
         SagaInCallServiceBinder.service?.setMuted(muted)
-        val group = currentGroupForUi()
-        if (group != null) {
-            group.participants.forEach {
-                SagaCallMediaController.setMuted(
-                    it.telecomCallKey,
-                    IrohDialManager.get(this).sessionIdForCall(it.telecomCallKey),
-                    muted
-                )
-            }
-        } else {
+        if (!GroupCallInCallUi.muteGroupOrNull(this, muted)) {
             SagaCallMediaController.setMuted(callId, rustSessionId(), muted)
         }
         binding.toggleMute.text = getString(if (muted) R.string.unmute else R.string.mute)
@@ -850,7 +598,7 @@ class SagaInCallActivity : AppCompatActivity() {
         }
         CallSecurityPresenter.applyConnectSnapshot(applicationContext, snapshot)
         connectCuePlayed = true
-        GroupCallRegistry.markLegConnectCueConsumed(callId)
+        GroupCallInCallUi.markConnectCueConsumed(callId)
     }
 
     private fun maybeShowDowngradeModal(snapshot: org.saga.call.CallSecuritySnapshot, displayName: String) {

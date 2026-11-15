@@ -28,7 +28,7 @@ See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
 | | |
 |--|--|
 | Encrypted call | ![Encrypted](fastlane/metadata/android/en-US/images/phoneScreenshots/01-encrypted-call.png) |
-| Group call | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
+| Group call (debug builds only; not in release) | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
 | Voice disguise | ![Disguise](fastlane/metadata/android/en-US/images/phoneScreenshots/05-voice-disguise-chip.png) |
 
 ## Recommended OS
