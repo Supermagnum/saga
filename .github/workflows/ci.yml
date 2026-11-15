@@ -40,9 +40,10 @@ jobs:
             saga-session
             saga-iroh-core
             saga-media
+            saga-token-usb
             testing/mock-token
             tools/saga-peer
-          shared-key: saga-rust-host-v4
+          shared-key: saga-rust-host-v5
           cache-targets: true
 
       # audiopus_sys builds libopus via cmake; pin a dedicated target cache on the media lockfile.
@@ -77,6 +78,13 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
+      - name: saga-token-usb fmt / clippy / test
+        working-directory: saga-token-usb
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --features test-card -- -D warnings
+          cargo test --features test-card
+
       - name: saga-media fmt / clippy / test
         working-directory: saga-media
         run: |
@@ -90,6 +98,7 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets --features iroh-transport,mock-token -- -D warnings
           cargo clippy --all-targets --features iroh-transport -- -D warnings
+          cargo clippy --all-targets --features iroh-transport,nitrokey -- -D warnings
           cargo test --features iroh-transport,mock-token
 
       # Default features only (no live-audio/cpal). [profile.test] opt-level=2 for Opus speed.

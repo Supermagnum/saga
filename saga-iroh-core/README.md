@@ -17,8 +17,8 @@ From this directory:
 # Debug / CI (no fat LTO) — default from Gradle assembleDebug
 cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --profile ci --features iroh-transport,mock-token
 
-# Release / F-Droid (LTO + codegen-units=1)
-cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --release --features iroh-transport,mock-token
+# Release / F-Droid (LTO + codegen-units=1) — production Nitrokey SessionToken
+cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --release --features iroh-transport,nitrokey
 ```
 
 Output: `target/ndk-libs/` with per-ABI `libsaga_iroh_core.so` files consumed by

@@ -13,11 +13,14 @@ default = []
 iroh-transport = ["dep:iroh", "dep:tokio", "dep:iroh-roq", "dep:saga-media", "dep:bytes", "dep:n0-error"]
 # Debug / E2E only: software SessionToken + local insecure relay TLS + BLAKE3 dev labels.
 mock-token = ["iroh-transport", "dep:mock_token", "dep:blake3", "iroh/test-utils"]
+# Production OpenPGP / Nitrokey SessionToken (no mock, no test-utils).
+nitrokey = ["iroh-transport", "dep:saga-token-usb"]
 
 [dependencies]
 jni = "0.21"
 log = "0.4"
 saga-session = { path = "../saga-session" }
+saga-token-usb = { path = "../saga-token-usb", optional = true }
 # Shared Opus+SRTP media pipeline (host + Android NDK).
 saga-media = { path = "../saga-media", optional = true }
 bytes = { version = "1", optional = true }
