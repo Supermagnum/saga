@@ -36,6 +36,7 @@ Branch: `feat/fdroid-readiness` (from main after #46 Nitrokey).
 | Screenshots looked at | Dialer light/dark, Licences, onboarding, encrypted, group, voice disguise, Nitrokey PIN, cellular, conference | `fastlane/.../phoneScreenshots/` |
 | `fdroid lint` / `fdroid build` Docker | **NOT RUN** | no fdroidserver image on host |
 | Bit-identical reproducible double-build | **NOT COMPLETED** | notes in `docs/fdroid/reproducible-builds.md` |
+| CI rust + android | **PASS** (~6m) | [PR #47](https://github.com/Supermagnum/saga/pull/47) run `43699583309` |
 
 ### Not verified / needs real hardware
 
