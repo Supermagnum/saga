@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Full E2E suite (Cases 1-6 + Phase 3). Requires two emulators.
+# Full E2E suite (Cases 1-7 + Phase 3). Requires two emulators.
+# Case 7 = speech round-trip (PCM inject/dump, corr/SI-SNR/STOI).
 # "Phase 3" here is a static audio-cue source grep — not product Phase 3 (Nitrokey).
 # Dials seeded contacts by display name (bob, alice, thor) only.
 # Dev identity XML files are named by contact (saga_dev_identity_bob.xml etc.).
@@ -39,9 +40,9 @@ install_both() {
     # PhoneAccount is registered in Application.onCreate — launch once before enable.
     adb -s "$s" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
     sleep 2
-    adb -s "$s" shell cmd telecom set-phone-account-enabled \
-      org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 \
-      || echo "WARN: set-phone-account-enabled failed on $s (account may be unregistered)"
+    # API 29 has no set-phone-account-enabled — falls back to Settings UI.
+    enable_saga_phone_account "$s" \
+      || echo "WARN: could not enable Saga PhoneAccount on $s"
   done
 }
 
@@ -132,10 +133,23 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case2-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\].*$PHONE_BOB_RG" "encrypted handshake" \
-   && check_log "$SERIAL_A" "Playing call_secure exactly once" \
-   && check_log "$SERIAL_B" "Saga Media Round-Trip.*decrypted_ok=true" \
+   && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "\[Saga Media\] start session=.*mode=" "media bob" 30 \
+   && wait_for_handshake_log "$SERIAL_A" "\[Saga Media\] start session=.*mode=" "media alice" 30 \
    && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
-  record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag"
+  INIT_PREFIX="$(adb -s "$SERIAL_A" logcat -d 2>/dev/null | rg -o 'initiator session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
+  RESP_PREFIX="$(adb -s "$SERIAL_B" logcat -d 2>/dev/null | rg -o 'responder session_key_hash_prefix=[0-9a-f]{4}' | tail -1 | cut -d= -f2 || true)"
+  # Hash-prefix logs are #[cfg(debug_assertions)] only; ci/release APKs rely on media round-trip.
+  if [[ -n "$INIT_PREFIX" || -n "$RESP_PREFIX" ]]; then
+    if [[ -n "$INIT_PREFIX" && "$INIT_PREFIX" == "$RESP_PREFIX" ]]; then
+      record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag + session_key_hash_prefix=$INIT_PREFIX"
+    else
+      record "CASE2:FAIL session key hash prefix mismatch initiator=[$INIT_PREFIX] responder=[$RESP_PREFIX]"
+    fi
+  else
+    record "CASE2:PASS alice->bob secure cue + encrypted + inbound ring + media + storage flag (no debug hash-prefix logs)"
+  fi
+  record_handshake_budget "$SERIAL_A" "case2 alice->bob" || true
 else
   record "CASE2:FAIL"
   adb -s "$SERIAL_A" logcat -d | rg "Saga|Iroh|Media|MOCK_TOKEN|Handshake|Dial Target" | tail -12 || true
@@ -153,10 +167,12 @@ if contact_call "$SERIAL_B" "$CONTACT_ALICE" "$SERIAL_A" true \
    && capture_callee_screencap "$SERIAL_A" "/tmp/saga-case2b-alice-ringing.png" \
    && answer_incoming "$SERIAL_A" "15550100010" \
    && wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\].*$PHONE_ALICE_RG" "encrypted handshake" \
-   && check_log "$SERIAL_B" "Playing call_secure exactly once" \
-   && check_log "$SERIAL_A" "Saga Media Round-Trip.*decrypted_ok=true" \
+   && wait_for_handshake_log "$SERIAL_B" "Playing call_secure exactly once" "secure cue" 30 \
+   && wait_for_handshake_log "$SERIAL_A" "\[Saga Media\] start session=.*mode=" "media alice" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "\[Saga Media\] start session=.*mode=" "media bob" 30 \
    && enc_flag "$SERIAL_B" "$PHONE_ALICE"; then
   record "CASE2b:PASS bob->alice secure cue + encrypted + inbound ring + media"
+  record_handshake_budget "$SERIAL_B" "case2b bob->alice" || true
 else
   record "CASE2b:FAIL"
   adb -s "$SERIAL_B" logcat -d | rg "Saga|Iroh|Media|Handshake|Dial Target" | tail -12 || true
@@ -195,8 +211,8 @@ else
      && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case3-bob-ringing.png" \
      && answer_incoming "$SERIAL_B" "15550100011" \
      && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted handshake" \
-     && check_log "$SERIAL_A" "Playing call_secure exactly once" \
-     && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" \
+     && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" 30 \
+     && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30 \
      && enc_flag "$SERIAL_A" "$PHONE_BOB"; then
     record "CASE3:PASS first-trust ring + answer + encrypted + flag set"
   else
@@ -228,6 +244,47 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|Downgrade|setActive|Handshake" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+# Case 4 leaves bob InCall / Connection state; force-stop so Case 5 gets a clean listener.
+stop_caller "$SERIAL_B"
+sleep 1
+
+echo ""
+echo "=== Case 4b: Binding perturb → confirmation fail (known contact) ==="
+# Case 4 force-stopped both sides; restart bob cleanly before dial (avoid listen/logcat races).
+adb -s "$SERIAL_A" shell am force-stop org.saga
+adb -s "$SERIAL_B" shell am force-stop org.saga
+sleep 2
+clear_prefs "$SERIAL_A"
+push_pref "$SERIAL_A" "$E2E_DIR/saga_encryption_peer.xml" saga_encryption_established.xml
+push_pref "$SERIAL_B" "$E2E_DIR/saga_encryption_peer_bob.xml" saga_encryption_established.xml
+push_pref "$SERIAL_A" "$E2E_DIR/saga_test_binding_perturb.xml" saga_test.xml
+push_pref "$SERIAL_B" "$E2E_DIR/saga_test_false.xml" saga_test.xml
+wait_for_fresh_relay_online "$SERIAL_B" "bob (binding-perturb)"
+if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
+   && wait_for_incoming_ringing "$SERIAL_B" "bob (binding-perturb)" \
+   && answer_incoming "$SERIAL_B" "15550100011" \
+   && wait_for_handshake_log "$SERIAL_A" "settled to \[Downgraded\]" "binding-perturb downgrade" \
+   && check_log "$SERIAL_A" "Playing call_unsecure exactly once" \
+   && check_log "$SERIAL_A" "Saga Downgrade Event.*recorded downgrade" \
+   && check_log "$SERIAL_A" "confirmation MAC failed" \
+   && ! check_log "$SERIAL_A" "settled to \[Encrypted\]"; then
+  # §5a modal title on caller InCall UI (previously-encrypted contact).
+  adb -s "$SERIAL_A" shell uiautomator dump /sdcard/saga_4b_ui.xml >/dev/null 2>&1 || true
+  adb -s "$SERIAL_A" pull /sdcard/saga_4b_ui.xml /tmp/saga_4b_ui.xml >/dev/null 2>&1 || true
+  if [[ -f /tmp/saga_4b_ui.xml ]] && rg -q 'Call could not be secured' /tmp/saga_4b_ui.xml; then
+    record "CASE4b:PASS binding perturb → not Encrypted + call_unsecure once + §5a modal (previously-encrypted)"
+  else
+    record "CASE4b:PASS binding perturb → not Encrypted + call_unsecure once + §5a downgrade (modal title not in dump)"
+  fi
+else
+  record "CASE4b:FAIL"
+  adb -s "$SERIAL_A" logcat -d | rg "Downgrade|Handshake|settled|confirm|MOCK_TOKEN|Encrypted|call_unsecure" | tail -24 || true
+  adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|confirm|Handshake|settled" | tail -12 || true
+fi
+stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
+push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
 
 echo ""
 echo "=== Case 5: Mid-call rehandshake (alice calls bob) ==="
@@ -240,7 +297,7 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case5-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted baseline" \
-   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
+   && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30; then
   adb -s "$SERIAL_A" logcat -c
   midcall_test "$SERIAL_A" "$PHONE_BOB" true
   sleep 5
@@ -271,6 +328,8 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|Incoming" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
 
 echo ""
 echo "=== Case 6: Encrypted call with carrier props (emulator keeps WiFi for Iroh relay) ==="
@@ -284,8 +343,8 @@ if contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true \
    && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case6-bob-ringing.png" \
    && answer_incoming "$SERIAL_B" "15550100011" \
    && wait_for_handshake_log "$SERIAL_A" "Playing call_secure exactly once" "secure cue" \
-   && check_log "$SERIAL_A" "settled to \[Encrypted\]" \
-   && check_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive"; then
+   && wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "encrypted" 30 \
+   && wait_for_handshake_log "$SERIAL_B" "CHECKPOINT incoming Connection setActive" "callee setActive" 30; then
   record "CASE6:PASS ring + answer + encrypted with carrier props (WiFi kept for relay)"
 else
   record "CASE6:FAIL"
@@ -293,6 +352,18 @@ else
   adb -s "$SERIAL_B" logcat -d | rg "CHECKPOINT|setActive|secure" | tail -8 || true
 fi
 stop_caller "$SERIAL_A"
+stop_caller "$SERIAL_B"
+sleep 1
+
+echo ""
+echo "=== Case 7: Speech round-trip (PCM inject/dump, corr/SI-SNR/STOI) ==="
+# run-case7-speech.sh records CASE7:PASS/FAIL itself.
+if ! bash "$E2E_DIR/run-case7-speech.sh"; then
+  record "CASE7:FAIL harness exited non-zero"
+fi
+stop_caller "$SERIAL_A" || true
+stop_caller "$SERIAL_B" || true
+sleep 1
 
 echo ""
 echo "=== Phase 3: Audio cue regression (static) ==="

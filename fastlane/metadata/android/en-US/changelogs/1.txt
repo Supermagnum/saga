@@ -1,0 +1,5 @@
+First F-Droid-ready packaging prep (0.1.0).
+• Adaptive launcher icon (new asset; call-state icons unchanged).
+• Release builds use nitrokey SessionToken; mock-token and TEST_* hooks are debug-only.
+• In-app Licences screen with AGPL source offer.
+• Fastlane metadata and screenshot set from emulator demos.

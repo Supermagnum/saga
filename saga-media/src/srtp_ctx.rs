@@ -1,0 +1,71 @@
+//! SRTP AEAD_AES_256_GCM contexts via webrtc-srtp.
+
+use bytes::Bytes;
+use webrtc_srtp::context::Context;
+use webrtc_srtp::option::srtp_replay_protection;
+use webrtc_srtp::protection_profile::ProtectionProfile;
+
+use crate::error::Result;
+use crate::keys::SrtpMaster;
+
+/// Default replay window (matches webrtc-srtp Session default).
+const REPLAY_WINDOW: usize = 64;
+
+pub struct SrtpEncrypt {
+    ctx: Context,
+}
+
+pub struct SrtpDecrypt {
+    ctx: Context,
+}
+
+impl SrtpEncrypt {
+    pub fn new(master: &SrtpMaster) -> Result<Self> {
+        let ctx = Context::new(
+            master.key.as_slice(),
+            master.salt.as_slice(),
+            ProtectionProfile::AeadAes256Gcm,
+            // Encrypt path does not need replay detection.
+            None,
+            None,
+        )?;
+        Ok(Self { ctx })
+    }
+
+    /// Encrypt a fully marshalled RTP packet (header + payload).
+    pub fn protect(&mut self, rtp_packet: &[u8]) -> Result<Bytes> {
+        Ok(self.ctx.encrypt_rtp(rtp_packet)?)
+    }
+}
+
+impl SrtpDecrypt {
+    pub fn new(master: &SrtpMaster) -> Result<Self> {
+        let ctx = Context::new(
+            master.key.as_slice(),
+            master.salt.as_slice(),
+            ProtectionProfile::AeadAes256Gcm,
+            Some(srtp_replay_protection(REPLAY_WINDOW)),
+            None,
+        )?;
+        Ok(Self { ctx })
+    }
+
+    pub fn unprotect(&mut self, srtp_packet: &[u8]) -> Result<Bytes> {
+        Ok(self.ctx.decrypt_rtp(srtp_packet)?)
+    }
+}
+
+/// Conservative max ciphertext size for one Opus frame + RTP + SRTP tag + mode tag.
+/// Opus @ 32 kbps / 20 ms ≈ 80 bytes; RTP header 12; AEAD tag 16; Saga media tag 1; margin.
+pub const MAX_MEDIA_DATAGRAM_BYTES: usize = 1 + 12 + 200 + 16 + 8;
+
+/// First byte of every Saga media datagram (after RoQ flow-id).
+pub const MEDIA_TAG_SRTP: u8 = 1;
+pub const MEDIA_TAG_PLAIN: u8 = 2;
+/// Explicit "callee answered" control datagram (not RTP). Payload: [`ANSWERED_SIGNAL_PAYLOAD`].
+pub const MEDIA_TAG_ANSWERED: u8 = 3;
+pub const ANSWERED_SIGNAL_PAYLOAD: &[u8] = b"SAGAANS1";
+/// §16 voice-disguise peer chip (Saga call-setup / media control — not ephemeral-session).
+/// Payload: [`DISGUISE_SIGNAL_PREFIX`] + one byte (0 = off, 1 = on).
+pub const MEDIA_TAG_DISGUISE: u8 = 4;
+pub const DISGUISE_SIGNAL_PREFIX: &[u8] = b"SAGAVD01";

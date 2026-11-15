@@ -1,0 +1,13 @@
+---
+description: Never add, modify, rename, or delete anything under icons/
+globs: icons/**
+alwaysApply: true
+---
+
+# icons/ is immutable
+
+Do not add, modify, rename, or delete any file under `icons/`.
+
+Those SVGs are used exactly as vendored (see `icons/readme.md`). Android
+drawables may be converted under `android/app/src/main/res/drawable/` only;
+never edit the source files in `icons/` to match drawables.

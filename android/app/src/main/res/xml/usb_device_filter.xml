@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB Host filter for OpenPGP CCID tokens. Keep in sync with saga-token-usb UsbDeviceIds. -->
+<resources>
+    <!-- Nitrokey 3 -->
+    <usb-device vendor-id="8352" product-id="17074" />
+    <!-- Nitrokey Pro 2 -->
+    <usb-device vendor-id="8352" product-id="16648" />
+    <!-- Galdralag Dabao (future CCID) -->
+    <usb-device vendor-id="7504" product-id="24983" />
+</resources>
