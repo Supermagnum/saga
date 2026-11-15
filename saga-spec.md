@@ -61,6 +61,10 @@ modal. Encryption is never required to place a call.
   signaling/transport path for Saga-to-Saga calls (§14).
 - Linux side is an Iroh reference peer only (§8); no illusion of a
   "native OS dialer" since none exists to blend into.
+- No SMS/MMS and no `ROLE_SMS`. Encrypted Saga-to-Saga text messaging is
+  **evaluation-gated**: see §17 / `docs/messaging-evaluation.md` (issue #29).
+  Implementation (issue #41) starts only if the owner confirms recommendation
+  **C** (build in Saga).
 
 ## 4. Architecture
 
@@ -950,3 +954,27 @@ exceed that do not ship. Measure and record latency in `TEST_RESULTS.md`.
 - [x] Peer disguise signal: `MEDIA_TAG_DISGUISE` control datagram on the
   Saga media path (not ephemeral-session wire). Sent at media start and on
   every in-call toggle; peer shows "Caller is using voice disguise".
+
+## 17. Text messaging (evaluation gate)
+
+Saga does **not** become the default SMS app. Carrier SMS/MMS stay in a
+dedicated SMS client. Encrypted text between Saga contacts is gated on the
+Step 1 evaluation in issue #29.
+
+**Evaluation deliverable (2026-11-15):** `docs/messaging-evaluation.md`
+compares Delta Chat, Briar, SimpleX, Conversations/Cheogram, Jami, Molly,
+Session, and Iroh-based chat experiments against the issue #29 criteria
+table (sourced facts).
+
+**Evaluator recommendation:** **C — build in Saga** (no existing app meets
+required criterion 3: long-term messaging identity on an OpenPGP card /
+CCID aligned with Saga's token-backed call identity). Options A (intent
+handoff) and B (upstream contribution) do not deliver the same verified
+contacts as Encrypted calls. No Message-action prototype shipped while A
+is not recommended.
+
+**Owner decision:** record A/B/C on issue #29 before any messaging code.
+If **C**, implement under issue #41 (separate Iroh ALPN, same
+ephemeral-session handshake / trust UX as calls, no new crypto, no silent
+unencrypted send). If **A** or **B**, close #41 and document the handoff
+or upstream plan instead.
