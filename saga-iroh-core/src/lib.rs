@@ -204,6 +204,47 @@ pub(crate) fn bridge_notify_incoming_call(
     notify_incoming_call(session_id, lookup_key, remote_endpoint_id);
 }
 
+/// §16: peer voice-disguise chip (informational only — never touches padlock state).
+#[cfg(feature = "iroh-transport")]
+pub(crate) fn notify_peer_disguise(session_id: &str, active: bool) {
+    let Some(vm) = JAVA_VM.get() else {
+        return;
+    };
+    let sid = session_id.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifyPeerDisguise attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            return;
+        };
+        let Ok(jsid) = env.new_string(&sid) else {
+            return;
+        };
+        let jactive = if active {
+            jni::sys::JNI_TRUE
+        } else {
+            jni::sys::JNI_FALSE
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifyPeerDisguise",
+            "(Ljava/lang/String;Z)V",
+            &[JValue::from(&jsid), JValue::Bool(jactive)],
+        ) {
+            error!("notifyPeerDisguise failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifyPeerDisguise");
+    });
+}
+
+#[cfg(not(feature = "iroh-transport"))]
+pub(crate) fn notify_peer_disguise(_session_id: &str, _active: bool) {}
+
 fn notify_failed(env: &mut JNIEnv, session_id: &str, reason: &str) {
     let Some(jclass) = bridge_jclass(env) else {
         error!("IrohNativeBridge class not cached");
@@ -724,6 +765,114 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetRxFault(
     #[cfg(not(feature = "iroh-transport"))]
     {
         let _ = (drop_pct, jitter_ms);
+    }
+}
+
+/// §16: push voice-disguise settings into the media engine (and advertise to peer).
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSetDisguiseSettings(
+    _env: JNIEnv,
+    _thiz: JObject,
+    mode: jint,
+    pitch_semitones: jni::sys::jfloat,
+    formant_strength: jint,
+    random_each_call: jboolean,
+    call_enabled: jboolean,
+) {
+    #[cfg(feature = "iroh-transport")]
+    media_bridge::apply_disguise_settings(
+        mode.clamp(0, 3) as u8,
+        pitch_semitones,
+        formant_strength.clamp(0, 2) as u8,
+        random_each_call == jni::sys::JNI_TRUE,
+        call_enabled == jni::sys::JNI_TRUE,
+    );
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (
+            mode,
+            pitch_semitones,
+            formant_strength,
+            random_each_call,
+            call_enabled,
+        );
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalDisguiseActive(
+    _env: JNIEnv,
+    _thiz: JObject,
+) -> jboolean {
+    #[cfg(feature = "iroh-transport")]
+    {
+        if media_bridge::local_disguise_active() {
+            jni::sys::JNI_TRUE
+        } else {
+            jni::sys::JNI_FALSE
+        }
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    jni::sys::JNI_FALSE
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativePeerDisguiseActive(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) -> jboolean {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return jni::sys::JNI_FALSE;
+    };
+    #[cfg(feature = "iroh-transport")]
+    {
+        if media_bridge::peer_disguise_active(&session) {
+            jni::sys::JNI_TRUE
+        } else {
+            jni::sys::JNI_FALSE
+        }
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = session;
+        jni::sys::JNI_FALSE
+    }
+}
+
+/// Offline / "Test my voice": apply current disguise settings to a direct PCM buffer.
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeProcessDisguisePcm(
+    env: JNIEnv,
+    _thiz: JObject,
+    pcm: JObject,
+) {
+    let buf = JByteBuffer::from(pcm);
+    let Ok(ptr) = env.get_direct_buffer_address(&buf) else {
+        return;
+    };
+    let Ok(cap) = env.get_direct_buffer_capacity(&buf) else {
+        return;
+    };
+    if cap < 2 {
+        return;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts_mut(ptr, cap) };
+    let n = cap / 2;
+    let mut samples = Vec::with_capacity(n);
+    for i in 0..n {
+        samples.push(i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]));
+    }
+    #[cfg(feature = "iroh-transport")]
+    saga_media::disguise_process_buffer(&mut samples);
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = &samples;
+    }
+    for (i, s) in samples.iter().enumerate() {
+        let b = s.to_le_bytes();
+        bytes[i * 2] = b[0];
+        bytes[i * 2 + 1] = b[1];
     }
 }
 

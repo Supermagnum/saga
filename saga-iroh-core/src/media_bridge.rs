@@ -29,6 +29,20 @@ mod stub {
     pub fn is_send_armed(_session_id: &str) -> bool {
         false
     }
+    pub fn apply_disguise_settings(
+        _mode: u8,
+        _pitch_semitones: f32,
+        _formant_strength: u8,
+        _random_each_call: bool,
+        _call_enabled: bool,
+    ) {
+    }
+    pub fn peer_disguise_active(_session_id: &str) -> bool {
+        false
+    }
+    pub fn local_disguise_active() -> bool {
+        false
+    }
 }
 #[cfg(not(feature = "iroh-transport"))]
 pub use stub::*;

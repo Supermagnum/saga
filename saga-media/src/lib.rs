@@ -12,6 +12,7 @@
 
 mod audio_metrics;
 mod codec;
+pub mod disguise;
 mod error;
 mod jitter;
 mod keys;
@@ -29,6 +30,11 @@ pub use codec::{
     disguise_pcm_inplace, OpusDecoder, OpusEncoder, FRAME_MS, FRAME_SAMPLES, SAMPLE_RATE,
     TARGET_BITRATE,
 };
+pub use disguise::{
+    disguise_begin_call, disguise_end_call, disguise_is_active, disguise_last_alpha_for_test,
+    disguise_last_pitch_for_test, disguise_process_buffer, disguise_settings,
+    set_disguise_settings, DisguiseMode, DisguiseSettings, FormantStrength,
+};
 pub use error::{MediaError, Result};
 pub use jitter::{JitterBuffer, CAP_MS as JB_CAP_MS, TARGET_MS_HIGH, TARGET_MS_MIN};
 pub use keys::{CallRole, SrtpKeyPair, SrtpMaster, SRTP_MASTER_KEY_LEN, SRTP_MASTER_SALT_LEN};
@@ -40,6 +46,7 @@ pub use metrics::{MediaCounters, MediaCountersSnapshot};
 pub use pipeline::MediaPipeline;
 pub use policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};
 pub use srtp_ctx::{
-    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, MAX_MEDIA_DATAGRAM_BYTES,
-    MEDIA_TAG_ANSWERED, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
+    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, DISGUISE_SIGNAL_PREFIX,
+    MAX_MEDIA_DATAGRAM_BYTES, MEDIA_TAG_ANSWERED, MEDIA_TAG_DISGUISE, MEDIA_TAG_PLAIN,
+    MEDIA_TAG_SRTP,
 };

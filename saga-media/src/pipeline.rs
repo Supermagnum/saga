@@ -17,8 +17,9 @@ use crate::keys::{CallRole, SrtpKeyPair};
 use crate::metrics::MediaCounters;
 use crate::policy::{media_permit, refuse_silent_downgrade, MediaWireMode, SecurityResolution};
 use crate::srtp_ctx::{
-    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, MAX_MEDIA_DATAGRAM_BYTES,
-    MEDIA_TAG_ANSWERED, MEDIA_TAG_PLAIN, MEDIA_TAG_SRTP,
+    SrtpDecrypt, SrtpEncrypt, ANSWERED_SIGNAL_PAYLOAD, DISGUISE_SIGNAL_PREFIX,
+    MAX_MEDIA_DATAGRAM_BYTES, MEDIA_TAG_ANSWERED, MEDIA_TAG_DISGUISE, MEDIA_TAG_PLAIN,
+    MEDIA_TAG_SRTP,
 };
 use saga_session::HandshakeOutput;
 
@@ -247,6 +248,39 @@ impl MediaPipeline {
         let mut framed = BytesMut::with_capacity(1 + ANSWERED_SIGNAL_PAYLOAD.len());
         framed.extend_from_slice(&[MEDIA_TAG_ANSWERED]);
         framed.extend_from_slice(ANSWERED_SIGNAL_PAYLOAD);
+        let need = framed.len() + FLOW_ID_MARGIN;
+        let limit = self.effective_max_datagram()?;
+        if need > limit {
+            return Err(MediaError::DatagramTooLarge { need, limit });
+        }
+        match self.send.try_send_payload(&framed) {
+            Ok(true) | Ok(false) => Ok(()),
+            Err(e) => Err(MediaError::Other(e)),
+        }
+    }
+
+    /// §16 peer chip: `true` when `bytes` is a voice-disguise control datagram.
+    /// Returns `Some(active)` for valid payloads.
+    pub fn parse_disguise_signal(bytes: &[u8]) -> Option<bool> {
+        if bytes.first() != Some(&MEDIA_TAG_DISGUISE) {
+            return None;
+        }
+        let rest = bytes.get(1..)?;
+        if rest.len() != DISGUISE_SIGNAL_PREFIX.len() + 1 {
+            return None;
+        }
+        if &rest[..DISGUISE_SIGNAL_PREFIX.len()] != DISGUISE_SIGNAL_PREFIX {
+            return None;
+        }
+        Some(rest[DISGUISE_SIGNAL_PREFIX.len()] != 0)
+    }
+
+    /// Informational only — must not affect padlock / security state.
+    pub fn send_disguise_signal(&mut self, active: bool) -> Result<()> {
+        let mut framed = BytesMut::with_capacity(1 + DISGUISE_SIGNAL_PREFIX.len() + 1);
+        framed.extend_from_slice(&[MEDIA_TAG_DISGUISE]);
+        framed.extend_from_slice(DISGUISE_SIGNAL_PREFIX);
+        framed.extend_from_slice(&[u8::from(active)]);
         let need = framed.len() + FLOW_ID_MARGIN;
         let limit = self.effective_max_datagram()?;
         if need > limit {

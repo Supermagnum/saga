@@ -63,15 +63,26 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/request_dialer_role" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/open_voice_disguise"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/voice_disguise_settings"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/role_status" />
+
     <TextView
         android:id="@+id/iroh_dial_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
+        android:layout_marginTop="24dp"
         android:text="@string/iroh_dial_label"
         android:textStyle="bold"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/role_status" />
+        app:layout_constraintTop_toBottomOf="@id/open_voice_disguise" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/peer_id_layout"

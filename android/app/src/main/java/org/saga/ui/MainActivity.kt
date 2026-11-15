@@ -73,9 +73,13 @@ class MainActivity : AppCompatActivity() {
         binding.pickContact.setOnClickListener { launchContactPicker() }
         binding.dialIroh.setOnClickListener { placeFromInput(preferCellular = false) }
         binding.dialUnencrypted.setOnClickListener { placeFromInput(preferCellular = true) }
+        binding.openVoiceDisguise.setOnClickListener {
+            startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
+        }
         binding.phoneAccountBanner.setOnClickListener {
             startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
         }
+        org.saga.audio.VoiceDisguiseStore.pushNative(this)
         wireKeypad()
         applyAddCallMode(intent)
         updateRoleStatus()
@@ -264,6 +268,17 @@ class MainActivity : AppCompatActivity() {
                     failureMode = intent.getStringExtra("failure_mode")
                 )
                 SagaMidCallRehandshakeController.trigger(this, callId, lookupKey, outcome)
+            }
+            "org.saga.TEST_PEER_DISGUISE" -> {
+                // DEBUG-ONLY: simulate peer §16 disguise chip (does not touch padlock).
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PEER_DISGUISE refused — not a debuggable build")
+                    return
+                }
+                val session = intent.getStringExtra("session_id") ?: "test-iroh-1"
+                val active = intent.getBooleanExtra("active", true)
+                org.saga.audio.VoiceDisguiseStore.onPeerDisguise(session, active)
+                Log.i(TAG, "TEST_PEER_DISGUISE session=[$session] active=$active")
             }
             "org.saga.TEST_PCM_INJECT" -> {
                 val path = intent.getStringExtra("path")

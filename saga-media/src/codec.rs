@@ -11,9 +11,11 @@ pub const FRAME_SAMPLES: usize = SAMPLE_RATE as usize * FRAME_MS as usize / 1000
 /// Target bitrate at the top of the 24–32 kbps VBR band (host quality).
 pub const TARGET_BITRATE: i32 = 32_000;
 
-/// §16 voice-disguise hook — no-op until Phase 5.
+/// §16 voice-disguise hook — sender-side transform before Opus (see [`crate::disguise`]).
 #[inline]
-pub fn disguise_pcm_inplace(_pcm: &mut [i16]) {}
+pub fn disguise_pcm_inplace(pcm: &mut [i16]) {
+    crate::disguise::disguise_pcm_inplace(pcm);
+}
 
 pub struct OpusEncoder {
     inner: opus::Encoder,
