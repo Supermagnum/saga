@@ -1,24 +1,38 @@
 #!/usr/bin/env bash
 # Fail if a release-profile arm64 libsaga_iroh_core.so contains mock/dev symbols.
+# Also require the production Nitrokey backend marker (Part 4).
+#
+# Uses grep (not ripgrep): CI runners may not have `rg`. Avoid `grep -q` under
+# `pipefail` — early exit SIGPIPEs `strings` and can flip match results.
 set -euo pipefail
 
 SO="${1:?usage: check-release-so.sh path/to/libsaga_iroh_core.so}"
 test -f "$SO"
 
 fail=0
+
+so_contains() {
+  local needle="$1"
+  strings "$SO" | grep -F -- "$needle" >/dev/null
+}
+
+nm_contains() {
+  local needle="$1"
+  command -v nm >/dev/null 2>&1 || return 1
+  nm -D "$SO" 2>/dev/null | grep -F -- "$needle" >/dev/null
+}
+
 check_absent() {
   local needle="$1"
-  if strings "$SO" | rg -q --fixed-strings "$needle"; then
+  if so_contains "$needle"; then
     echo "FAIL: release .so contains forbidden string: $needle"
     fail=1
   else
     echo "OK: absent [$needle]"
   fi
-  if command -v nm >/dev/null 2>&1; then
-    if nm -D "$SO" 2>/dev/null | rg -q --fixed-strings "$needle"; then
-      echo "FAIL: release .so nm -D contains: $needle"
-      fail=1
-    fi
+  if nm_contains "$needle"; then
+    echo "FAIL: release .so nm -D contains: $needle"
+    fail=1
   fi
 }
 
@@ -39,9 +53,7 @@ check_absent "saga-echo-mode"
 check_absent "saga-rx-fault"
 
 # Production Nitrokey backend must be present in release (Part 4).
-# Do not use `rg -q` under `pipefail`: early exit SIGPIPEs `strings` and
-# the pipeline then looks like a miss even when the marker is present.
-if strings "$SO" | rg --fixed-strings "saga-nitrokey-session-token-v1" >/dev/null; then
+if so_contains "saga-nitrokey-session-token-v1"; then
   echo "OK: present [saga-nitrokey-session-token-v1]"
 else
   echo "FAIL: release .so missing production Nitrokey backend marker"

@@ -1,4 +1,9 @@
 //! Live PC/SC Nitrokey test — ignored unless SAGA_NITROKEY_PIN is set.
+//!
+//! Build with `--features test-card,pcsc` (needs libpcsclite). Default CI uses
+//! `test-card` only and skips this file.
+
+#![cfg(feature = "pcsc")]
 
 use std::sync::Arc;
 use std::time::Duration;

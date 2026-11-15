@@ -187,7 +187,7 @@ jobs:
           fi
           echo "OK: libsaga_iroh_core.so present for x86_64 (CI)"
 
-      - name: Release arm64 .so mock/dev hygiene (no mock-token)
+      - name: Release arm64 .so hygiene (nitrokey, no mock-token)
         working-directory: saga-iroh-core
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -195,6 +195,6 @@ jobs:
         run: |
           set -euo pipefail
           cargo ndk -o /tmp/saga-ndk-release-ci -t arm64-v8a \
-            build --release --features iroh-transport
+            build --release --features iroh-transport,nitrokey
           bash ../scripts/check-release-so.sh \
             /tmp/saga-ndk-release-ci/arm64-v8a/libsaga_iroh_core.so
