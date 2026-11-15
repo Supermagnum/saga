@@ -496,12 +496,19 @@ pub fn set_muted(session_id: &str, muted: bool) {
             return;
         }
     }
-    #[cfg(feature = "mock-token")]
+    set_muted_mesh_fallback(session_id, muted);
+}
+
+#[cfg(feature = "mock-token")]
+fn set_muted_mesh_fallback(session_id: &str, muted: bool) {
     if let Some(node) = mesh_node_for(session_id) {
         node.set_muted(session_id, muted);
         info!("[Saga Mesh] muted={muted} id=[{session_id}]");
     }
 }
+
+#[cfg(not(feature = "mock-token"))]
+fn set_muted_mesh_fallback(_session_id: &str, _muted: bool) {}
 
 /// Mute/unmute every live RoQ media session (E2E / debug).
 pub fn set_muted_all(muted: bool) {
@@ -525,12 +532,19 @@ pub fn set_held(session_id: &str, held: bool) {
             return;
         }
     }
-    #[cfg(feature = "mock-token")]
+    set_held_mesh_fallback(session_id, held);
+}
+
+#[cfg(feature = "mock-token")]
+fn set_held_mesh_fallback(session_id: &str, held: bool) {
     if let Some(node) = mesh_node_for(session_id) {
         node.set_held(session_id, held);
         info!("[Saga Mesh] held={held} id=[{session_id}]");
     }
 }
+
+#[cfg(not(feature = "mock-token"))]
+fn set_held_mesh_fallback(_session_id: &str, _held: bool) {}
 
 pub fn push_capture(session_id: &str, pcm: &[u8]) {
     if pcm.len() < FRAME_BYTES {
