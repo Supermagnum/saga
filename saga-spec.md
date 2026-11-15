@@ -631,8 +631,14 @@ Notes:
 
 ## 14. Group calls & decentralized routing
 
-Small-group encrypted mesh (up to 4 participants) is part of the build
-(Part 1 / issue #30). Larger SFU-style groups remain forward-looking.
+Small-group encrypted mesh (up to 4 participants) is implemented for
+**debug / development builds only** (Part 1 / issue #30). **Release builds
+compile Iroh group calls out** (no Add participant UI, no Iroh
+`Conference`, no mesh-join ALPN / roster path in the release `.so`). Reason:
+G4/G5 failures showed a group could display Encrypted without every
+participant's key verified — release must never show that misleading
+padlock. Carrier conference (Phase 4, cleartext dialer parity) stays in
+release unchanged. Larger SFU-style groups remain forward-looking.
 
 ### 14.1 Carrier conference vs encrypted groups
 
@@ -647,10 +653,12 @@ encrypted group call.
 programmatic `conference()` / `mergeConference()` when any leg is Iroh.
 Hold/swap across origins is allowed (Iroh media pauses on `STATE_HOLDING`).
 
-**Encrypted Iroh groups (built):** full pairwise mesh with no shared group
-key. Represented as an `android.telecom.Conference` with one child
-`Connection` per participant, per-participant padlock, Add participant, and
-per-participant hang-up. Carrier audio is never mixed into an Iroh group.
+**Encrypted Iroh groups (debug builds only):** full pairwise mesh with no
+shared group key. Represented as an `android.telecom.Conference` with one
+child `Connection` per participant, per-participant padlock, Add
+participant, and per-participant hang-up. Carrier audio is never mixed into
+an Iroh group. Release APKs omit this surface (debug/release source sets +
+`mock-token`-gated native mesh).
 
 **Why carrier merge cannot provide E2E encryption:** carrier-side mixing
 gives the carrier cleartext access to the mixed stream. Encrypted group
@@ -667,7 +675,7 @@ pattern used by Signal and Messenger for larger groups later:
 
 ### 14.2 Mesh vs. relay threshold
 
-- **Small groups (≤4 participants, built):** full mesh, no media SFU. Each
+- **Small groups (≤4 participants, debug builds):** full mesh, no media SFU. Each
   device runs the ephemeral-session pairwise handshake with every other
   participant (3 people = 3 links, 4 = 6) and sends/receives N−1 direct
   SRTP streams. Encode mic once (Opus), encrypt per link, mix locally on
@@ -1001,9 +1009,11 @@ Packaging prep lives under `docs/fdroid/` and `fastlane/metadata/`. This is
 - **Release hygiene:** release Cargo features `iroh-transport,nitrokey`;
   debug keeps `mock-token`. TEST_* intent filters are debug-manifest-only;
   PCM inject / echo / rx-fault receivers are debug source-set only with
-  release no-op stubs. `scripts/check-release-so.sh` and
-  `scripts/check-release-apk.sh` gate native + manifest hygiene. No signing
-  keys in-tree.
+  release no-op stubs. Iroh group-call UI / coordinator / mesh-join ALPN are
+  debug-only (release stubs + hygiene forbids `Add participant` and
+  `saga/mesh-join/1`). `scripts/check-release-so.sh` and
+  `scripts/check-release-apk.sh` gate native + manifest + group-call hygiene.
+  No signing keys in-tree.
 - **Licences:** in-app `LicencesActivity` + root `NOTICE` / `LICENSE`.
 - **AntiFeatures:** draft recommends declaring `NonFreeNet` for default n0
   public relays — see `docs/fdroid/anti-features.md`.
