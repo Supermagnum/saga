@@ -1,0 +1,15 @@
+Saga is a free/libre Android dialer that places ordinary cellular calls and encrypted peer-to-peer voice calls over the Iroh network.
+
+Encrypted Saga calls use a hardware SessionToken for the long-term signature. Supported today: Nitrokey OpenPGP cards with a Brainpool AUT key (USB). Galdralag hardware remains blocked on upstream firmware work. Without a supported token, Saga still works as a dialer; Encrypted state requires the token path.
+
+Transport defaults to n0 public relays (open-source relay software). Discovery and call metadata are visible to those operators. Encrypted call content is protected, but your IP address, who you call, and timing/volume metadata are still visible to peers, relays, discovery, or your network unless you use a system-wide privacy-focused VPN. You can use Android Private DNS (DoT) so lookups honour your DNS settings; ISP “safe browsing” resolvers (for example Telenor Nettvern with Private DNS off) can break public-relay TLS. GrapheneOS is the recommended OS.
+
+Voice disguise (pitch / formant) is optional on Saga calls only. Group calls support up to four participants with pairwise encrypted links. Cellular and conference calls are never shown as Encrypted.
+
+Honesty notes for this release:
+• Verified on Android emulators (API 35 and API 29), not on physical phones in this prep cycle.
+• Encrypted calls need a supported Nitrokey; Galdralag is not ready yet.
+• Default relays are n0 public relays; a self-hosted relay URL is future work.
+• applicationId is currently org.saga (final F-Droid ID may change before submission).
+
+Licence: AGPL-3.0-or-later. Source: https://github.com/Supermagnum/saga

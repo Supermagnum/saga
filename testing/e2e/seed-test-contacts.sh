@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed bob, alice, thor test contacts on an emulator.
+# Seed bob, alice, laptop, charlene, thor test contacts on an emulator.
 # Primary path: launch Saga so TestContactSeeder runs in-process (reliable).
 # adb content insert is attempted as a fallback but often returns no URI on modern emulators.
 set -euo pipefail
@@ -11,6 +11,8 @@ APK="${APK:-$REPO_ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
 PHONE_BOB="${PHONE_BOB:-+15550100010}"
 PHONE_ALICE="${PHONE_ALICE:-+15550100011}"
 PHONE_THOR="${PHONE_THOR:-+15550100012}"
+PHONE_LAPTOP="${PHONE_LAPTOP:-+15550100020}"
+PHONE_CHARLENE="${PHONE_CHARLENE:-+15550100030}"
 
 echo "=== Grant contacts permission to Saga on $SERIAL ==="
 adb -s "$SERIAL" shell pm grant org.saga android.permission.READ_CONTACTS 2>/dev/null || true
@@ -22,7 +24,7 @@ adb -s "$SERIAL" logcat -c 2>/dev/null || true
 adb -s "$SERIAL" shell monkey -p org.saga -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 sleep 3
 
-echo "=== Verify bob/alice/thor ==="
+echo "=== Verify bob/alice/laptop/charlene/thor ==="
 if bash "$(dirname "$0")/verify-contact-keys.sh" "$SERIAL" >/dev/null 2>&1; then
   echo "seeded via in-app TestContactSeeder or existing contacts"
   bash "$(dirname "$0")/verify-contact-keys.sh" "$SERIAL" || true
@@ -63,10 +65,16 @@ insert_contact_adb() {
   echo "  adb raw_contact_id=$raw_id name=$name"
 }
 
-KEY_BOB="$(printf '%s' "15550100010" | base64 -w0)"
-KEY_ALICE="$(printf '%s' "15550100011" | base64 -w0)"
+# ephemeral-session wire fingerprints (64 hex) for MockIdentity P384 labels —
+# must match TestContactSeeder / mock-token v2 derivation.
+KEY_BOB="$(printf '%s' "80342e72c8388b728d66df256f8231258f250f760cd45613e34ab5d2ed9f4fa8" | base64 -w0)"
+KEY_ALICE="$(printf '%s' "ee52f46cbefba6e71b8e0a727a021f9cc99e85771114ff1c0b12fcc83418458b" | base64 -w0)"
+KEY_LAPTOP="$(printf '%s' "43676d156721e149e722ad891a441287df5dcbe66f8daf155f1ba0168274d471" | base64 -w0)"
+KEY_CHARLENE="$(printf '%s' "e4f3e33e7d3e50990571c0f6058993d47a5b24c55cc55b7a5df8c8cbc0bbdf32" | base64 -w0)"
 insert_contact_adb "bob" "$PHONE_BOB" "$KEY_BOB" || true
 insert_contact_adb "alice" "$PHONE_ALICE" "$KEY_ALICE" || true
+insert_contact_adb "laptop" "$PHONE_LAPTOP" "$KEY_LAPTOP" || true
+insert_contact_adb "charlene" "$PHONE_CHARLENE" "$KEY_CHARLENE" || true
 insert_contact_adb "thor" "$PHONE_THOR" "" || true
 
-echo "seeded contacts on $SERIAL (adb fallback path)"
+echo "seeded contacts on $SERIAL (adb fallback path; fingerprint MIME rows)"

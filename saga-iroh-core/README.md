@@ -17,8 +17,8 @@ From this directory:
 # Debug / CI (no fat LTO) — default from Gradle assembleDebug
 cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --profile ci --features iroh-transport,mock-token
 
-# Release / F-Droid (LTO + codegen-units=1)
-cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --release --features iroh-transport,mock-token
+# Release / F-Droid (LTO + codegen-units=1) — production Nitrokey SessionToken
+cargo ndk -o target/ndk-libs -t arm64-v8a -t x86_64 build --release --features iroh-transport,nitrokey
 ```
 
 Output: `target/ndk-libs/` with per-ABI `libsaga_iroh_core.so` files consumed by
@@ -31,23 +31,40 @@ CI sets `CI=true` so Gradle builds **x86_64 only** with `[profile.ci]`; release 
 |---------|-------------|
 | *(default)* | Native thread stub (short sleep, no QUIC) |
 | `iroh-transport` | Real `iroh::Endpoint` with ALPN `saga/voice/1`, accept loop, session map |
-| `mock-token` | Dev handshake + media round-trip probe (E2E) |
+| `mock-token` | Thin wrappers around `saga-session` + Galdr FakeTrng (E2E / debug). Production session logic lives in `saga-session` (always linked). See root `NOTICE`. |
 
-The `iroh` dependency enables `test-utils` so E2E can use a **local HTTP dev relay** with `CaTlsConfig::insecure_skip_verify()`. Release builds must use public relays with normal TLS — do not ship the test relay path to production.
+### Session crypto
+
+- **`saga-session`**: production Brainpool handshake, confirmation MAC (§12), channel binding, media AEAD. Always compiled into the `.so`.
+- **`testing/mock-token`**: debug-only Galdr FakeTrng + identity/media helpers. Linked only with `--features mock-token`.
+- **`iroh-roq`**: RoQ RTP-over-QUIC (datagrams); git-rev pin of the Saga fork ported to iroh 1.x (`docs/upstream/iroh-roq-port.md`). Wired with `iroh-transport`; media pipeline is Phase 2 Step 2+.
+
+`testing/mock-token` / `saga-session` pin Galdralag-firmware via git **rev**
+`b781bf6fa5ccf8700a5fb061583c31cfa00241a1` (**2026-10-22**), never a branch tip.
+Licence: **GPL-3.0** (compatible with Saga AGPL-3.0).
+
+The `iroh` dependency enables `test-utils` only under `mock-token` so E2E can use a **local HTTP dev relay** with `CaTlsConfig::insecure_skip_verify()`. Release builds (`iroh-transport` only) must not ship the test-relay path.
 
 Toolchain: root [`rust-toolchain.toml`](../rust-toolchain.toml). Android NDK is pinned via `ndkVersion` in `android/app/build.gradle.kts`. CI sets `SAGA_REQUIRE_NATIVE=1` so a failed `cargo ndk` build fails the job (no silent stub).
 
 ## Dev peer labels (E2E)
 
 Dial targets may be a hex/base32 `EndpointId`, or a dev label (8+ alphanumeric) such as
-`15550100010`. Dev labels map to a deterministic `SecretKey` via BLAKE3 (`saga-dev-v1:{label}`).
+`15550100010`. Dev labels map to a deterministic **Iroh** `SecretKey` via BLAKE3
+(`saga-dev-v1:{label}`). Token long-term Brainpool keys are separate
+(`saga-mock-token-v2-brainpool:{label}:{curve_wire_id}`). Contacts store the
+token fingerprint (64 hex), not the Iroh key.
 
-Current E2E uses **phone-digit labels** matching contact pubkey endpoints:
+Current E2E uses **phone-digit labels** for Iroh identity:
 
-| Emulator | `peer_label` in `saga_dev_identity.xml` |
-|----------|----------------------------------------|
+| Emulator / peer | `peer_label` |
+|-----------------|-------------|
 | bob (5556) | `15550100010` |
 | alice (5554) | `15550100011` |
+| laptop (saga-peer) | `15550100020` |
+| charlene (5558) | `15550100030` |
+
+Cellular-only **thor** (`+15550100012`) has no Saga key and is **not** mapped to an Iroh identity.
 
 `SagaApplication` calls `nativeSetDevIdentity` on start, which binds the shared endpoint and spawns `endpoint.online()` for relay registration.
 
@@ -59,15 +76,18 @@ E2E local default: `http://10.0.2.2:3340` (host `iroh-relay --dev`, port 3340).
 
 ## Relay readiness
 
-`nativePollRelayReady()` returns:
+`nativePollRelayReady()` returns a **live** sample of home-relay connectivity (via
+`Endpoint::home_relay_status`), not a one-shot latch after the first `online()`:
 
 | Value | Meaning |
 |-------|---------|
-| `0` | Pending — endpoint not bound or `online()` not complete |
-| `1` | Ready — `endpoint.online().await` finished |
+| `0` | Pending — endpoint not bound, or no home relay currently connected |
+| `1` | Ready — at least one home relay is connected right now |
 | `2` | Failed (reserved) |
 
-The E2E harness polls this via `TEST_RELAY_QUERY` (writes `files/relay_status.txt`), not logcat markers.
+A background watcher also logs `relay disconnected` / `relay reconnected` and keeps
+the same atomic in sync. The E2E harness polls via `TEST_RELAY_QUERY`
+(`files/relay_status.txt`), not logcat markers, and re-checks immediately before dial.
 
 ## JNI surface
 
@@ -95,3 +115,18 @@ SERIAL_A=emulator-5554 SERIAL_B=emulator-5556 bash testing/e2e/run-e2e-full.sh
 ```
 
 See [`testing/e2e/README.md`](../testing/e2e/README.md) for harness details, forensic scripts, and public-vs-local relay comparison.
+
+## Native mesh (multi-peer calls)
+
+Built with `iroh-transport,mock-token` (`nativeMeshIsAvailable()` is false otherwise, so Kotlin keeps
+the pairwise 1:1 scaffold). Implemented in `src/mesh.rs`; JNI: `nativeMeshOpen/AddPeer/RemovePeer/Close/PeerFingerprint`,
+callback `notifyMeshPeerState` (0 pending, 1 encrypted, 2 failed, 3 left).
+
+- Max 4 participants (3 links per node). One link = QUIC on ALPN `saga/mesh-join/1` (never a Telecom ring)
+  + RoQ. Stream 1: group-id hello + handshake; stream 2: `saga-mesh-roster-v1` roster; later streams: roster updates.
+- `meshAddPeer` dials (caller = initiator). A roster naming an unknown peer makes the smaller EndpointId dial.
+- Media: one `MeshMixer` per group id (encode once, SRTP per link). `nativePushCapturePcm` / `nativePullPlaybackPcm`
+  accept the group id, or a link id (only the oldest attached link of the group services audio; other link ids get silence).
+  Mute / hold / `nativeOnLocalAnswered` / `nativeIsSendArmed` apply per link id (group id = all links).
+- Link ids for roster-introduced links are `{groupId}/{lookupKey}` (same as Kotlin `GroupCallState.legKey`).
+- `meshClose` closes local links only; remaining peers keep their mutual links.

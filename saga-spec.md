@@ -61,6 +61,10 @@ modal. Encryption is never required to place a call.
   signaling/transport path for Saga-to-Saga calls (§14).
 - Linux side is an Iroh reference peer only (§8); no illusion of a
   "native OS dialer" since none exists to blend into.
+- No SMS/MMS and no `ROLE_SMS`. Encrypted Saga-to-Saga text messaging is
+  **evaluation-gated**: see §17 / `docs/messaging-evaluation.md` (issue #29).
+  Implementation (issue #41) starts only if the owner confirms recommendation
+  **C** (build in Saga).
 
 ## 4. Architecture
 
@@ -87,6 +91,43 @@ Saga is the default dialer. Two call origins share one `InCallService` UI:
 │  Android Phone A     │ ◄───────────────────────► │  Android Phone B     │
 └─────────────────────┘                            └─────────────────────┘
 ```
+
+### Media pipeline (Iroh)
+
+```
+Capture (AudioRecord VOICE_COMMUNICATION, 48 kHz mono PCM16)
+   → disguise_pcm_inplace (§16 voice disguise; Off by default)
+   → Opus encode (20 ms / 960 samples, CBR 32 kbps, DTX off, in-band FEC)
+   → RTP + SRTP AEAD_AES_256_GCM  —or—  plain RTP (not-encrypted Iroh)
+   → iroh-roq datagram (non-blocking; drop + count on full)
+        ⋮  QUIC / relay
+   → RoQ receive → adaptive jitter buffer (target ~40–60 ms, cap 300 ms)
+   → Opus decode / PLC / FEC
+   → Playback (AudioTrack USAGE_VOICE_COMMUNICATION)
+```
+
+**Adaptive jitter buffer:** playout delay is separate from loss detection.
+The target starts low (~50 ms), tracks a high percentile of inter-arrival
+deviation plus a small margin, grows on late arrivals / underruns, and
+shrinks slowly when stable (shed excess depth one frame at a time). A
+packet is lost only when its playout deadline passes while a hole remains
+(then PLC/FEC). Empty underruns wait without advancing so a late packet is
+not marked already-played. Hard cap **300 ms**.
+
+**Opus CBR (privacy):** media uses Opus **CBR 32 kbps** with **DTX off** for
+all Encrypted and not-encrypted Iroh calls (including mesh/group encode-once).
+Constant payload size reduces speech-content leakage via encrypted packet
+lengths. IP/metadata exposure and VPN guidance are documented in the README
+[Privacy](README.md#privacy-what-saga-does-and-doesnt-protect) section (issue
+#40) — not a claim of network untraceability.
+
+**Latency:** mouth-to-ear on emulators uses a capture-side click marker
+(`LATENCY_MARKER` inject + dump peak). Cross-emulator
+`elapsedRealtimeNanos` clocks are not synced — report dump-frame / JB
+`target_ms` and stage budgets rather than a single subtracted nanos delta.
+Cross-correlation `lag_ms` from speech scoring is **not** a latency
+measurement — it is the delay alignment used for corr/SI-SNR/STOI.
+Emulator timings are **not** representative of phones.
 
 Cellular fallback: user places a normal `tel:` call; Saga renders it but
 does not encrypt it. Universal `call_unsecure.wav` at connect; no open
@@ -131,8 +172,14 @@ handshake failure on a previously-encrypted contact triggers §5a.
    downgrade case only. Connect-time cues are **structurally distinct**
    from the §5b mid-call security-loss toggle — separate prefs, separate
    code paths, separate audio assets; verify by grep, not assumption.
-5. **Media (Iroh):** Opus frames in RTP over `iroh-roq`, protected with SRTP
-   AEAD_AES_256_GCM (keys from the ephemeral-session shared secret via HKDF).
+5. **Media (Iroh):** Opus frames in RTP over `iroh-roq`. **Encrypted** calls
+   use SRTP AEAD_AES_256_GCM (keys from the ephemeral-session shared secret
+   via HKDF). **Not-encrypted** Iroh calls (after §5 step 4 / §5a continue)
+   use **plain RTP inside RoQ** — QUIC still encrypts the transport via iroh
+   endpoint keys, but without token authentication or SRTP; the UI stays
+   "Not encrypted" and must not imply protection. Never mix: once a call is
+   encrypted, a later failure takes the §5b path, never a silent switch to
+   plain RTP. If the user ends the call at the §5a modal, no media at all.
    Cellular: carrier voice path.
 6. **UI state:** `InCallService` call screen shows padlock + status text
    (§13) for the full call duration. Iroh: "Securing…" until handshake
@@ -252,10 +299,11 @@ rekeying?** Two realistic triggers, with different correct responses:
 
 | Stage | Primitive | Notes |
 |---|---|---|
-| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
-| Transcript / KDF | HKDF-SHA256 from ECDH shared secret + transcript binding as defined by `ephemeral-session` | Not Noise; not the draft §12 table |
-| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) | Master key + salt from HKDF over the ephemeral-session shared secret; transcript hash in `info`; separate keys per direction; `zeroize` on drop. QUIC encrypts the hop; SRTP is the end-to-end layer |
-| Media framing | RTP over `iroh-roq` + SRTP | Replay via SRTP sliding window (RFC 3711); no custom nonce/replay code |
+| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). Default profile **P384r1** (CESS preference). On-token TRNG for Galdralag; **Nitrokey** (Part 4 / `docs/nitrokey.md`): phone ECDH + AUT INTERNAL AUTHENTICATE (ephemeral sk in phone RAM; weaker) |
+| Transcript / KDF | HKDF-SHA256 from ECDH shared secret + ordered-EPK salt as defined by `ephemeral-session` | Not Noise; not the draft §12 table. Output retained for Phase 2: `shared_secret` + `transcript_hash` + `profile_prk` (`HandshakeOutput`) |
+| Saga channel binding | HKDF-Expand(`profile_prk`, info = `saga-iroh-channel-v1` \|\| min(EndpointId)\|\|max(EndpointId)) | **No wire change.** ephemeral-session does not bind Iroh EndpointIds; Saga derives `saga_session_key` so handshake material cannot be reused on a swapped QUIC identity pair (confused-deputy / endpoint-swap). Prevents applying a valid LT-authenticated transcript to the wrong Iroh path when LT keys are shared or confused across devices |
+| Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) when Encrypted — Phase 2 | Master key + salt from HKDF over Phase 1.5 `HandshakeOutput` (bound session key + transcript); separate keys per direction; `Zeroize`/`ZeroizeOnDrop`. QUIC encrypts the hop; SRTP is the end-to-end layer. Not-encrypted Iroh media is plain RTP (no SRTP): transport is still QUIC-encrypted by iroh endpoint keys, but without token authentication |
+| Media framing | RTP over `iroh-roq` + SRTP (Encrypted) or plain RTP (not-encrypted Iroh) | Saga 1-byte media tag distinguishes modes (no silent mix). SRTP replay via sliding window (RFC 3711) |
 
 Cipher profile selection reuses the token's existing named-profile concept
 (`standard`, `conservative`, etc.) for *configuration*, not layering — voice
@@ -279,8 +327,9 @@ the same crates for the overlapping needs, rather than picking equivalents:
 
 | Crate / component | Used for in Saga | Matches firmware's use |
 |---|---|---|
-| Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Same crate / same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
-| `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation | Same crates as firmware |
+| Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Git-pinned crate rev (never a branch tip); same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
+| Saga `SessionToken` trait | Produce signed ephemeral offer / verify peer / derive shared secret | Fallible, async-safe, timeout-aware; mock in `testing/mock-token`; production **`NitrokeySessionToken`** in `saga-token-usb` (Part 4). Galdralag USB CCID reuses the same Android CCID path when xous-core#937 unblocks |
+| `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation + Saga EndpointId channel binding | Same crates as firmware |
 | `aes-gcm` (via `webrtc-srtp` AES-256-GCM profile) | SRTP media AEAD | Firmware already lists `aes-gcm`; media uses it through `webrtc-srtp`, not a hand-rolled AEAD |
 | `chacha20poly1305` | Reserved for §14 group-call frame encryption (SFrame-style), not two-party SRTP | Same crate as firmware |
 | `blake3` | Where firmware/CESS uses BLAKE3 (e.g. outer-envelope labels); not a substitute for Brainpool ECDSA | Same crate |
@@ -520,20 +569,36 @@ cue code in `org.saga.security.connect`).
 
 **Canonical:** Galdralag `ephemeral-session` over Iroh after QUIC
 establishment — `InitMessage` / `ResponseMessage` as specified in
-Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4). Only the transport
-is Saga-specific.
+Galdralag-firmware `docs/EPHEMERAL_SESSION.md` (§7.4), framed as
+`u16 BE length || serialised message` on the Saga bi-stream. Message
+bytes are crate-identical to firmware.
 
-The historical draft table below is **retired** (kept only so old notes
-remain searchable). Do not implement it:
+**Saga-only addition (allowed by §7.4):** after both sides derive
+`HandshakeOutput` (including EndpointId channel binding, §6), they exchange
+confirmation MACs on the same bi-stream so a relayed/swapped-path handshake
+cannot report Encrypted:
+
+| # | Direction | Fields | Purpose |
+|---|---|---|---|
+| 1 | A → B | `u16 BE len \|\| InitMessage` | ephemeral-session offer |
+| 2 | B → A | `u16 BE len \|\| ResponseMessage` | ephemeral-session response |
+| 3 | A → B | `confirm_mac_a:32B` | HMAC-SHA256(`confirm_key`, `saga-confirm-initiator-v1` \|\| `transcript_hash`) |
+| 4 | B → A | `confirm_mac_b:32B` | HMAC-SHA256(`confirm_key`, `saga-confirm-responder-v1` \|\| `transcript_hash`) |
+
+`confirm_key` = HKDF-Expand(`profile_prk`, info =
+`saga-iroh-confirm-v1` \|\| min(EndpointId)\|\|max(EndpointId)) — dedicated
+output, **not** the media/`saga_session_key`. Compare with `subtle`
+constant-time equality. Security state may only resolve to Encrypted after
+both MACs verify, inside the §8 2 s / 4 s budget. Mismatch → handshake
+failure → key-not-found or §5a as usual.
+
+The historical draft CBOR/X25519 table below is **retired**:
 
 | # | Direction | Fields | Purpose |
 |---|---|---|---|
 | ~~1~~ | ~~A -> B~~ | ~~`version:u8`, `ephemeral_pubkey`, `signature`, `nonce_a:16B`~~ | ~~Offer~~ |
 | ~~2~~ | ~~B -> A~~ | ~~`ephemeral_pubkey`, `signature`, `nonce_b:16B`, `profile_choice:u8`~~ | ~~Counter-offer~~ |
 | ~~3~~ | ~~A -> B~~ | ~~`transcript_mac:32B`~~ | ~~Mutual confirmation~~ |
-
-Mismatch or timeout → unencrypted outcome per §5 step 4 (with universal
-audio cue; §5a modal if prior encrypted history).
 
 ## 13. Call-state icon (padlock)
 
@@ -564,40 +629,94 @@ Notes:
   separate prefs and assets).
 - **Resolved:** icon set in [`icons/`](icons/); AGPL — see §8.
 
-## 14. Group calls & decentralized routing (forward-looking design)
+## 14. Group calls & decentralized routing
 
-Not part of the v1 build (see §3), but captured here so the two-party
-architecture doesn't foreclose it.
+Small-group encrypted mesh (up to 4 participants) is implemented for
+**debug / development builds only** (Part 1 / issue #30). **Release builds
+compile Iroh group calls out** (no Add participant UI, no Iroh
+`Conference`, no mesh-join ALPN / roster path in the release `.so`). Reason:
+G4/G5 failures showed a group could display Encrypted without every
+participant's key verified — release must never show that misleading
+padlock. Carrier conference (Phase 4, cleartext dialer parity) stays in
+release unchanged. Larger SFU-style groups remain forward-looking.
 
-### 14.1 Why carrier conference-merge is unusable
+### 14.1 Carrier conference vs encrypted groups
 
-Carrier-side call merging routes audio mixing through the carrier's network,
-giving the carrier cleartext access to the mixed stream. Incompatible with
-end-to-end encryption. Group calls with encryption intact must be handled
-entirely at the app/data layer, following the pattern used by Signal and
-Messenger:
+**Carrier conference (cleartext stock parity — allowed):** as default dialer,
+Saga hosts multi-call UI for cellular calls (second incoming, add call,
+hold/swap, merge/split when Telecom capabilities allow). Audio mixing stays
+on the carrier network; the InCall padlock stays key-not-found / "Not
+encrypted". This is an unencrypted feature for dialer parity, not an
+encrypted group call.
+
+**Never mix Iroh ↔ carrier in one conference:** hide Merge and refuse
+programmatic `conference()` / `mergeConference()` when any leg is Iroh.
+Hold/swap across origins is allowed (Iroh media pauses on `STATE_HOLDING`).
+
+**Encrypted Iroh groups (debug builds only):** full pairwise mesh with no
+shared group key. Represented as an `android.telecom.Conference` with one
+child `Connection` per participant, per-participant padlock, Add
+participant, and per-participant hang-up. Carrier audio is never mixed into
+an Iroh group. Release APKs omit this surface (debug/release source sets +
+`mock-token`-gated native mesh).
+
+**Why carrier merge cannot provide E2E encryption:** carrier-side mixing
+gives the carrier cleartext access to the mixed stream. Encrypted group
+calls are handled entirely at the app/data layer (Iroh-only), following the
+pattern used by Signal and Messenger for larger groups later:
 
 - **SRTP/DTLS** secures the hop to whatever relay forwards media.
-- **A second, frame-level encryption layer** (SFrame-style) secures the
-  actual audio/video content end-to-end regardless of what the relay does —
-  the relay only ever forwards ciphertext frames, never decrypts them.
-- **Sender Keys** distribute a per-participant symmetric key once, over
-  existing pairwise sessions (O(N) key distribution), rather than
-  re-encrypting media per-recipient.
+- **A second, frame-level encryption layer** (SFrame-style) would secure
+  media through an SFU for larger groups; small groups use pairwise SRTP
+  instead (no SFrame / no sender keys in the ≤4 mesh).
+- **Sender Keys** (future, larger groups) distribute a per-participant
+  symmetric key once over existing pairwise sessions (O(N) key
+  distribution), rather than re-encrypting media per-recipient.
 
 ### 14.2 Mesh vs. relay threshold
 
-- **Small groups (roughly ≤4–5 participants):** full mesh, no relay. Each
+- **Small groups (≤4 participants, debug builds):** full mesh, no media SFU. Each
   device runs the ephemeral-session pairwise handshake with every other
-  participant (O(N²) handshakes) and sends/receives N−1 direct SRTP streams.
-  No new key-management scheme needed — pure extension of the two-party design.
-- **Larger groups:** O(N²) handshakes/bandwidth stop scaling; a relay
-  (SFU-equivalent) is needed. Media stays opaque to the relay via the
-  frame-level encryption layer above; the token's role stays pairwise
-  ECDH+signature, now bootstrapping sender-key distribution instead of a
-  session key used directly for media.
-- Exact threshold is untested — deferred until real bandwidth/latency
-  numbers are available (do not implement until then).
+  participant (3 people = 3 links, 4 = 6) and sends/receives N−1 direct
+  SRTP streams. Encode mic once (Opus), encrypt per link, mix locally on
+  receive. No shared group key — leaving closes that peer's links only.
+- **Larger groups (not built):** O(N²) handshakes/bandwidth stop scaling; a
+  relay (SFU-equivalent) is needed. Media stays opaque to the relay via a
+  frame-level encryption layer; the token's role stays pairwise
+  ECDH+signature, then bootstrapping sender-key distribution.
+- **Built cap:** adding a 5th participant is refused with a clear message;
+  the existing call is unaffected. Empirical mesh/SFU crossover for >4
+  remains open (§14.5).
+
+#### 14.2.1 Mesh policy decisions (2026-11-15)
+
+1. **Starter leave:** when the person who started the call leaves, the call
+   **continues** for the others (mesh has no host).
+2. **Who may add:** **anyone** already in the call may add participants,
+   up to 4 total.
+3. **Mixed security:** a participant whose link cannot be encrypted may
+   join only after **explicit confirmation** by the person adding them;
+   they are marked "Not encrypted" on every screen, and the group as a
+   whole is not shown as Encrypted.
+
+#### 14.2.2 Mesh signaling, media, and trust
+
+- **Adding:** the adder sends a roster (EndpointId + long-term key
+  fingerprint per participant, plus introducer) over already-encrypted
+  links; new and existing peers connect directly and run their own
+  handshake. Deterministic initiator = lexicographic min EndpointId to
+  avoid glare.
+- **Unknown contacts:** UI shows e.g. "Charlene, introduced by Alice";
+  verify against the roster fingerprint. Never show verified without a
+  key check.
+- **Security:** group Encrypted only when every link is encrypted and
+  confirmed. Link failure is marked on all screens; §5a applies for a
+  previously-encrypted contact; §5b applies per link. Rejoin requires a
+  new add and a new handshake. One connect cue when the local session
+  first reaches Encrypted; no cue on late joiner / swap / unhold.
+- **Pre-answer gate:** per link (same answered-signal rule as 1:1).
+- **Mute / hold:** mute stops capture to all peers; hold pauses media on
+  all links for the local device.
 
 ### 14.3 Transport mode
 
@@ -633,6 +752,28 @@ SIP signaling path.
   so a dropped video packet never blocks audio — a reasonable primitive if
   group calls need per-participant streams through a relay.
 
+#### 14.4.1 Release relay default (decision 2026-11-14)
+
+**Default for release:** n0 public relays via iroh `presets::N0`
+(PkarrPublisher + DnsAddressLookup). Debug/E2E may still use a local
+`iroh-relay`. Rationale and full comparison:
+[`docs/design/relay-options.md`](docs/design/relay-options.md).
+
+Reasons: no Saga-operated infrastructure; open-source relay software; public
+N0 reachability passes host soaks and emulator soaks when Android Private DNS
+(DoT) is used with the platform resolver (no in-app pinned resolvers).
+
+**Risks kept with the decision:**
+
+- ISP DNS filters (e.g. Telenor Nettvern) with Private DNS off can break N0
+  TLS probes (`UnknownIssuer`).
+- Relay and discovery operators see EndpointId / timing / volume metadata
+  (not cleartext media when session keys stay on endpoints).
+- Reachability when a direct path fails depends on n0 service availability.
+
+**Future work (not implemented):** an advanced settings field for a
+self-hosted relay URL. Default remains n0.
+
 **Gap:** Iroh solves live connectivity, not store-and-forward presence — it
 doesn't help reach a peer whose device is currently offline/asleep. If
 missed-call notification via a decentralized store is ever required,
@@ -645,11 +786,19 @@ fresh codebase (§10), not a GPLv3 Linphone fork.
 
 ### 14.5 Open items
 
+- [x] Choose release relay default — **Option A / n0 `presets::N0`**
+      (2026-11-14); see §14.4.1 and `docs/design/relay-options.md`.
+- [x] Small-group mesh policy (≤4, starter-leave continues, anyone may add,
+      confirm-to-admit unencrypted) — 2026-11-15; see §14.2.1.
+- [x] Prototype ≤4 full-mesh pairwise SRTP (encode once / mix locally) —
+      Part 1 / issue #30.
 - [ ] Confirm Iroh's exact license before dependency lock-in.
-- [ ] Determine mesh/relay participant-count threshold empirically.
+- [ ] Determine mesh/relay crossover empirically for >4 (SFU + SFrame /
+      sender keys still forward-looking).
 - [ ] Decide whether missed-call/offline presence is a v-next requirement;
       if so, evaluate OpenDHT integration effort at that point.
 - [ ] Prototype token identity <-> Iroh node identity binding.
+- [ ] Advanced self-hosted relay URL setting (opt-in; not the default).
 
 ## 15. Testing: mock token & two-emulator encryption verification
 
@@ -659,25 +808,30 @@ hardware token or real audio device is involved.
 
 ### 15.1 Mock token — scope and enforcement
 
-The mock token implements the same `ephemeral-session` wire format the real
-Galdralag firmware defines (§7.4) — same `InitMessage`/`ResponseMessage`
-bytes, same Brainpool + ECDSA primitives — but backed by an in-memory
-software keypair instead of hardware-backed TRNG and secure storage.
-(Phase 1.5 replaces any temporary homemade mock layout.) It exists to
-exercise the handshake, managed `ConnectionService` / `InCallService`
-lifecycle, and encrypted media pipeline on two emulators without physical
-tokens.
+The mock token **is** a `SessionToken` backend: it calls
+`InitiatorSession` / `ResponderSession` from the git-pinned
+`ephemeral-session` crate and emits byte-identical `InitMessage` /
+`ResponseMessage` serialisations. Long-term keys are software Brainpool
+ECDSA (default P384r1); ephemeral ECDH runs in-process via `FakeTrng`,
+mirroring on-device steps. There is no dual path and no leftover
+X25519/Ed25519 hello/confirm layout.
+
+Contact MIME rows store the 64-char lowercase hex fingerprint
+(`InitMessage::encode_fingerprint_hex`). Iroh EndpointIds remain separate
+(`saga-dev-v1:{phone-digit-label}`).
 
 Scope is enforced at build time, not by convention:
 
-- Lives in a separate crate path in the repo (e.g. `testing/mock-token`),
-  not alongside the real token-integration code.
-- Gated behind a Cargo feature (e.g. `mock-token`) that is **not** enabled
-  in release build profiles — a mock token must be structurally unable to
-  ship in a production build, not merely undocumented for one.
-- Mock-issued keys/identities are marked as such wherever they surface
-  (logs, test fixtures) so a mock-derived session can never be confused
-  with a real hardware-backed one.
+- Lives in `testing/mock-token`, not alongside future USB token backends.
+- Gated behind Cargo feature `mock-token` (not for production-shaped
+  release builds — Part 5 / F-Droid readiness: release uses `nitrokey`,
+  debug keeps `mock-token`; TEST_* intents and PCM inject live in the
+  debug source set / debug manifest only).
+- Logs use marker `MOCK_TOKEN`; debug builds may log only a short hash
+  prefix of the session key, never raw secrets.
+- Host tests: committed vector
+  `testing/mock-token/tests/fixtures/p384_vector_c1_d1.json` plus negative
+  cases (tampered sig, wrong LT key, wrong curve, truncated, replay).
 
 ### 15.2 Two-emulator setup
 
@@ -722,3 +876,146 @@ emulator audio I/O passthrough.
    if that separate setting is enabled — not the connect-time cue.
 7. **CI integration:** headless AVDs; automated regression on handshake
    and media pipeline changes.
+
+## 16. Phase 5 — Optional voice disguise (off by default)
+
+Optional **voice disguise** for Iroh (Saga) calls only. Off by default. It
+changes how the local mic feed sounds to the peer (and in any recording they
+make). It is **not** anonymisation: UI and docs must not claim the speaker
+cannot be identified. The contact key still identifies the caller; accent,
+word choice, and speaking rhythm are unchanged. It does not apply to
+cellular / phone-network calls.
+
+Apply on the **sender** side before Opus encoding. It never changes what the
+local user hears. Candidate modes for shipping are pitch shift and
+McAdams-coefficient LPC formant shift (VoicePrivacy Challenge baseline);
+neural voice conversion is evaluated for latency/cost and is not assumed to
+ship. Any library must be license-compatible with AGPL-3.0 and F-Droid.
+Added latency budget per mode: **≤ ~20 ms** on the emulator — modes that
+exceed that do not ship. Measure and record latency in `TEST_RESULTS.md`.
+
+### 16.1 Settings → Voice disguise (global defaults)
+
+- **Mode:** Off (default) / Pitch shift / Formant shift (McAdams) /
+  Formant + pitch.
+- **Pitch amount:** slider in semitones, −6 … +6; default −3 ("lower"), or
+  whichever value listening tests prefer. Shown only for modes that use
+  pitch.
+- **Formant strength:** Mild / Medium / Strong, mapped to McAdams α ranges
+  tuned by listening tests and the intelligibility metric. Shown only for
+  formant modes.
+- **"New random voice each call":** ON by default. A random α (and a random
+  pitch offset inside the chosen range) is drawn from a CSPRNG once per
+  call and zeroized at call end. Turning it OFF uses a fixed α and must
+  show the warning: "A fixed setting is easier to reverse."
+- **"Test my voice":** records ~5 s locally and plays it back through the
+  chosen mode. Nothing leaves the phone; the recording is deleted
+  afterwards.
+- **Help text (short):** what it does (changes how your voice sounds to the
+  other person and in any recording they make); what it does not (it does
+  not hide accent, words, rhythm, or who you are — your contact key
+  identifies you); and that it works on Saga calls only, not normal phone
+  calls.
+
+### 16.2 Per-contact override (contact detail screen)
+
+- **Voice disguise:** Use default / Always on / Always off.
+
+### 16.3 In-call screen (Iroh calls only)
+
+- A quick on/off toggle using the mode from settings or the contact
+  override. It may be switched mid-call; the change applies at the next
+  audio frame boundary with a short crossfade (no clicks).
+- A visible indicator chip while disguise is active (local side).
+- For cellular calls: the toggle is shown disabled with
+  "Not available on phone-network calls".
+- **Peer chip (decided):** when the remote party has disguise active, show
+  a neutral informational chip: "Caller is using voice disguise". See
+  §16.6. It must not change the padlock or security state.
+
+### 16.4 Behaviour
+
+- Sender-side only, before Opus encoding; local sidetone / what you hear is
+  unchanged.
+- Settings persist across calls; per-call random α / pitch offsets do not.
+- Latency for each mode is measured and shown in `TEST_RESULTS.md`. A mode
+  that exceeds ~20 ms on the emulator does not ship.
+
+### 16.5 Verification
+
+- **Host:** each mode × strength on the real speech clip → before/after
+  WAVs, latency, and intelligibility metric versus the original.
+- **Randomisation:** two calls with "New random voice each call" ON must
+  yield different α values; those values must never be logged in release
+  builds.
+- **Emulator screenshots** (look at each before accepting): settings page
+  for each mode; contact override; in-call toggle + active chip; peer
+  "Caller is using voice disguise" chip; disabled cellular-call state.
+
+### 16.6 Decisions and open items
+
+- [x] **Peer "voice disguise" chip — YES, tell the peer.** Add a field to
+  the **Saga call-setup messages** (not the ephemeral-session wire format)
+  that indicates disguise is active. Send it when the call starts and
+  whenever disguise is toggled mid-call. The peer shows a neutral chip:
+  "Caller is using voice disguise". Informational only — must not change
+  the padlock or security state. Implementation stays in Phase 5.
+- [x] Confirm chosen DSP libraries' licenses against AGPL-3.0 and F-Droid
+  before dependency lock-in. **Decision: no third-party DSP dependency** —
+  pitch + McAdams-style formant warp are implemented in-tree in
+  `saga-media/src/disguise.rs` (Levinson–Durbin LPC, pole/VTLN warp, pitch
+  resample). Compatible with AGPL-3.0-or-later and F-Droid.
+- [ ] Report neural voice-conversion latency/cost on mid-range targets;
+  exclude from shipping modes if over the ~20 ms budget or otherwise
+  unsuitable. (Not required to ship Phase 5 pitch/formant modes.)
+- [x] Peer disguise signal: `MEDIA_TAG_DISGUISE` control datagram on the
+  Saga media path (not ephemeral-session wire). Sent at media start and on
+  every in-call toggle; peer shows "Caller is using voice disguise".
+
+## 17. Text messaging (evaluation gate)
+
+Saga does **not** become the default SMS app. Carrier SMS/MMS stay in a
+dedicated SMS client. Encrypted text between Saga contacts is gated on the
+Step 1 evaluation in issue #29.
+
+**Evaluation deliverable (2026-11-15):** `docs/messaging-evaluation.md`
+compares Delta Chat, Briar, SimpleX, Conversations/Cheogram, Jami, Molly,
+Session, and Iroh-based chat experiments against the issue #29 criteria
+table (sourced facts).
+
+**Evaluator recommendation:** **C — build in Saga** (no existing app meets
+required criterion 3: long-term messaging identity on an OpenPGP card /
+CCID aligned with Saga's token-backed call identity). Options A (intent
+handoff) and B (upstream contribution) do not deliver the same verified
+contacts as Encrypted calls. No Message-action prototype shipped while A
+is not recommended.
+
+**Owner decision:** record A/B/C on issue #29 before any messaging code.
+If **C**, implement under issue #41 (separate Iroh ALPN, same
+ephemeral-session handshake / trust UX as calls, no new crypto, no silent
+unencrypted send). If **A** or **B**, close #41 and document the handoff
+or upstream plan instead.
+
+## 18. F-Droid readiness (prepare, do not submit)
+
+Packaging prep lives under `docs/fdroid/` and `fastlane/metadata/`. This is
+**not** an fdroiddata submission — the maintainer opens that MR.
+
+- **applicationId:** currently `org.saga`. Changing it is deferred until the
+  final ID is chosen (one-line `applicationId` edit + recipe rename).
+- **Launcher icon:** adaptive icon under `android/app/src/main/res/`
+  (`ic_launcher_*`). The AGPL call-state set in `icons/` is unchanged and
+  immutable.
+- **Release hygiene:** release Cargo features `iroh-transport,nitrokey`;
+  debug keeps `mock-token`. TEST_* intent filters are debug-manifest-only;
+  PCM inject / echo / rx-fault receivers are debug source-set only with
+  release no-op stubs. Iroh group-call UI / coordinator / mesh-join ALPN are
+  debug-only (release stubs + hygiene forbids `Add participant` and
+  `saga/mesh-join/1`). `scripts/check-release-so.sh` and
+  `scripts/check-release-apk.sh` gate native + manifest + group-call hygiene.
+  No signing keys in-tree.
+- **Licences:** in-app `LicencesActivity` + root `NOTICE` / `LICENSE`.
+- **AntiFeatures:** draft recommends declaring `NonFreeNet` for default n0
+  public relays — see `docs/fdroid/anti-features.md`.
+- **Recipe draft:** `docs/fdroid/org.saga.yml` (Navi-style rustup + cargo-ndk
+  + pinned NDK r27c).

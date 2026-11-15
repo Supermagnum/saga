@@ -29,6 +29,7 @@ class SagaHandshakeCoordinator(
         scope.launch {
             onState(SagaHandshakeState.Securing)
             IrohNativeBridge.setForceHandshakeFail(SagaTestFlags.isForceHandshakeFail(appContext))
+            IrohNativeBridge.setForceBindingPerturb(SagaTestFlags.isForceBindingPerturb(appContext))
 
             val poll = if (IrohNativeBridge.isNativeAvailable()) {
                 pollWithRetry(sessionId)

@@ -1,0 +1,67 @@
+NOTICE — third-party licences for Saga
+======================================
+
+Saga itself is licensed under the GNU Affero General Public License v3.0
+or later (see LICENSE). This file lists third-party components distributed
+with or linked into the project. The in-app Licences screen
+(`LicencesActivity`) surfaces the same summary plus the AGPL source offer.
+
+Galdralag-firmware crates (ephemeral-session, galdr-core, galdr-vault, cess,
+pin-policy, and their in-tree companions)
+  Source: https://github.com/Supermagnum/Galdralag-firmware
+  Pinned rev: b781bf6fa5ccf8700a5fb061583c31cfa00241a1 (2026-10-22)
+  Licence: GPL-3.0
+  Note: GPL-3.0 is treated as compatible with Saga's AGPL-3.0 as a stronger
+  copyleft peer for this dependency. Do not replace the pin with a branch tip.
+
+iroh and related n0 crates (iroh, iroh-base, iroh-relay, iroh-dns, …)
+  Licence: MIT OR Apache-2.0 (per crate)
+
+iroh-roq (RTP over QUIC / RoQ; Saga fork ported to iroh 1.x)
+  Upstream: https://github.com/n0-computer/iroh-roq
+  Fork: https://github.com/Supermagnum/iroh-roq
+  Pinned rev: c9b02963a1c786f7ae2788ee4c39e44c9c76b01d
+  Licence: MIT OR Apache-2.0
+  Note: minimal port for Saga; upstream PR not opened yet — see
+  docs/upstream/iroh-roq-port.md. Do not replace the pin with a branch tip.
+  Step 2 additions: try_send_rtp / try_send_payload, read_bytes, max_datagram_size.
+
+webrtc-srtp (SRTP AEAD_AES_256_GCM for saga-media)
+  crates.io: webrtc-srtp 0.17.3
+  Licence: MIT OR Apache-2.0
+
+opus / libopus (via Rust `opus` 0.3.1 + audiopus_sys; built from source)
+  Licence: BSD-3-Clause (libopus)
+  Note: F-Droid-safe (cmake/cc from source; no prebuilt blobs).
+
+LibriSpeech (CI speech fixture + local STOI / listening)
+  https://www.openslr.org/12/ (parent corpus); subset https://www.openslr.org/31/
+  Fixture: saga-media/fixtures/speech_clip_48k.wav
+    utterance 5694-64038-0005 from LibriSpeech/dev-clean-2 (OpenSLR 31)
+  Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  Cite: V. Panayotov, G. Chen, D. Povey, S. Khudanpur,
+    "Librispeech: an ASR corpus based on public domain audio books", ICASSP 2015.
+  See also saga-media/fixtures/ATTRIBUTION.md.
+
+RustCrypto and related cryptographic crates used via Galdralag / Saga
+  (including but not limited to sha2, hmac, hkdf, aes-gcm, chacha20poly1305,
+  elliptic-curve, ecdsa, bp256, bp384, zeroize, subtle, digest, …)
+  Licence: typically MIT OR Apache-2.0 (see each crate on crates.io)
+
+blake3
+  Licence: Apache-2.0 OR CC0-1.0
+
+Call-state icons (icons/)
+  Licence: AGPL — see icons/readme.md
+
+openpgp-card / card-backend / card-backend-pcsc (Nitrokey OpenPGP client)
+  crates.io: openpgp-card, card-backend, card-backend-pcsc
+  Licence: MIT OR Apache-2.0
+  Note: used by saga-token-usb for INTERNAL AUTHENTICATE (AUT) over USB CCID.
+
+Android / Google / Jetpack libraries
+  Licence: Apache-2.0 (per artifact)
+
+Other Rust and Android dependencies
+  See Cargo.lock and Gradle dependency reports for the exact set and licence
+  metadata of transitive crates and AARs.
