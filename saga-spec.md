@@ -292,7 +292,7 @@ rekeying?** Two realistic triggers, with different correct responses:
 
 | Stage | Primitive | Notes |
 |---|---|---|
-| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). Default profile **P384r1** (CESS preference). On-token TRNG for Galdralag; Nitrokey path may keep ephemeral sk in phone RAM (weaker; Phase 3) |
+| Key agreement | Token: ephemeral ECDH on **BrainpoolP256r1 or BrainpoolP384r1**; long-term key signs the ephemeral offer (ECDSA) | Matches Galdralag `ephemeral-session` (`docs/EPHEMERAL_SESSION.md`). Default profile **P384r1** (CESS preference). On-token TRNG for Galdralag; **Nitrokey** (Part 4 / `docs/nitrokey.md`): phone ECDH + AUT INTERNAL AUTHENTICATE (ephemeral sk in phone RAM; weaker) |
 | Transcript / KDF | HKDF-SHA256 from ECDH shared secret + ordered-EPK salt as defined by `ephemeral-session` | Not Noise; not the draft §12 table. Output retained for Phase 2: `shared_secret` + `transcript_hash` + `profile_prk` (`HandshakeOutput`) |
 | Saga channel binding | HKDF-Expand(`profile_prk`, info = `saga-iroh-channel-v1` \|\| min(EndpointId)\|\|max(EndpointId)) | **No wire change.** ephemeral-session does not bind Iroh EndpointIds; Saga derives `saga_session_key` so handshake material cannot be reused on a swapped QUIC identity pair (confused-deputy / endpoint-swap). Prevents applying a valid LT-authenticated transcript to the wrong Iroh path when LT keys are shared or confused across devices |
 | Session cipher (media) | SRTP **AEAD_AES_256_GCM** (`webrtc-srtp` `AeadAes256Gcm`) when Encrypted — Phase 2 | Master key + salt from HKDF over Phase 1.5 `HandshakeOutput` (bound session key + transcript); separate keys per direction; `Zeroize`/`ZeroizeOnDrop`. QUIC encrypts the hop; SRTP is the end-to-end layer. Not-encrypted Iroh media is plain RTP (no SRTP): transport is still QUIC-encrypted by iroh endpoint keys, but without token authentication |
@@ -321,7 +321,7 @@ the same crates for the overlapping needs, rather than picking equivalents:
 | Crate / component | Used for in Saga | Matches firmware's use |
 |---|---|---|
 | Galdralag `ephemeral-session` (+ vault Brainpool ECDH/ECDSA) | Handshake wire format and session key derivation | Git-pinned crate rev (never a branch tip); same BrainpoolP256r1\|P384r1 + ECDSA as firmware |
-| Saga `SessionToken` trait | Produce signed ephemeral offer / verify peer / derive shared secret | Fallible, async-safe, timeout-aware; mock implements now; Galdralag USB CCID and Nitrokey later. No USB backend in Phase 1.5 |
+| Saga `SessionToken` trait | Produce signed ephemeral offer / verify peer / derive shared secret | Fallible, async-safe, timeout-aware; mock in `testing/mock-token`; production **`NitrokeySessionToken`** in `saga-token-usb` (Part 4). Galdralag USB CCID reuses the same Android CCID path when xous-core#937 unblocks |
 | `hkdf` + `sha2` | HKDF-SHA256 session / media key derivation + Saga EndpointId channel binding | Same crates as firmware |
 | `aes-gcm` (via `webrtc-srtp` AES-256-GCM profile) | SRTP media AEAD | Firmware already lists `aes-gcm`; media uses it through `webrtc-srtp`, not a hand-rolled AEAD |
 | `chacha20poly1305` | Reserved for §14 group-call frame encryption (SFrame-style), not two-party SRTP | Same crate as firmware |
