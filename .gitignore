@@ -7,3 +7,4 @@ saga-iroh-core/target/
 saga-session/target/
 saga-media/target/
 testing/mock-token/target/
+tools/saga-peer/target/

@@ -618,10 +618,10 @@ Notes:
   separate prefs and assets).
 - **Resolved:** icon set in [`icons/`](icons/); AGPL — see §8.
 
-## 14. Group calls & decentralized routing (forward-looking design)
+## 14. Group calls & decentralized routing
 
-Not part of the v1 build (see §3), but captured here so the two-party
-architecture doesn't foreclose it.
+Small-group encrypted mesh (up to 4 participants) is part of the build
+(Part 1 / issue #30). Larger SFU-style groups remain forward-looking.
 
 ### 14.1 Carrier conference vs encrypted groups
 
@@ -636,32 +636,68 @@ encrypted group call.
 programmatic `conference()` / `mergeConference()` when any leg is Iroh.
 Hold/swap across origins is allowed (Iroh media pauses on `STATE_HOLDING`).
 
+**Encrypted Iroh groups (built):** full pairwise mesh with no shared group
+key. Represented as an `android.telecom.Conference` with one child
+`Connection` per participant, per-participant padlock, Add participant, and
+per-participant hang-up. Carrier audio is never mixed into an Iroh group.
+
 **Why carrier merge cannot provide E2E encryption:** carrier-side mixing
 gives the carrier cleartext access to the mixed stream. Encrypted group
-calls must be handled entirely at the app/data layer (Iroh-only later),
-following the pattern used by Signal and Messenger:
+calls are handled entirely at the app/data layer (Iroh-only), following the
+pattern used by Signal and Messenger for larger groups later:
 
 - **SRTP/DTLS** secures the hop to whatever relay forwards media.
-- **A second, frame-level encryption layer** (SFrame-style) secures the
-  actual audio/video content end-to-end regardless of what the relay does —
-  the relay only ever forwards ciphertext frames, never decrypts them.
-- **Sender Keys** distribute a per-participant symmetric key once, over
-  existing pairwise sessions (O(N) key distribution), rather than
-  re-encrypting media per-recipient.
+- **A second, frame-level encryption layer** (SFrame-style) would secure
+  media through an SFU for larger groups; small groups use pairwise SRTP
+  instead (no SFrame / no sender keys in the ≤4 mesh).
+- **Sender Keys** (future, larger groups) distribute a per-participant
+  symmetric key once over existing pairwise sessions (O(N) key
+  distribution), rather than re-encrypting media per-recipient.
 
 ### 14.2 Mesh vs. relay threshold
 
-- **Small groups (roughly ≤4–5 participants):** full mesh, no relay. Each
+- **Small groups (≤4 participants, built):** full mesh, no media SFU. Each
   device runs the ephemeral-session pairwise handshake with every other
-  participant (O(N²) handshakes) and sends/receives N−1 direct SRTP streams.
-  No new key-management scheme needed — pure extension of the two-party design.
-- **Larger groups:** O(N²) handshakes/bandwidth stop scaling; a relay
-  (SFU-equivalent) is needed. Media stays opaque to the relay via the
-  frame-level encryption layer above; the token's role stays pairwise
-  ECDH+signature, now bootstrapping sender-key distribution instead of a
-  session key used directly for media.
-- Exact threshold is untested — deferred until real bandwidth/latency
-  numbers are available (do not implement until then).
+  participant (3 people = 3 links, 4 = 6) and sends/receives N−1 direct
+  SRTP streams. Encode mic once (Opus), encrypt per link, mix locally on
+  receive. No shared group key — leaving closes that peer's links only.
+- **Larger groups (not built):** O(N²) handshakes/bandwidth stop scaling; a
+  relay (SFU-equivalent) is needed. Media stays opaque to the relay via a
+  frame-level encryption layer; the token's role stays pairwise
+  ECDH+signature, then bootstrapping sender-key distribution.
+- **Built cap:** adding a 5th participant is refused with a clear message;
+  the existing call is unaffected. Empirical mesh/SFU crossover for >4
+  remains open (§14.5).
+
+#### 14.2.1 Mesh policy decisions (2026-11-15)
+
+1. **Starter leave:** when the person who started the call leaves, the call
+   **continues** for the others (mesh has no host).
+2. **Who may add:** **anyone** already in the call may add participants,
+   up to 4 total.
+3. **Mixed security:** a participant whose link cannot be encrypted may
+   join only after **explicit confirmation** by the person adding them;
+   they are marked "Not encrypted" on every screen, and the group as a
+   whole is not shown as Encrypted.
+
+#### 14.2.2 Mesh signaling, media, and trust
+
+- **Adding:** the adder sends a roster (EndpointId + long-term key
+  fingerprint per participant, plus introducer) over already-encrypted
+  links; new and existing peers connect directly and run their own
+  handshake. Deterministic initiator = lexicographic min EndpointId to
+  avoid glare.
+- **Unknown contacts:** UI shows e.g. "Charlene, introduced by Alice";
+  verify against the roster fingerprint. Never show verified without a
+  key check.
+- **Security:** group Encrypted only when every link is encrypted and
+  confirmed. Link failure is marked on all screens; §5a applies for a
+  previously-encrypted contact; §5b applies per link. Rejoin requires a
+  new add and a new handshake. One connect cue when the local session
+  first reaches Encrypted; no cue on late joiner / swap / unhold.
+- **Pre-answer gate:** per link (same answered-signal rule as 1:1).
+- **Mute / hold:** mute stops capture to all peers; hold pauses media on
+  all links for the local device.
 
 ### 14.3 Transport mode
 
@@ -733,8 +769,13 @@ fresh codebase (§10), not a GPLv3 Linphone fork.
 
 - [x] Choose release relay default — **Option A / n0 `presets::N0`**
       (2026-11-14); see §14.4.1 and `docs/design/relay-options.md`.
+- [x] Small-group mesh policy (≤4, starter-leave continues, anyone may add,
+      confirm-to-admit unencrypted) — 2026-11-15; see §14.2.1.
+- [x] Prototype ≤4 full-mesh pairwise SRTP (encode once / mix locally) —
+      Part 1 / issue #30.
 - [ ] Confirm Iroh's exact license before dependency lock-in.
-- [ ] Determine mesh/relay participant-count threshold empirically.
+- [ ] Determine mesh/relay crossover empirically for >4 (SFU + SFrame /
+      sender keys still forward-looking).
 - [ ] Decide whether missed-call/offline presence is a v-next requirement;
       if so, evaluate OpenDHT integration effort at that point.
 - [ ] Prototype token identity <-> Iroh node identity binding.
