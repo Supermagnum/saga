@@ -809,7 +809,9 @@ Scope is enforced at build time, not by convention:
 
 - Lives in `testing/mock-token`, not alongside future USB token backends.
 - Gated behind Cargo feature `mock-token` (not for production-shaped
-  release hygiene — Phase 6).
+  release builds — Part 5 / F-Droid readiness: release uses `nitrokey`,
+  debug keeps `mock-token`; TEST_* intents and PCM inject live in the
+  debug source set / debug manifest only).
 - Logs use marker `MOCK_TOKEN`; debug builds may log only a short hash
   prefix of the session key, never raw secrets.
 - Host tests: committed vector
@@ -978,3 +980,25 @@ If **C**, implement under issue #41 (separate Iroh ALPN, same
 ephemeral-session handshake / trust UX as calls, no new crypto, no silent
 unencrypted send). If **A** or **B**, close #41 and document the handoff
 or upstream plan instead.
+
+## 18. F-Droid readiness (prepare, do not submit)
+
+Packaging prep lives under `docs/fdroid/` and `fastlane/metadata/`. This is
+**not** an fdroiddata submission — the maintainer opens that MR.
+
+- **applicationId:** currently `org.saga`. Changing it is deferred until the
+  final ID is chosen (one-line `applicationId` edit + recipe rename).
+- **Launcher icon:** adaptive icon under `android/app/src/main/res/`
+  (`ic_launcher_*`). The AGPL call-state set in `icons/` is unchanged and
+  immutable.
+- **Release hygiene:** release Cargo features `iroh-transport,nitrokey`;
+  debug keeps `mock-token`. TEST_* intent filters are debug-manifest-only;
+  PCM inject / echo / rx-fault receivers are debug source-set only with
+  release no-op stubs. `scripts/check-release-so.sh` and
+  `scripts/check-release-apk.sh` gate native + manifest hygiene. No signing
+  keys in-tree.
+- **Licences:** in-app `LicencesActivity` + root `NOTICE` / `LICENSE`.
+- **AntiFeatures:** draft recommends declaring `NonFreeNet` for default n0
+  public relays — see `docs/fdroid/anti-features.md`.
+- **Recipe draft:** `docs/fdroid/org.saga.yml` (Navi-style rustup + cargo-ndk
+  + pinned NDK r27c).
