@@ -410,6 +410,11 @@ pub fn on_local_answered(session_id: &str) -> bool {
         return false;
     };
     let Some(s) = map.get(session_id) else {
+        drop(map);
+        #[cfg(feature = "mock-token")]
+        if let Some(node) = mesh_node_for(session_id) {
+            return node.on_local_answered(session_id);
+        }
         return false;
     };
     let pipeline = s.pipeline.clone();
@@ -446,12 +451,29 @@ pub fn is_send_armed(session_id: &str) -> bool {
     let Ok(map) = MEDIA.lock() else {
         return false;
     };
-    map.get(session_id)
-        .map(|s| s.send_armed.load(Ordering::Relaxed))
-        .unwrap_or(false)
+    if let Some(s) = map.get(session_id) {
+        return s.send_armed.load(Ordering::Relaxed);
+    }
+    drop(map);
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh_node_for(session_id) {
+        return node.is_send_armed(session_id);
+    }
+    false
+}
+
+/// Mesh group/link ids (see `mesh.rs`): `Some(node)` when `id` is a mesh id.
+#[cfg(feature = "mock-token")]
+fn mesh_node_for(session_id: &str) -> Option<Arc<crate::mesh::MeshNode>> {
+    crate::mesh::global_node().filter(|n| n.owns(session_id))
 }
 
 pub fn stop_media(session_id: &str) {
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh_node_for(session_id) {
+        node.stop_media(session_id);
+        return;
+    }
     if let Ok(mut map) = MEDIA.lock() {
         if let Some(s) = map.remove(session_id) {
             let _ = s._shutdown.try_send(());
@@ -471,7 +493,13 @@ pub fn set_muted(session_id: &str, muted: bool) {
         if let Some(s) = map.get(session_id) {
             s.muted.store(muted, Ordering::Relaxed);
             info!("[Saga Media] muted={muted} session=[{session_id}]");
+            return;
         }
+    }
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh_node_for(session_id) {
+        node.set_muted(session_id, muted);
+        info!("[Saga Mesh] muted={muted} id=[{session_id}]");
     }
 }
 
@@ -483,6 +511,10 @@ pub fn set_muted_all(muted: bool) {
             info!("[Saga Media] muted={muted} session=[{sid}]");
         }
     }
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = crate::mesh::global_node() {
+        node.set_muted_all(muted);
+    }
 }
 
 pub fn set_held(session_id: &str, held: bool) {
@@ -490,7 +522,13 @@ pub fn set_held(session_id: &str, held: bool) {
         if let Some(s) = map.get(session_id) {
             s.held.store(held, Ordering::Relaxed);
             info!("[Saga Media] held={held} session=[{session_id}]");
+            return;
         }
+    }
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = mesh_node_for(session_id) {
+        node.set_held(session_id, held);
+        info!("[Saga Mesh] held={held} id=[{session_id}]");
     }
 }
 
@@ -500,6 +538,11 @@ pub fn push_capture(session_id: &str, pcm: &[u8]) {
     }
     let Ok(map) = MEDIA.lock() else { return };
     let Some(s) = map.get(session_id) else {
+        drop(map);
+        #[cfg(feature = "mock-token")]
+        if let Some(node) = crate::mesh::global_node() {
+            node.push_capture(session_id, pcm);
+        }
         return;
     };
     if !s.send_armed.load(Ordering::Relaxed) {
@@ -529,6 +572,13 @@ pub fn pull_playback(session_id: &str, out: &mut [u8]) -> usize {
     }
     let Ok(map) = MEDIA.lock() else { return 0 };
     let Some(s) = map.get(session_id) else {
+        drop(map);
+        #[cfg(feature = "mock-token")]
+        if let Some(node) = crate::mesh::global_node() {
+            if let Some(n) = node.pull_playback(session_id, out) {
+                return n;
+            }
+        }
         return 0;
     };
     if s.held.load(Ordering::Relaxed) {
@@ -587,11 +637,19 @@ pub fn rekey_media(session_id: &str, output: &HandshakeOutput) -> i64 {
 
 /// True once a RoQ media session is running (replaces synthetic media probe).
 pub fn media_running(session_id: &str) -> bool {
-    MEDIA
+    if MEDIA
         .lock()
         .ok()
         .map(|m| m.contains_key(session_id))
         .unwrap_or(false)
+    {
+        return true;
+    }
+    #[cfg(feature = "mock-token")]
+    if let Some(node) = crate::mesh::global_node() {
+        return node.media_running(session_id);
+    }
+    false
 }
 
 #[allow(dead_code)]

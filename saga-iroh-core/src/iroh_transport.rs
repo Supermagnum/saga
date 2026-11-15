@@ -27,6 +27,8 @@ use saga_media::CallRole;
 use saga_session::HandshakeOutput;
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
+/// Mesh-join links: pairwise mesh links that must never ring Telecom (see `mesh`).
+pub const SAGA_MESH_JOIN_ALPN: &[u8] = b"saga/mesh-join/1";
 
 /// Per-attempt connect timeout (QUIC dial).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -34,7 +36,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Host public-relay soak: home relay ~3s, voice connect ~70ms once discovered.
 /// 18s leaves room for 2–3 slow attempts + addressing misses without a 40s hang.
 const CONNECT_BUDGET: Duration = Duration::from_secs(18);
-const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(12);
+pub(crate) const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(12);
 const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(1);
 const MAX_CONNECT_ATTEMPTS: u32 = 3;
 /// Addressing/discovery misses fail faster — no point burning the full budget.
@@ -207,17 +209,17 @@ pub fn set_force_binding_perturb(force: bool) {
 }
 
 #[cfg(feature = "mock-token")]
-fn force_handshake_fail() -> bool {
+pub(crate) fn force_handshake_fail() -> bool {
     FORCE_HANDSHAKE_FAIL.load(Ordering::SeqCst)
 }
 
 #[cfg(feature = "mock-token")]
-fn force_binding_perturb() -> bool {
+pub(crate) fn force_binding_perturb() -> bool {
     FORCE_BINDING_PERTURB.load(Ordering::SeqCst)
 }
 
 #[cfg(feature = "mock-token")]
-fn local_identity_label() -> String {
+pub(crate) fn local_identity_label() -> String {
     DEV_IDENTITY_LABEL
         .lock()
         .ok()
@@ -226,7 +228,7 @@ fn local_identity_label() -> String {
 }
 
 #[cfg(feature = "mock-token")]
-fn dev_secret_key(peer_label: &str) -> SecretKey {
+pub(crate) fn dev_secret_key(peer_label: &str) -> SecretKey {
     // Literal kept only in mock-token builds (CI release .so greps for this prefix).
     let material = format!("saga-dev-v1:{peer_label}");
     let hash = blake3::hash(material.as_bytes());
@@ -261,7 +263,13 @@ pub fn parse_peer_endpoint_id(peer_id: &str) -> Result<PublicKey, String> {
     }
 }
 
-fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
+/// Shared endpoint if already bound (never binds; safe to call from runtime tasks).
+#[cfg(feature = "mock-token")]
+pub(crate) fn shared_endpoint() -> Option<&'static Endpoint> {
+    SHARED_ENDPOINT.get().map(|h| &h.endpoint)
+}
+
+pub(crate) fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
     if let Some(holder) = SHARED_ENDPOINT.get() {
         return Ok(&holder.endpoint);
     }
@@ -275,10 +283,10 @@ fn bind_shared_endpoint() -> Result<&'static Endpoint, String> {
 }
 
 #[cfg(feature = "mock-token")]
-fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
+pub(crate) fn dev_label_for_endpoint(remote: &PublicKey) -> Option<String> {
     // Only encrypted Iroh peers. Never include cellular-only labels (thor
     // +15550100012) — those must not resolve to an Iroh identity.
-    for label in ["15550100010", "15550100011", "15550100020"] {
+    for label in ["15550100010", "15550100011", "15550100020", "15550100030"] {
         if dev_secret_key(label).public() == *remote {
             return Some(label.to_string());
         }
@@ -444,8 +452,11 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     RELAY_POLL.store(RelayPoll::Pending as u8, Ordering::SeqCst);
     // Do not pin third-party resolvers. On Android, route A/AAAA/TXT through
     // android.net.DnsResolver (Private DNS / VPN / Orbot). Elsewhere use iroh defaults.
-    let mut builder =
-        Endpoint::builder(presets::N0).alpns(vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()]);
+    let mut builder = Endpoint::builder(presets::N0).alpns(vec![
+        SAGA_VOICE_ALPN.to_vec(),
+        SAGA_MESH_JOIN_ALPN.to_vec(),
+        ROQ_ALPN.to_vec(),
+    ]);
     #[cfg(target_os = "android")]
     {
         builder = builder.dns_resolver(crate::android_dns::android_iroh_dns_resolver());
@@ -518,7 +529,31 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                                                     return;
                                                 }
                                             }
+                                            #[cfg(feature = "mock-token")]
+                                            {
+                                                // Mesh links register their own RoQ waiters.
+                                                if let Some(node) = crate::mesh::global_node() {
+                                                    if let Err(conn) = node.offer_roq(conn) {
+                                                        warn!(
+                                                            "unsolicited RoQ from {}",
+                                                            conn.remote_id()
+                                                        );
+                                                    }
+                                                    return;
+                                                }
+                                            }
                                             warn!("unsolicited RoQ from {remote}");
+                                        } else if conn.alpn() == SAGA_MESH_JOIN_ALPN {
+                                            // Mesh-join: never a Telecom ring / notifyIncomingCall.
+                                            #[cfg(feature = "mock-token")]
+                                            match crate::mesh::global_node() {
+                                                Some(node) => node.handle_inbound(conn).await,
+                                                None => {
+                                                    conn.close(0u32.into(), b"saga mesh unavailable")
+                                                }
+                                            }
+                                            #[cfg(not(feature = "mock-token"))]
+                                            conn.close(0u32.into(), b"saga mesh unavailable");
                                         } else {
                                             handle_inbound_connection(conn).await;
                                         }
@@ -545,7 +580,7 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
 /// Emulators often fail pkarr (`dns.iroh.link` timeouts). With a custom/local relay
 /// both peers already share, hinting that relay URL on `EndpointAddr` avoids
 /// `No addressing information available` connect flakes (RING first_missing=inbound_accepted).
-fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint) -> EndpointAddr {
+pub(crate) fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint) -> EndpointAddr {
     let addr = EndpointAddr::new(remote);
     if let Some(url) = relay_url_override() {
         match url.parse::<RelayUrl>() {
@@ -567,20 +602,16 @@ fn endpoint_addr_for_peer(remote: PublicKey, endpoint: &Endpoint) -> EndpointAdd
     addr
 }
 
-async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
-    let remote = parse_peer_endpoint_id(peer_id)?;
-    let endpoint = bind_shared_endpoint()?;
-    if tokio::time::timeout(RELAY_ONLINE_WAIT, endpoint.online())
-        .await
-        .is_err()
-    {
-        warn!(
-            "initiator relay online wait timed out before connect to [{peer_id}] — trying anyway"
-        );
-    } else {
-        info!("initiator relay online before connect to [{peer_id}]");
-    }
-
+/// QUIC dial with the shared retry / budget policy (1:1 voice and mesh links).
+///
+/// `addr_override` replaces the relay-hinted address (host tests, direct addresses).
+pub(crate) async fn dial_with_retry(
+    endpoint: &Endpoint,
+    remote: PublicKey,
+    peer_id: &str,
+    alpn: &[u8],
+    addr_override: Option<&EndpointAddr>,
+) -> Result<Connection, String> {
     let mut connection = None;
     let mut last_err = String::new();
     let deadline = tokio::time::Instant::now() + CONNECT_BUDGET;
@@ -592,13 +623,11 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             ));
         }
         // Refresh address each attempt so late pkarr/DNS publish can land.
-        let attempt_addr = endpoint_addr_for_peer(remote, endpoint);
-        match tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            endpoint.connect(attempt_addr, SAGA_VOICE_ALPN),
-        )
-        .await
-        {
+        let attempt_addr = match addr_override {
+            Some(a) => a.clone(),
+            None => endpoint_addr_for_peer(remote, endpoint),
+        };
+        match tokio::time::timeout(CONNECT_TIMEOUT, endpoint.connect(attempt_addr, alpn)).await {
             Ok(Ok(conn)) => {
                 connection = Some(conn);
                 break;
@@ -640,8 +669,25 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             }
         }
     }
-    let connection = connection
-        .ok_or_else(|| format!("NOT_REACHABLE: iroh connect failed after retries: {last_err}"))?;
+    connection
+        .ok_or_else(|| format!("NOT_REACHABLE: iroh connect failed after retries: {last_err}"))
+}
+
+async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
+    let remote = parse_peer_endpoint_id(peer_id)?;
+    let endpoint = bind_shared_endpoint()?;
+    if tokio::time::timeout(RELAY_ONLINE_WAIT, endpoint.online())
+        .await
+        .is_err()
+    {
+        warn!(
+            "initiator relay online wait timed out before connect to [{peer_id}] — trying anyway"
+        );
+    } else {
+        info!("initiator relay online before connect to [{peer_id}]");
+    }
+
+    let connection = dial_with_retry(endpoint, remote, peer_id, SAGA_VOICE_ALPN, None).await?;
 
     #[cfg(feature = "mock-token")]
     let (handshake, handshake_output, roq) = {
