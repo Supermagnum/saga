@@ -9,6 +9,7 @@ import android.telecom.PhoneAccountHandle
 import android.os.Bundle
 import android.util.Log
 import org.saga.audio.SagaCallMediaController
+import org.saga.call.GroupCallFeatures
 import org.saga.call.GroupCallState
 import org.saga.iroh.IrohDialManager
 import org.saga.iroh.IrohNodeId
@@ -75,12 +76,13 @@ class SagaConnectionService : ConnectionService() {
         connection.setInitializing()
         PendingDialLookup.markIrohDialConsumed()
         SagaIrohConnectionRegistry.put(connection)
-        if (groupLeg != null) {
+        if (groupLeg != null && GroupCallFeatures.ENABLED) {
             // Dual path: native mesh link, or one 1:1 native session under the group.
             GroupCallCoordinator.startOutgoingGroupLeg(
                 this, groupLeg, peerId, connection, lookupKey
             )
         } else {
+            // Release: never form an Iroh group (GroupCallFeatures.ENABLED == false).
             IrohDialManager.get(this).startOutgoing(peerId, connection, telecomCallKey, lookupKey)
         }
         return connection
@@ -130,7 +132,7 @@ class SagaConnectionService : ConnectionService() {
             groupId = groupId
         )
         SagaIrohConnectionRegistry.put(connection)
-        if (groupId != null) {
+        if (groupId != null && GroupCallFeatures.ENABLED) {
             val rosterFingerprint = extras
                 ?.getBundle(android.telecom.TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
                 ?.getString(SagaDialer.EXTRA_ROSTER_FINGERPRINT)
