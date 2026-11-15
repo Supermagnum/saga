@@ -16,6 +16,9 @@ env:
   CARGO_TERM_COLOR: always
   # Fail native builds hard; never ship StubIrohCallSession from CI.
   SAGA_REQUIRE_NATIVE: "1"
+  # audiopus_sys vendors Opus with an old cmake_minimum_required; modern
+  # CMake on GH runners needs this to configure (cold cache after lock changes).
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   rust:
