@@ -45,6 +45,10 @@ Group/mesh uses the same `OpusEncoder::new()` (encode once).
 | API 29 Case 7 re-run (warm relay) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=0.9915 | `/tmp/e2e-api29-privacy-case7.log` |
 | VPN WireGuard emulator test | **NOT VERIFIED** | No `sudo` / `wireguard-tools` on host; no WireGuard APK on AVDs. Extra latency not measured. |
 
+### CI
+
+PR #48 — rust + android checks **PASS** (after rustfmt fix on `cbr_packet_sizes`).
+
 ### Not verified / open
 
 - Emulator WireGuard VPN → public-relay call + pcap (no UDP/53 outside tunnel)
