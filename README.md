@@ -23,6 +23,50 @@ Implementation runs on Android emulators with contact-based dialing and encrypte
 
 See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
 
+Preview APKs (when published) are on the
+[GitHub Releases](https://github.com/Supermagnum/saga/releases) page. See
+[Verifying downloads](#verifying-downloads) before installing.
+
+## Verifying downloads
+
+Release APKs are signed with the maintainer key. Before installing a preview
+build from GitHub:
+
+1. Download the APK and the matching `SHA256SUMS` file from the same release.
+2. Check the file hash, for example:
+   `sha256sum -c SHA256SUMS` (or compare the APK line manually).
+3. Confirm the **signing certificate** SHA-256 matches the fingerprint below
+   (not only the APK file hash).
+
+**Signing certificate SHA-256** (hex, no colons):
+
+`7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a`
+
+Colon form (for some UIs):
+
+`7A:6A:21:8E:8A:49:7A:51:23:2C:A1:1C:9A:10:B3:62:76:9C:49:69:FA:7D:D2:6B:35:98:38:A0:8C:B7:DD:9A`
+
+### AppVerifier (recommended on GrapheneOS)
+
+[App Verifier](https://github.com/GrapheneOS/AppVerifier) (also available via
+the GrapheneOS App Store) checks an APK’s signing certificate against a known
+fingerprint.
+
+1. Install App Verifier from a trusted source (GrapheneOS App Store preferred).
+2. Open the downloaded Saga APK with App Verifier (or share the file into it).
+3. Compare the shown certificate SHA-256 to the fingerprint above.
+4. Only proceed with install if they match exactly.
+
+You can also check with Android build-tools:
+
+```bash
+apksigner verify --print-certs path/to/saga-….apk
+# Expect Signer #1 certificate SHA-256 digest:
+# 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
+```
+
+Unsigned build and signing steps for maintainers: [docs/release.md](docs/release.md).
+
 ### Screenshots (emulator)
 
 | | |

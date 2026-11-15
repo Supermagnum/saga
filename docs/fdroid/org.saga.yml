@@ -31,15 +31,15 @@ RepoType: git
 Repo: https://github.com/Supermagnum/saga.git
 
 # Prefer reproducible builds that keep the developer signature so GitHub and
-# F-Droid installs can update each other. Fill Binaries + AllowedAPKSigningKeys
-# after the maintainer signs the preview APK (see docs/release.md).
-# Binaries: https://github.com/Supermagnum/saga/releases/download/v0.1.0-preview.1/REPLACE_WITH_SIGNED_APK_NAME.apk
-# AllowedAPKSigningKeys: REPLACE_WITH_CERT_SHA256_HEX_NO_COLONS
+# F-Droid installs can update each other (see docs/release.md).
+# Primary GitHub asset for phones is arm64-v8a; universal includes x86_64 too.
+Binaries: https://github.com/Supermagnum/saga/releases/download/v0.1.0-preview.1/saga-0.1.0-preview.1-arm64-v8a.apk
+AllowedAPKSigningKeys: 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
 
 Builds:
   - versionName: 0.1.0-preview.1
     versionCode: 1
-    commit: REPLACE_WITH_RELEASE_TAG_OR_COMMIT
+    commit: v0.1.0-preview.1
     timeout: 14400
     subdir: android
     sudo:
