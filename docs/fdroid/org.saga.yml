@@ -1,0 +1,68 @@
+# Draft fdroiddata metadata for Saga.
+# Modelled on no.navi.app (fdroiddata MR !45644).
+# DO NOT open the fdroiddata MR from this tree — maintainer submits manually.
+#
+# applicationId is currently org.saga. Rename this file and ApplicationName
+# when the final ID is chosen (one-line Gradle follow-up).
+
+AntiFeatures:
+  NonFreeNet:
+    en-US: Default encrypted calls use n0 public relays and discovery
+      (*.relay.n0.iroh.link). Relay software is open source, but the default
+      operators are not run by Saga. A self-hosted relay URL setting is
+      planned; until then Private DNS (DoT) is recommended. ISP resolvers
+      such as Telenor Nettvern with Private DNS off can break relay TLS.
+
+Categories:
+  - Phone & SMS
+  - Security
+
+License: AGPL-3.0-or-later
+
+AuthorName: Saga contributors
+WebSite: https://github.com/Supermagnum/saga
+SourceCode: https://github.com/Supermagnum/saga
+IssueTracker: https://github.com/Supermagnum/saga/issues
+Changelog: https://github.com/Supermagnum/saga/releases
+
+AutoName: Saga
+
+RepoType: git
+Repo: https://github.com/Supermagnum/saga.git
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    commit: REPLACE_WITH_RELEASE_TAG_OR_COMMIT
+    timeout: 14400
+    subdir: android
+    sudo:
+      - apt-get update
+      - apt-get install -y --no-install-recommends build-essential curl ca-certificates
+        cmake python3 pkg-config libssl-dev rustup
+    gradle:
+      - yes
+    prebuild:
+      - rustup toolchain install 1.94.0 --profile minimal
+      - rustup default 1.94.0
+      - rustup target add aarch64-linux-android x86_64-linux-android
+      - cargo install cargo-ndk --locked --version 3.5.4
+      - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > local.properties
+      - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > ../local.properties
+    build:
+      - export ANDROID_NDK_HOME="$$NDK$$"
+      - export ANDROID_HOME="$$SDK$$"
+      - export ANDROID_NDK_ROOT="$$NDK$$"
+      - export SAGA_REQUIRE_NATIVE=1
+      - export CMAKE_POLICY_VERSION_MINIMUM=3.5
+      - export SOURCE_DATE_EPOCH="$$SOURCE_DATE_EPOCH$$"
+      - ./gradlew assembleRelease --no-daemon -Psaga.requireNative=true
+      - bash ../scripts/check-release-apk.sh
+        app/build/outputs/apk/release/app-release-unsigned.apk
+    ndk: r27c
+
+AutoUpdateMode: None
+UpdateCheckMode: Tags
+UpdateCheckData: android/app/build.gradle.kts|versionCode\\s*=\\s*(\\d+)|.|versionName\\s*=\\s*\"(.*)\"
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1
