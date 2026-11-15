@@ -3,8 +3,8 @@ NOTICE — third-party licences for Saga
 
 Saga itself is licensed under the GNU Affero General Public License v3.0
 or later (see LICENSE). This file lists third-party components distributed
-with or linked into the project. The in-app licences screen is deferred to
-Phase 6.
+with or linked into the project. The in-app Licences screen
+(`LicencesActivity`) surfaces the same summary plus the AGPL source offer.
 
 Galdralag-firmware crates (ephemeral-session, galdr-core, galdr-vault, cess,
 pin-policy, and their in-tree companions)
