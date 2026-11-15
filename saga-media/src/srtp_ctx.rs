@@ -65,3 +65,7 @@ pub const MEDIA_TAG_PLAIN: u8 = 2;
 /// Explicit "callee answered" control datagram (not RTP). Payload: [`ANSWERED_SIGNAL_PAYLOAD`].
 pub const MEDIA_TAG_ANSWERED: u8 = 3;
 pub const ANSWERED_SIGNAL_PAYLOAD: &[u8] = b"SAGAANS1";
+/// §16 voice-disguise peer chip (Saga call-setup / media control — not ephemeral-session).
+/// Payload: [`DISGUISE_SIGNAL_PREFIX`] + one byte (0 = off, 1 = on).
+pub const MEDIA_TAG_DISGUISE: u8 = 4;
+pub const DISGUISE_SIGNAL_PREFIX: &[u8] = b"SAGAVD01";
