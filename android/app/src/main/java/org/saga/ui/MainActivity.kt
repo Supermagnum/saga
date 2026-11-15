@@ -76,6 +76,9 @@ class MainActivity : AppCompatActivity() {
         binding.openVoiceDisguise.setOnClickListener {
             startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
         }
+        binding.openLicences.setOnClickListener {
+            startActivity(Intent(this, LicencesActivity::class.java))
+        }
         binding.phoneAccountBanner.setOnClickListener {
             startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
         }
@@ -162,11 +165,19 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
             }
             "org.saga.TEST_ANSWER_INCOMING" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_ANSWER_INCOMING refused — not a debuggable build")
+                    return
+                }
                 val lookupKey = intent.getStringExtra("lookup_key") ?: return
                 Log.i(TAG, "E2E answer incoming lookup=[$lookupKey]")
                 org.saga.iroh.IrohDialManager.get(this).onIncomingAnswered(lookupKey)
             }
             "org.saga.TEST_CONTACT_CALL" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_CONTACT_CALL refused — not a debuggable build")
+                    return
+                }
                 val name = intent.getStringExtra("contact_name") ?: return
                 val preferCellular = intent.getBooleanExtra("force_unencrypted", false)
                 selectedContactUri = null
@@ -233,6 +244,10 @@ class MainActivity : AppCompatActivity() {
             }
             "org.saga.TEST_FORCE_IROH_SIM_PATH" -> {
                 // DEBUG-ONLY: bypass enabled-account gate to measure SIM substitution / modem dial.
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_FORCE_IROH_SIM_PATH refused — not a debuggable build")
+                    return
+                }
                 val name = intent.getStringExtra("contact_name") ?: "bob"
                 val ssp = intent.getStringExtra("ssp")
                 val target = DialTargetResolver.fromInput(this, name, preferCellular = false)
@@ -250,15 +265,27 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             "org.saga.TEST_IROH_CALL" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_IROH_CALL refused — not a debuggable build")
+                    return
+                }
                 Log.e(TAG, "TEST_IROH_CALL rejected — use TEST_CONTACT_CALL with contact_name (bob/alice/thor)")
                 Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()
             }
             "org.saga.TEST_RELAY_QUERY" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_RELAY_QUERY refused — not a debuggable build")
+                    return
+                }
                 val ready = IrohRelayStatus.pollReady()
                 IrohRelayStatus.writeStatus(applicationContext, ready)
                 Log.i(TAG, "E2E relay query ready=[$ready]")
             }
             "org.saga.TEST_MIDCALL_REHANDSHAKE" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_MIDCALL_REHANDSHAKE refused — not a debuggable build")
+                    return
+                }
                 val lookupKey = intent.getStringExtra("lookup_key")
                     ?: intent.getStringExtra("peer_id")
                     ?: return
@@ -281,16 +308,28 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "TEST_PEER_DISGUISE session=[$session] active=$active")
             }
             "org.saga.TEST_PCM_INJECT" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_INJECT refused — not a debuggable build")
+                    return
+                }
                 val path = intent.getStringExtra("path")
                 org.saga.audio.SagaPcmDebug.setInjectWav(path)
                 Log.i(TAG, "TEST_PCM_INJECT path=[$path]")
             }
             "org.saga.TEST_PCM_DUMP" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_DUMP refused — not a debuggable build")
+                    return
+                }
                 val path = intent.getStringExtra("path")
                 org.saga.audio.SagaPcmDebug.setDumpPath(path)
                 Log.i(TAG, "TEST_PCM_DUMP path=[$path]")
             }
             "org.saga.TEST_PCM_DUMP_FINISH" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_PCM_DUMP_FINISH refused — not a debuggable build")
+                    return
+                }
                 org.saga.audio.SagaPcmDebug.finishDump()
                 Log.i(TAG, "TEST_PCM_DUMP_FINISH")
             }

@@ -1,6 +1,7 @@
 package org.saga
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import org.saga.audio.SagaPcmDebugReceiver
 import org.saga.contacts.TestContactSeeder
@@ -22,8 +23,12 @@ class SagaApplication : Application() {
         SagaPhoneAccountRegistrar.register(this)
         SagaPhoneAccountRegistrar.ensureEnabled(this)
         IrohIncomingCallBridge.init(this)
-        IrohRelayStatus.registerQueryReceiver(this)
-        SagaPcmDebugReceiver.register(this)
+        // Debug-only test hooks (relay status file, PCM inject/echo/rx-fault).
+        // Release stubs no-op; skip registration when not debuggable.
+        if (isDebuggable()) {
+            IrohRelayStatus.registerQueryReceiver(this)
+            SagaPcmDebugReceiver.register(this)
+        }
         // Load native first (JNI_OnLoad caches AndroidDnsBridge), then install
         // the Kotlin bridge + ndk_context before any endpoint bind.
         // DNS goes through android.net.DnsResolver (Private DNS / VPN / Orbot).
@@ -60,4 +65,7 @@ class SagaApplication : Application() {
             IrohNativeBridge.setDevIdentity(identityLabel)
         }
     }
+
+    private fun isDebuggable(): Boolean =
+        (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 }

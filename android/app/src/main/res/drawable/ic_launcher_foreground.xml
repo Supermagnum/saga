@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original Saga launcher mark (outside icons/). Teal S + closed padlock. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylized S (two thick arcs). -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M70,34c0,-8 -8,-14 -22,-14c-16,0 -24,8 -24,18c0,9 6,13 18,16l10,2.5c8,2 12,5 12,11c0,8 -7,13 -18,13c-13,0 -21,-6 -22,-16h10c1,5 6,8 12,8c7,0 10,-3 10,-7c0,-4 -3,-6 -12,-8.5L34,54.5C22,51.5 16,45 16,36C16,22 28,12 48,12c18,0 30,9 30,22H70z" />
+    <!-- Closed padlock (seafoam) nestled in lower S curve. -->
+    <path
+        android:fillColor="#FF7FDBDA"
+        android:pathData="M58,62h-4v-4c0,-4 3,-7 7,-7s7,3 7,7v4h-4v-4c0,-1.7 -1.3,-3 -3,-3s-3,1.3 -3,3v4z" />
+    <path
+        android:fillColor="#FF7FDBDA"
+        android:pathData="M52,62h18v14c0,2 -1.5,3.5 -3.5,3.5h-11C53.5,79.5 52,78 52,76V62z" />
+    <path
+        android:fillColor="#FF0B4F6C"
+        android:pathData="M59.5,68.5h3v5h-3z" />
+</vector>

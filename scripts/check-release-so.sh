@@ -51,6 +51,11 @@ check_absent "fake_hal"
 # Debug-only media helpers (Phase 2 close-out).
 check_absent "saga-echo-mode"
 check_absent "saga-rx-fault"
+# Debug PCM / E2E markers must not appear in release .so (Part 5).
+check_absent "LATENCY_MARKER"
+check_absent "TEST_PCM"
+check_absent "TEST_ECHO"
+check_absent "TEST_RX_FAULT"
 
 # Production Nitrokey backend must be present in release (Part 4).
 if so_contains "saga-nitrokey-session-token-v1"; then
