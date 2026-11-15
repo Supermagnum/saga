@@ -81,8 +81,10 @@ android {
         applicationId = "org.saga"
         minSdk = 29
         targetSdk = 35
+        // Monotonic integer (Part 5 / F-Droid UpdateCheckData). Bump on every
+        // published APK; keep in sync with docs/fdroid/org.saga.yml.
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0-preview.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters.clear()
@@ -139,6 +141,12 @@ tasks.register<Exec>("cargoNdkBuild") {
     val requireNative = sagaRequireNative()
     isIgnoreExitValue = !requireNative
     doFirst {
+        // Drop stale ABI dirs so leftover .so files are not packaged into the APK.
+        if (sagaIrohNdkLibs.isDirectory) {
+            sagaIrohNdkLibs.listFiles()?.forEach { child ->
+                if (child.isDirectory) child.deleteRecursively()
+            }
+        }
         logger.lifecycle("cargo-ndk profile=[$profile] abis=${abis.joinToString(",")}")
     }
     doLast {
