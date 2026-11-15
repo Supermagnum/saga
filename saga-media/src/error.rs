@@ -15,6 +15,9 @@ pub enum MediaError {
     NoSilentDowngrade,
     #[error("media wire mode mismatch (plain vs SRTP)")]
     WrongMediaMode,
+    /// Mesh call already holds the maximum number of participants.
+    #[error("mesh call is full (max {max} participants)")]
+    MeshFull { max: usize },
     #[error("media failed: {0}")]
     Failed(String),
     #[error(transparent)]

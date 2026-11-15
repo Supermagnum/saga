@@ -23,7 +23,7 @@ use crate::srtp_ctx::{
 use saga_session::HandshakeOutput;
 
 /// Extra bytes for RoQ flow-id varint (usually 1).
-const FLOW_ID_MARGIN: usize = 8;
+pub(crate) const FLOW_ID_MARGIN: usize = 8;
 
 enum Wire {
     Srtp {
