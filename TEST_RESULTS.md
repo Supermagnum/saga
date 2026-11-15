@@ -1,9 +1,10 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (Privacy docs + Opus CBR)
+**Last updated:** 2026-11-15 (VPN wording + Case 2 flake issue)
 
-**Status:** `privacy-docs-cbr` — issue #40 Part A (docs, CBR, Settings link).
-Do not merge until CI green; Part B (preview APK) waits on this merge.
+**Status:** Part A (`privacy-docs-cbr` / PR #48) **merged** to main.
+Part B (preview APK) not started. Open flake: [#49](https://github.com/Supermagnum/saga/issues/49)
+(API 29 Case 2/2b relay warm-up).
 
 ---
 
@@ -41,9 +42,9 @@ Group/mesh uses the same `OpusEncoder::new()` (encode once).
 | API 35 Step5 (`5554`/`5556`) Cases 1–10 + 4b + C1–C5 + onboarding | **PASS** (C1/C2 NEEDS_HARDWARE); conference `pass=17 fail=0 needs_hardware=2` | `/tmp/e2e-step5-privacy-api35.log` |
 | API 35 Case 7 alice↔bob (CBR) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=**0.9915** | same log |
 | API 35 group G1–G11 (`SAGA_RUN_GROUP=1`) | G1/G2/G6/G7/G9-mute/G10 PASS; known mesh PENDING/FAIL (pairwise scaffold) | same log; summary `pass=77 fail=5 pending_mesh=7` |
-| API 29 Step5 Alice35→Bob29 (`5554`/`5560`) | Cases 3–6 + 4b + 8–10 + C3–C5 + onboarding **PASS**; Case 2/2b early **RELAY:FAIL** (bob warm-up after long suite); Case 7 first pass SI-SNR alice→bob 9.5 (flake) | `/tmp/e2e-step5-privacy-api29.log` |
+| API 29 Step5 Alice35→Bob29 (`5554`/`5560`) | Cases 3–6 + 4b + 8–10 + C3–C5 + onboarding **PASS**; Case 2/2b early **RELAY:FAIL** (bob warm-up after long suite); Case 7 first pass SI-SNR alice→bob 9.5 (flake) | `/tmp/e2e-step5-privacy-api29.log` — tracked as [#49](https://github.com/Supermagnum/saga/issues/49) |
 | API 29 Case 7 re-run (warm relay) | **PASS** both dirs corr=0.957 SI-SNR=10.3 STOI=0.9915 | `/tmp/e2e-api29-privacy-case7.log` |
-| VPN WireGuard emulator test | **NOT VERIFIED** | No `sudo` / `wireguard-tools` on host; no WireGuard APK on AVDs. Extra latency not measured. |
+| VPN WireGuard emulator test | **NOT VERIFIED** (README recommendation marked not yet verified with a VPN) | No `sudo` / `wireguard-tools` on host; no WireGuard APK on AVDs. Extra latency not measured. |
 
 ### CI
 
@@ -53,7 +54,8 @@ PR #48 — rust + android checks **PASS** (after rustfmt fix on `cbr_packet_size
 
 - Emulator WireGuard VPN → public-relay call + pcap (no UDP/53 outside tunnel)
 - Physical phones
-- Part B preview APK (blocked until this PR merges)
+- Part B preview APK (not started; waits on group-call decision + #49 awareness)
+- [#49](https://github.com/Supermagnum/saga/issues/49) — API 29 Case 2/2b relay warm-up flake (`native=0` after 120s; can affect a real first call before home relay is up)
 
 ---
 
@@ -271,19 +273,25 @@ Implements issue #30 / saga-spec §14.2 (decisions §14.2.1).
 ### Emulator G suite (local, 3 AVDs + optional saga-peer)
 
 Alice `emulator-5554`, Bob `emulator-5556`, Charlene `emulator-5558` (Saga_PA_Test AVD,
-identity `15550100030`). Logs: `/tmp/saga-group-e2e2.log`, screencaps under
-`docs/screenshots/group-mesh/` (inspected).
+identity `15550100030`). **Authoritative re-run:** 2026-11-15 privacy Step5 with
+`SAGA_RUN_GROUP=1` — `/tmp/e2e-step5-privacy-api35.log`, artifacts
+`/tmp/saga-group-e2e/`, summary `pass=77 fail=5 pending_mesh=7`. Earlier partial
+logs: `/tmp/saga-group-e2e2.log`. Screencaps under `docs/screenshots/group-mesh/`
+and `/tmp/saga-group-e2e/screencaps/`.
 
 | Case | Result | Notes |
 |------|--------|-------|
-| G1 Alice→Bob 1:1 | **PASS*** | Handshake ~1.0s Encrypted both; UI Encrypted on alice. *Harness false-fail fixed; re-run pending with step5. |
-| G2 Alice adds Charlene | **PASS** | Alice Encrypted to bob+charlene; group UI per-participant padlocks. Bob↔Charlene **PENDING_MESH** (pairwise adder-only). |
-| G3 Bob↔Charlene direct | **PENDING_MESH** | Covered by host_mesh 3-peer; Android pairwise scaffold does not dial B↔C. |
-| G4 introduced-by | Partial / not re-run this pass | Harness + UI strings present |
-| G5 wrong key / confirm-to-admit | Partial / not re-run this pass | |
-| G6 4 participants | **PASS** (via G7 setup) | Alice UI shows bob, charlene, laptop Encrypted (`g7-full-alice.png`) |
-| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS`; existing links untouched |
-| G8–G11 | Not fully re-run after NPE fix | Earlier blocked by ConcurrentHashMap null crash |
+| G1 Alice→Bob 1:1 | **PASS** | Handshake ~1.0s Encrypted both; no group markers |
+| G2 Alice adds Charlene | **PASS** + **PENDING_MESH** | Alice Encrypted to bob+charlene; B↔C absent (pairwise adder-only) |
+| G3 Bob↔Charlene direct | **PENDING_MESH** | mesh JNI not shipped on Android; host_mesh covers model |
+| G4 introduced-by / roster FP | **PENDING_MESH** | Bob learns Charlene only via mesh roster; G4b FP check mesh-only |
+| G5 wrong key / confirm-to-admit | **FAIL** | Wrong key still Encrypted on alice; G5b first=PLACED second=REFUSED_DUPLICATE (`g5-*.logcat`) — **app** |
+| G6 4 participants | **PASS** + **PENDING_MESH** | Alice 3 Encrypted links; full 6-link mesh needs NATIVE_MESH + mesh-capable peer |
+| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS`; host_mesh also PASS |
+| G8 leave continues | **FAIL** / **PENDING_MESH** | G8a: no `remaining=1` after bob left (`g8a-*.logcat`) — **app**; G8b B+C continue needs mesh |
+| G9 mute / hold | **PASS** mute / **FAIL** hold | Mute engines=2; hold got `held=true` but no `held=false` after resume (`g9-alice.logcat`) — **app** (harness message counts duplicate lines) |
+| G10 group + carrier | **PASS** | Carrier held group; no Merge |
+| G11 callee adds laptop | **FAIL** + **PENDING_MESH** | Charlene→laptop PLACED but not Encrypted (`g11-*.logcat`); A/B auto-link needs mesh — **app** |
 
 ### Screenshots inspected
 

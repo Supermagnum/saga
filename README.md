@@ -83,9 +83,10 @@ support only when such a device exists; no work until then.
 ### Recommended mitigation: a privacy-focused VPN
 
 Until a suitable low-latency Rust crate for IP/metadata protection exists, use a
-**system-wide VPN** from a privacy-focused provider. Turn on Android **Always-on
-VPN** and **Block connections without VPN** so Saga never dials outside the
-tunnel if the VPN drops. Saga respects the phone's VPN and Private DNS settings.
+**system-wide VPN** from a privacy-focused provider (**not yet verified with a
+VPN**). Turn on Android **Always-on VPN** and **Block connections without VPN**
+so Saga never dials outside the tunnel if the VPN drops. Saga respects the
+phone's VPN and Private DNS settings.
 
 **What a VPN changes:** the person you call, the relay operator, and your ISP see
 the VPN exit address instead of yours.
