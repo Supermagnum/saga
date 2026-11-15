@@ -27,8 +27,12 @@ Implements issue #29 Step 1 / saga-spec §17. **No messaging code.**
 
 | Gate | Result | Log |
 |------|--------|-----|
-| Step 5 Cases 1–10 + 4b + C3–C5 + onboarding / INBOUND_REJECT (API 35) | *(pending run)* | `/tmp/e2e-step5-messaging-eval.log` |
-| One API 29 Encrypted smoke | *(pending run)* | `/tmp/e2e-api29-messaging-eval.log` |
+| Step 5 Cases 1–10 + 4b | **PASS** | `/tmp/e2e-step5-messaging-eval.log` |
+| Step 5 C3–C5 | **PASS** (C1–C2 NEEDS_HARDWARE as usual) | same |
+| Onboarding INBOUND_REJECT | **PASS** | same |
+| Onboarding Case B Settings UI | **FAIL** env (Settings dump coords; same class of flake as Part 2) | same |
+| API 29 Alice(API35)→Bob(API29) Encrypted | **PASS** | `/tmp/e2e-api29-messaging-eval.log` |
+| CI rust + android | **PASS** | https://github.com/Supermagnum/saga/actions/runs/43682225552 |
 
 ### Not verified / needs real hardware
 
