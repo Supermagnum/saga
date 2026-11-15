@@ -195,13 +195,13 @@
             android:text="@string/add_call"
             android:visibility="gone" />
 
+        <!-- Label set only in debug GroupCallInCallUi; release never shows this. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_add_participant"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginEnd="8dp"
-            android:text="@string/add_participant"
             android:visibility="gone" />
 
         <com.google.android.material.button.MaterialButton

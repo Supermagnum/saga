@@ -1,10 +1,70 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (VPN wording + Case 2 flake issue)
+**Last updated:** 2026-11-15 (release compile-out of Iroh group calls)
 
-**Status:** Part A (`privacy-docs-cbr` / PR #48) **merged** to main.
-Part B (preview APK) not started. Open flake: [#49](https://github.com/Supermagnum/saga/issues/49)
+**Status:** Iroh group calls compiled out of **release** (debug keeps them).
+Part 1 (multi-peer) is **INCOMPLETE** — see G1–G11 table below and issue
+[#30](https://github.com/Supermagnum/saga/issues/30). Part B (preview APK)
+waits for this PR to merge; preview notes will state group calls are not
+included. Open flake: [#49](https://github.com/Supermagnum/saga/issues/49)
 (API 29 Case 2/2b relay warm-up).
+
+---
+
+## 2026-11-15 — Release compile-out of Iroh group calls
+
+Branch: `fix/release-compile-out-group-calls` (from main after #50).
+
+### Why
+
+G4/G5 failures mean a group call could show Encrypted without every
+participant's key verified. Release must never show that misleading padlock.
+User decision: neither (a) full fixes nor (b) experimental toggle for preview —
+compile the surface out of release instead. Carrier conference (Phase 4) stays.
+
+### What landed
+
+| Item | Release | Debug |
+|------|---------|-------|
+| Add participant UI / strings | Absent (debug source-set) | Present |
+| `GroupCallCoordinator` / Iroh `Conference` | No-op stubs | Full |
+| Native mesh (`saga/mesh-join/1`, roster) | Not linked (`mock-token` off) | Present |
+| Carrier conference (C1–C5) | Unchanged | Unchanged |
+
+Hygiene: `check-release-apk.sh` forbids `Add participant` / `Add to call` in
+resources; `check-release-so.sh` forbids `saga/mesh-join/1` and
+`saga-mesh-roster-v1`.
+
+### Verification
+
+| Gate | Result | Log / artifact |
+|------|--------|----------------|
+| `verifyReleaseApkHygiene` | **PASS** | includes group-call string + mesh markers |
+| Release InCall UI dump | **PASS** — no Add participant; `btn_add_participant` not in hierarchy | `/tmp/saga-release-incall.xml`, `/tmp/saga-release-incall.png` |
+| API 35 Step5 Cases 1–10 + 4b + C3–C5 + onboarding | **PASS** (C1/C2 NEEDS_HARDWARE); conference `pass=17 fail=0 needs_hardware=2` | `/tmp/e2e-step5-group-compileout-api35.log` |
+| G-suite | **Not required** this PR (group is debug-only) | — |
+
+### Part 1 (multi-peer) — **INCOMPLETE**
+
+Authoritative G suite: 2026-11-15 privacy Step5 (`SAGA_RUN_GROUP=1`),
+`/tmp/e2e-step5-privacy-api35.log`, summary `pass=77 fail=5 pending_mesh=7`.
+
+| Case | Result | Notes |
+|------|--------|-------|
+| G1 Alice→Bob 1:1 | **PASS** | Handshake ~1.0s Encrypted both; no group markers |
+| G2 Alice adds Charlene | **PASS** + **PENDING_MESH** | Alice Encrypted to bob+charlene; B↔C absent (pairwise adder-only) |
+| G3 Bob↔Charlene direct | **PENDING_MESH** | mesh JNI not shipped on Android; host_mesh covers model |
+| G4 introduced-by / roster FP | **PENDING** | Bob learns Charlene only via mesh roster; G4b FP check mesh-only |
+| G5 wrong key / confirm-to-admit | **FAIL** | Wrong key still Encrypted on alice; G5b first=PLACED second=REFUSED_DUPLICATE — **app** |
+| G6 4 participants | **PASS** + **PENDING_MESH** | Alice 3 Encrypted links; full 6-link mesh needs NATIVE_MESH |
+| G7 5th refused | **PASS** | `REFUSED_MAX_PARTICIPANTS` |
+| G8 leave continues | **FAIL** | G8a: no `remaining=1` after bob left — **app**; G8b needs mesh |
+| G9 mute / hold | **PASS** mute / **FAIL** hold | hold got `held=true` but no `held=false` after resume — **app** |
+| G10 group + carrier | **PASS** | Carrier held group; no Merge |
+| G11 callee adds laptop | **FAIL** | Charlene→laptop PLACED but not Encrypted; A/B auto-link needs mesh — **app** |
+
+Remaining work (est. 1–2+ weeks): true mesh links, roster verification, trust UI,
+leave/hold-resume, G5 wrong-key marking. Tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
 
 ---
 
@@ -256,10 +316,12 @@ each before accepting.
 
 ---
 
-## 2026-11-15 — Part 1 multi-peer encrypted calls (`feat/multi-peer-calls`)
+## 2026-11-15 — Part 1 multi-peer encrypted calls (`feat/multi-peer-calls`) — **INCOMPLETE**
 
 Branch: `feat/multi-peer-calls` (from main after #42 dns-api29 + #39 relay Option A).
 Implements issue #30 / saga-spec §14.2 (decisions §14.2.1).
+**Status:** INCOMPLETE — see G1–G11 table (privacy Step5) and release compile-out
+section above. Group calls remain debug-only until mesh/trust work lands.
 
 ### Host CI (in-process mesh)
 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only: Iroh group-call UI strings. Absent from release (hygiene). -->
+<resources>
+    <string name="add_participant">Add participant</string>
+    <string name="add_participant_pick_title">Add to call</string>
+    <string name="add_participant_other">Other contact or peer ID</string>
+    <string name="add_participant_other_hint">Contact name or peer ID</string>
+    <string name="add_participant_only_saga">Only Saga contacts can join a group call</string>
+    <string name="add_participant_no_iroh_call">Adding people needs an active Saga call</string>
+    <string name="add_participant_carrier_refused">Carrier calls cannot be added to a Saga group call</string>
+    <string name="add_participant_already_fmt">%1$s is already in this call</string>
+    <string name="add_participant_failed">Could not add participant</string>
+    <string name="add_participant_ok">Add</string>
+    <string name="introduced_by_fmt">%1$s, introduced by %2$s</string>
+    <string name="group_max_title">Call is full</string>
+    <string name="group_max_participants">A group call can have at most %1$d people, including you. Remove someone before adding another.</string>
+    <string name="confirm_add_unencrypted_title">Add without encryption?</string>
+    <string name="confirm_add_unencrypted_message">%1$s has no verified Saga key, so this link cannot be encrypted. If you add them they are marked Not encrypted for everyone on your screen, and this call will not show as Encrypted.</string>
+    <string name="confirm_add_unencrypted_positive">Add without encryption</string>
+    <string name="confirm_unencrypted_link_title">Link is not encrypted</string>
+    <string name="confirm_unencrypted_link_message">The link to %1$s is not encrypted. Their audio stays off until you allow it. While they are in the call, this call will not show as Encrypted.</string>
+    <string name="confirm_unencrypted_link_positive">Allow without encryption</string>
+    <string name="participant_key_unverified">key not verified</string>
+    <string name="participant_key_mismatch">A participant key did not match; that link was closed</string>
+    <string name="participant_not_reachable_fmt">%1$s is not reachable</string>
+    <string name="participant_awaiting_confirmation">waiting for confirmation</string>
+</resources>

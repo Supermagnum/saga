@@ -71,6 +71,21 @@ else
   fail=1
 fi
 
+# Iroh group-call UI strings are debug source-set only (not in release resources).
+# Carrier conference (Phase 4) may still say "Conference:" — that is fine.
+check_apk_string_absent() {
+  local needle="$1"
+  if unzip -p "$APK" resources.arsc 2>/dev/null | strings | grep -F -- "$needle" >/dev/null; then
+    echo "FAIL: release APK resources contain forbidden string: $needle"
+    fail=1
+  else
+    echo "OK: resources absent [$needle]"
+  fi
+}
+check_apk_string_absent "Add participant"
+check_apk_string_absent "Add to call"
+check_apk_string_absent "Only Saga contacts can join a group call"
+
 SO_OUT="$TMP/libsaga_iroh_core.so"
 if unzip -p "$APK" 'lib/arm64-v8a/libsaga_iroh_core.so' >"$SO_OUT" 2>/dev/null; then
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

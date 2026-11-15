@@ -212,7 +212,7 @@ class MainActivity : AppCompatActivity() {
                     ?: DialTargetResolver.fromInput(this, name, preferCellular = false)
                 if (target !is DialTarget.Iroh) {
                     Log.e(TAG, "TEST_ADD_PARTICIPANT requires an Iroh contact, got [$target]")
-                    Toast.makeText(this, R.string.add_participant_only_saga, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Iroh contact required", Toast.LENGTH_SHORT).show()
                     return
                 }
                 val outcome = org.saga.telecom.GroupCallCoordinator.requestAdd(
@@ -227,14 +227,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 Log.i(TAG, "E2E add participant name=[$name] outcome=[$outcome]")
                 if (outcome == org.saga.telecom.GroupCallCoordinator.AddOutcome.REFUSED_MAX_PARTICIPANTS) {
-                    Toast.makeText(
-                        this,
-                        getString(
-                            R.string.group_max_participants,
-                            org.saga.call.GroupCallState.MAX_PARTICIPANTS
-                        ),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this, "Call is full", Toast.LENGTH_LONG).show()
                 }
             }
             "org.saga.TEST_GROUP_HANGUP_PARTICIPANT" -> {
