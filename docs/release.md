@@ -88,6 +88,16 @@ sha256sum out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk \
           out/saga-0.1.0-preview.1-universal-unsigned.apk
 ```
 
+Local Part B double-build result (`SOURCE_DATE_EPOCH=1731628800`, same
+host toolchain):
+
+| APK | Size | SHA-256 |
+|-----|------|---------|
+| `out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk` | ~22 MiB | `fa95997609e2d03db0ad6a84f15aca1777da0941691b4a31b5916e055f80ee50` |
+| `out/saga-0.1.0-preview.1-universal-unsigned.apk` | ~34 MiB | `03da7ff4cb54a62135790eac78f644a51272534e753442f5dd910d9001b43b44` |
+
+Both variants matched across two clean `assembleRelease` + zipalign runs.
+
 ## Signing (maintainer only — local keystore)
 
 Do **not** commit the keystore or share it with CI. Example with Android
