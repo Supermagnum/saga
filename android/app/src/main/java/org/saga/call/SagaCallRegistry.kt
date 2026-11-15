@@ -23,6 +23,8 @@ object SagaCallRegistry {
     }
 
     fun updateSnapshot(telecomCallId: String, snapshot: CallSecuritySnapshot) {
+        // Group legs: mirror into the group model so every row has its own padlock.
+        GroupCallRegistry.onLegSnapshot(telecomCallId, snapshot)
         calls[telecomCallId]?.let { existing ->
             calls[telecomCallId] = existing.copy(snapshot = snapshot)
         }
@@ -71,6 +73,10 @@ object SagaCallRegistry {
     }
 
     fun displayNameFromCall(call: Call): String {
+        // Group Conference parent: label built from the participants.
+        call.details.extras?.getString(SagaDialer.EXTRA_GROUP_LABEL)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
         val intentExtras = call.details.intentExtras
         val outgoing = intentExtras?.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS)
         outgoing?.getString(SagaDialer.EXTRA_CONTACT_NAME)?.takeIf { it.isNotBlank() }?.let { return it }
@@ -81,6 +87,10 @@ object SagaCallRegistry {
     }
 
     fun telecomCallId(call: Call): String {
+        // Group legs and the group Conference carry an explicit unique key (see SagaIrohConnection).
+        call.details.extras?.getString(SagaDialer.EXTRA_TELECOM_CALL_KEY)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
         if (originForTelecomCall(call) == CallOrigin.IROH) {
             val peer = peerIdFromCall(call)
             return normalizeIrohTelecomCallId(peer)
