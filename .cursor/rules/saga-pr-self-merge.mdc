@@ -1,0 +1,29 @@
+---
+description: Self-merge Saga PRs when gates pass; never squash; crypto exception
+alwaysApply: true
+---
+
+# Saga PR self-merge policy
+
+Agents working on Saga **self-merge** their PRs when **all** of the following
+hold:
+
+1. CI is green on the PR.
+2. Full regression suite passes (API 35 Cases 1–10 + 4b + C3–C5 +
+   onboarding/INBOUND_REJECT + RING regression; plus one API 29 run).
+3. Release hygiene checks pass when they apply to the change.
+
+**Merge method:** prefer **Rebase and merge**, or a merge commit. **Never
+squash.** Delete the branch after merge.
+
+**Do not self-merge** (stop and tell the user) if the PR changes any of:
+
+- Cryptography or key handling
+- Handshake / confirmation
+- Trust / verification UI
+- Release signing
+
+If any gate is red, fix before merging. Never merge red.
+
+After each multi-part sequence item is self-merged, **STOP and report** —
+do not start the next part until the user says to continue.
