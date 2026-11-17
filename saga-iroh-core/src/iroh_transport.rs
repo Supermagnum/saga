@@ -38,7 +38,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Host public-relay soak: home relay ~3s, voice connect ~70ms once discovered.
 /// 18s leaves room for 2–3 slow attempts + addressing misses without a 40s hang.
 const CONNECT_BUDGET: Duration = Duration::from_secs(18);
-pub(crate) const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(12);
+/// Bound for waiting on home-relay connect before the first QUIC dial.
+/// Kept ≤ ~Telecom INITIALIZING watchdog (~10s) so a cold wait does not
+/// look like a stuck Connection. App start already binds the endpoint; this
+/// covers the first-dial race. One post-fail settle+retry (below) catches
+/// the case where a second tap would have succeeded (issue #49).
+/// InCall stays on Connecting… — not a security cue.
+pub(crate) const RELAY_ONLINE_WAIT: Duration = Duration::from_secs(8);
+/// Extra settle after a failed first dial before one automatic retry.
+const RELAY_RETRY_SETTLE: Duration = Duration::from_secs(6);
 const CONNECT_RETRY_SLEEP: Duration = Duration::from_secs(1);
 const MAX_CONNECT_ATTEMPTS: u32 = 3;
 /// Addressing/discovery misses fail faster — no point burning the full budget.
@@ -49,6 +57,53 @@ fn is_addressing_error(err: &str) -> bool {
     lower.contains("no addressing information")
         || lower.contains("addressing information available")
         || lower.contains("failed to resolve")
+}
+
+fn is_transient_first_connect_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    is_addressing_error(err)
+        || lower.contains("relay")
+        || lower.contains("connect budget")
+        || lower.contains("timed out")
+        || lower.contains("not_reachable")
+}
+
+/// Wait until home relay is connected (live sample), up to `RELAY_ONLINE_WAIT`.
+///
+/// Prefer a live `home_relay_status` sample over trusting a one-shot `online()`
+/// completion alone — the endpoint can drop the relay after the first Ready.
+async fn ensure_relay_before_dial(endpoint: &Endpoint, peer_id: &str) -> bool {
+    if sample_relay_connected(endpoint) {
+        info!("initiator relay already connected before connect to [{peer_id}]");
+        return true;
+    }
+    match tokio::time::timeout(RELAY_ONLINE_WAIT, endpoint.online()).await {
+        Ok(()) => {
+            if sample_relay_connected(endpoint) {
+                info!("initiator relay online before connect to [{peer_id}]");
+                true
+            } else {
+                warn!(
+                    "initiator online() resolved but home relay not connected before connect to [{peer_id}]"
+                );
+                false
+            }
+        }
+        Err(_) => {
+            if sample_relay_connected(endpoint) {
+                info!(
+                    "initiator relay connected (live sample after wait) before connect to [{peer_id}]"
+                );
+                true
+            } else {
+                warn!(
+                    "initiator relay not ready after {}s before connect to [{peer_id}] — dialling with available hints",
+                    RELAY_ONLINE_WAIT.as_secs()
+                );
+                false
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,7 +187,7 @@ pub fn set_relay_url(url: &str) {
 }
 
 /// True when at least one home relay is currently connected (live sample, not latched).
-fn sample_relay_connected(endpoint: &Endpoint) -> bool {
+pub(crate) fn sample_relay_connected(endpoint: &Endpoint) -> bool {
     let mut watcher = endpoint.home_relay_status();
     watcher.get().into_iter().any(|s| s.is_connected())
 }
@@ -688,18 +743,32 @@ pub(crate) async fn dial_with_retry(
 async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
     let remote = parse_peer_endpoint_id(peer_id)?;
     let endpoint = bind_shared_endpoint()?;
-    if tokio::time::timeout(RELAY_ONLINE_WAIT, endpoint.online())
-        .await
-        .is_err()
-    {
-        warn!(
-            "initiator relay online wait timed out before connect to [{peer_id}] — trying anyway"
-        );
-    } else {
-        info!("initiator relay online before connect to [{peer_id}]");
-    }
-
-    let connection = dial_with_retry(endpoint, remote, peer_id, SAGA_VOICE_ALPN, None).await?;
+    // Wait for home relay before the first QUIC dial (Connecting…). Only retry
+    // once when that warm-up did not succeed — avoids a second dial after the
+    // peer already accepted the first attempt (issue #49).
+    let relay_ready = ensure_relay_before_dial(endpoint, peer_id).await;
+    let connection = match dial_with_retry(endpoint, remote, peer_id, SAGA_VOICE_ALPN, None).await {
+        Ok(conn) => conn,
+        Err(first_err) if !relay_ready && is_transient_first_connect_error(&first_err) => {
+            warn!(
+                "first connect to [{peer_id}] failed before relay was ready: {first_err} — one retry after settle"
+            );
+            let _ = tokio::time::timeout(RELAY_RETRY_SETTLE, endpoint.online()).await;
+            if sample_relay_connected(endpoint) {
+                info!("initiator relay connected before connect retry to [{peer_id}]");
+            } else {
+                warn!("initiator relay still not connected before connect retry to [{peer_id}]");
+            }
+            dial_with_retry(endpoint, remote, peer_id, SAGA_VOICE_ALPN, None)
+                .await
+                .map_err(|retry_err| {
+                    format!(
+                        "NOT_REACHABLE: retry after relay settle failed: {retry_err} (first: {first_err})"
+                    )
+                })?
+        }
+        Err(e) => return Err(e),
+    };
 
     #[cfg(feature = "mock-token")]
     let (handshake, handshake_output, roq) = {

@@ -759,6 +759,23 @@ SIP signaling path.
 `iroh-relay`. Rationale and full comparison:
 [`docs/design/relay-options.md`](docs/design/relay-options.md).
 
+#### 14.4.2 First encrypted call / home-relay warm-up (issue #49)
+
+Encrypted dials must not fail solely because the home relay was still
+coming up on a cold process start when a second attempt would succeed.
+
+- App start binds the shared Iroh endpoint (and warms platform DNS for
+  public N0). InCall may show **Connecting…** while waiting — that is
+  reachability, not a security cue (§5 / §13 padlock rules unchanged).
+- Before the first QUIC dial, wait for a **live** home-relay connected
+  sample (bounded, under the Telecom INITIALIZING watchdog). Do not treat
+  a timed-out wait as silent “try discovery only.”
+- If the first dial still fails for a transient relay/addressing reason,
+  settle briefly and **retry once** inside the same call-setup window.
+- Padlock / “Encrypted” still only after key verification; warm-up
+  failures surface as Not reachable / Not encrypted, never a false
+  Encrypted state.
+
 Reasons: no Saga-operated infrastructure; open-source relay software; public
 N0 reachability passes host soaks and emulator soaks when Android Private DNS
 (DoT) is used with the platform resolver (no in-app pinned resolvers).

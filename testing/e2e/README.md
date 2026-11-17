@@ -61,7 +61,8 @@ The harness **does not** use logcat markers for relay synchronization.
 
 Poll interval: **3s**, ceiling: **120s** (`RELAY_POLL_MAX_SECS`). Handshake completion uses similar polling (`wait_for_handshake_log`), not fixed sleeps.
 
-Optional stopgap: `SAGA_RELAY_RETRY_ON_FAIL=1` — one warm restart after native timeout (default **off** when using local relay).
+Default: `SAGA_RELAY_RETRY_ON_FAIL=1` — one warm restart after native timeout
+(helps API 29 suite-start stalls, issue #49). Set `=0` to disable.
 
 Shared helpers: [`e2e-common.sh`](e2e-common.sh) (sourced by full suite, standalone, probe, diagnostics).
 
@@ -125,7 +126,7 @@ Environment variables:
 | `SAGA_IROH_RELAY_LAN_IP` | (auto) | Override LAN IP used by `lan-relay-url.sh` / `saga-peer relay-host` |
 | `RELAY_POLL_MAX_SECS` | `120` | Native relay wait ceiling |
 | `RELAY_POLL_INTERVAL_SECS` | `3` | Poll interval |
-| `SAGA_RELAY_RETRY_ON_FAIL` | `0` | One warm restart on relay timeout |
+| `SAGA_RELAY_RETRY_ON_FAIL` | `1` | One warm restart on relay timeout (issue #49); set `0` to disable |
 
 ## What it tests
 

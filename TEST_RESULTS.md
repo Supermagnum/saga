@@ -1,13 +1,63 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-15 (release compile-out of Iroh group calls)
+**Last updated:** 2026-11-17 (issue #49 API 29 Case 2 relay warm-up)
 
-**Status:** Iroh group calls compiled out of **release** (debug keeps them).
-Part 1 (multi-peer) is **INCOMPLETE** — see G1–G11 table below and issue
-[#30](https://github.com/Supermagnum/saga/issues/30). Part B (preview APK)
-waits for this PR to merge; preview notes will state group calls are not
-included. Open flake: [#49](https://github.com/Supermagnum/saga/issues/49)
-(API 29 Case 2/2b relay warm-up).
+**Status:** [#49](https://github.com/Supermagnum/saga/issues/49) fixed on
+`fix/api29-case2-relay-warmup` (app wait + one connect retry; harness
+one warm restart default). Iroh group calls remain compile-out of release;
+Part 1 multi-peer still **INCOMPLETE** ([#30](https://github.com/Supermagnum/saga/issues/30)).
+
+---
+
+## 2026-11-17 — API 29 Case 2 relay warm-up (#49)
+
+Branch: `fix/api29-case2-relay-warmup` (from main).
+
+### App vs harness
+
+**Primarily app.** A cold encrypted dial can start while home relay is still
+pending (`initiator … trying anyway` previously). Harness multi-AVD
+`native=0` after 120s exaggerates load; standalone clean boot usually PASSes.
+API 29 Android-resolver DNS (explicit `Network`, no process bind) adds only
+small pkarr lookup cost (~hundreds of ms); dominant warm-up is relay
+handshake (~7s on API 29 local relay).
+
+### Fix
+
+| Area | Change |
+|------|--------|
+| `iroh_transport.rs` | Wait for **live** home-relay sample before first QUIC dial; one settle+retry on transient first-connect failure; drop silent “trying anyway” |
+| `mesh.rs` | Same warm-up policy for mesh link dials |
+| `e2e-common.sh` | Default `SAGA_RELAY_RETRY_ON_FAIL=1` (one process recycle after native timeout) |
+| `saga-spec.md` | §14.4.2 first-call / home-relay warm-up |
+
+### Verification (emulators only)
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 29 cold Case 2 ×20 (Alice API35 `5554` → Bob API29 `5560`), pre-fix baseline | **20/20 PASS** (bob relay ~7.1s) | `/tmp/case2-cold-api29.log` |
+| API 29 cold Case 2 ×20 under 3-AVD load (pre-fix) | **10/10 PASS** | `/tmp/case2-cold-api29-stressed.log` |
+| API 29 cold Case 2 ×20 post-fix (final APK) | **20/20 PASS** | `/tmp/case2-api29-final.log` |
+| Dial-before-relay probe ×10 (alice native=0 at dial) | **10/10 PASS** (12s online wait covers) | `/tmp/case2-dial-before-relay.log` |
+| API 35 Case 2 ×20 cold soak | **Incomplete / not 20/20** — RING/telecom flake (`onCallAdded_RINGING` / stuck calls under AVD churn), **not** `native=0` relay warm-up | `/tmp/case2-api35-final2.log` (partial) |
+| API 35 Step5 Cases 1–10 + 4b + C3–C5 | **PASS** (Case2/2b + handshake ~1.0s; Case7 corr=0.957) | `/tmp/e2e-step5-api35-issue49.log` |
+| API 35 onboarding | **PASS** (CASEB after Settings enable; INBOUND_REJECT path exercised) | `/tmp/e2e-onboarding-api35-issue49.log` |
+| RING regression Cases 4b/6/10 ×20 | **20/20 PASS** each | `/tmp/ring-api35-final.log` |
+| API 29 Step5 once (Alice35→Bob29) | Cases 1–10 + 4b + C3–C5 **PASS** (Case2/2b PASS; Case7 corr≥0.953); onboarding skipped (no 5558) | `/tmp/e2e-step5-api29-issue49.log` |
+
+### Answers (#49)
+
+1. **Can a real user’s first call after app start hit this?** Yes — if they
+   dial before home relay is connected (worse on public N0 / slow paths).
+2. **Call before relay ready / discovery published?** Harness waits for
+   relay before dial. App could dial with initiator `native=0`; local-relay
+   `EndpointAddr` hint means pkarr discovery is not required for connect.
+3. **API 29 DNS path add start-up delay?** Minor vs relay handshake.
+
+### Not verified / needs real hardware
+
+- Physical phones
+- Public N0 first-call cold dial under constrained radio
 
 ---
 
@@ -115,7 +165,7 @@ PR #48 — rust + android checks **PASS** (after rustfmt fix on `cbr_packet_size
 - Emulator WireGuard VPN → public-relay call + pcap (no UDP/53 outside tunnel)
 - Physical phones
 - Part B preview APK (not started; waits on group-call decision + #49 awareness)
-- [#49](https://github.com/Supermagnum/saga/issues/49) — API 29 Case 2/2b relay warm-up flake (`native=0` after 120s; can affect a real first call before home relay is up)
+- [#49](https://github.com/Supermagnum/saga/issues/49) — API 29 Case 2/2b relay warm-up — **fixed** on `fix/api29-case2-relay-warmup` (see 2026-11-17 section)
 
 ---
 
