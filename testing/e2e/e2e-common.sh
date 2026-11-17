@@ -9,7 +9,10 @@ HANDSHAKE_POLL_MAX_SECS="${HANDSHAKE_POLL_MAX_SECS:-120}"
 SAGA_IROH_RELAY_MODE="${SAGA_IROH_RELAY_MODE:-local}"
 # Prefer LAN IP shared by host saga-peer + emulators (no 127.0.0.1 / 10.0.2.2 ads).
 SAGA_IROH_RELAY_URL="${SAGA_IROH_RELAY_URL:-}"
-SAGA_RELAY_RETRY_ON_FAIL="${SAGA_RELAY_RETRY_ON_FAIL:-0}"
+# One warm restart after native relay timeout. Default on for local relay so
+# suite-start API 29 multi-AVD stalls (issue #49) do not fail Case 2 when a
+# single process recycle would bring home relay up. Override with =0 to disable.
+SAGA_RELAY_RETRY_ON_FAIL="${SAGA_RELAY_RETRY_ON_FAIL:-1}"
 
 resolve_lan_relay_url() {
   local e2e_dir="${E2E_DIR:-$(dirname "${BASH_SOURCE[0]}")}"
@@ -237,15 +240,24 @@ start_listener() {
 
 ensure_callee_listening() {
   local serial="$1"
-  if saga_process_running "$serial" && check_log "$serial" "$LISTEN_MARKER"; then
-    return 0
-  fi
+  # Prefer live native relay-ready over logcat listen markers. Logcat can lose
+  # the bind line under long suites while the process is still accepting
+  # (issue #49); force-stopping a healthy callee then flakes Case 2.
   if saga_process_running "$serial"; then
+    if [[ "$(query_relay_ready_native "$serial")" == "$RELAY_READY_NATIVE" ]]; then
+      return 0
+    fi
+    if check_log "$serial" "$LISTEN_MARKER"; then
+      return 0
+    fi
     adb -s "$serial" shell am force-stop org.saga
     sleep 1
   fi
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
+  if poll_for_relay_native "$serial" "listen-native" "$LISTEN_POLL_MAX_SECS"; then
+    return 0
+  fi
   if poll_for_log_marker "$serial" "$LISTEN_MARKER" "listen" "$LISTEN_POLL_MAX_SECS"; then
     return 0
   fi

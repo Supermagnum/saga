@@ -42,8 +42,8 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 use crate::iroh_transport::{
     dev_label_for_endpoint, dev_secret_key, dial_with_retry, endpoint_addr_for_peer,
-    force_binding_perturb, force_handshake_fail, parse_peer_endpoint_id, RELAY_ONLINE_WAIT,
-    SAGA_MESH_JOIN_ALPN,
+    force_binding_perturb, force_handshake_fail, parse_peer_endpoint_id, sample_relay_connected,
+    RELAY_ONLINE_WAIT, SAGA_MESH_JOIN_ALPN,
 };
 
 /// Link state values reported through `notifyMeshPeerState` (match Kotlin).
@@ -687,12 +687,21 @@ impl MeshNode {
             .lock()
             .ok()
             .and_then(|b| b.get(&remote).cloned());
-        if self.wait_online
-            && tokio::time::timeout(RELAY_ONLINE_WAIT, self.endpoint.online())
+        if self.wait_online {
+            // Same warm-up policy as 1:1 connect_async (issue #49).
+            if sample_relay_connected(&self.endpoint) {
+                info!("[Saga Mesh] relay already connected before dialing [{peer_label}]");
+            } else if tokio::time::timeout(RELAY_ONLINE_WAIT, self.endpoint.online())
                 .await
-                .is_err()
-        {
-            warn!("[Saga Mesh] relay online wait timed out before dialing [{peer_label}]");
+                .is_ok()
+                && sample_relay_connected(&self.endpoint)
+            {
+                info!("[Saga Mesh] relay online before dialing [{peer_label}]");
+            } else {
+                warn!(
+                    "[Saga Mesh] relay online wait timed out before dialing [{peer_label}] — dialling with available hints"
+                );
+            }
         }
         let conn = dial_with_retry(
             &self.endpoint,
