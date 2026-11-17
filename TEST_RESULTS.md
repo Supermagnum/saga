@@ -39,11 +39,13 @@ handshake (~7s on API 29 local relay).
 | API 29 cold Case 2 ×20 under 3-AVD load (pre-fix) | **10/10 PASS** | `/tmp/case2-cold-api29-stressed.log` |
 | API 29 cold Case 2 ×20 post-fix (final APK) | **20/20 PASS** | `/tmp/case2-api29-final.log` |
 | Dial-before-relay probe ×10 (alice native=0 at dial) | **10/10 PASS** (12s online wait covers) | `/tmp/case2-dial-before-relay.log` |
-| API 35 Case 2 ×20 cold soak | **Incomplete / not 20/20** — RING/telecom flake (`onCallAdded_RINGING` / stuck calls under AVD churn), **not** `native=0` relay warm-up | `/tmp/case2-api35-final2.log` (partial) |
-| API 35 Step5 Cases 1–10 + 4b + C3–C5 | **PASS** (Case2/2b + handshake ~1.0s; Case7 corr=0.957) | `/tmp/e2e-step5-api35-issue49.log` |
-| API 35 onboarding | **PASS** (CASEB after Settings enable; INBOUND_REJECT path exercised) | `/tmp/e2e-onboarding-api35-issue49.log` |
-| RING regression Cases 4b/6/10 ×20 | **20/20 PASS** each | `/tmp/ring-api35-final.log` |
-| API 29 Step5 once (Alice35→Bob29) | Cases 1–10 + 4b + C3–C5 **PASS** (Case2/2b PASS; Case7 corr≥0.953); onboarding skipped (no 5558) | `/tmp/e2e-step5-api29-issue49.log` |
+| API 35 Case 2 ×20 cold soak (solo, no parallel harness) | **20/20 PASS** | `/tmp/case2-api35-solo.log` |
+| API 35 Step5 Cases 1–10 + 4b + C3–C5 | **PASS** conference `pass=17 fail=0 needs_hardware=2`; Case2/2b handshake ~1.0s | `/tmp/e2e-step5-api35-issue49.log` |
+| API 35 onboarding + INBOUND_REJECT (`5558`/`5556`) | **PASS** (CASEB Settings enable; INBOUND_REJECT) | `/tmp/e2e-onboarding-api35-issue49.log` |
+| RING regression Cases 4b/6/10 ×20 (sole owner) | **20/20 PASS** each | `/tmp/ring-regress-api35-sole.log` |
+| API 29 Step5 once (Alice35 `5554` → Bob29 `5560`) | Cases 1–10 + 4b + C3–C5 **PASS** (`pass=17 fail=0`); Case7 corr=0.957 SI-SNR=10.3 | `/tmp/e2e-step5-api29-issue49-r2.log` |
+| API 29 onboarding (`SERIAL_PA=5554` / peer `5560`) | BLOCK/ONBOARD/INBOUND_REJECT **PASS**; CASEB Settings UI soft-fail (uiautomator dump) | `/tmp/e2e-onboarding-api29-issue49.log` |
+| Release hygiene (`assembleRelease` + `verifyReleaseApkHygiene` + `check-release-so`) | **PASS** | `/tmp/hygiene-apk-issue49.log`, `/tmp/hygiene-so-issue49.log` |
 
 ### Answers (#49)
 
