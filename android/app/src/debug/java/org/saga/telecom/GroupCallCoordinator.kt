@@ -698,7 +698,8 @@ object GroupCallCoordinator {
             return
         }
         val manager = IrohDialManager.get(ctx)
-        if (manager.sessionIdForCall(meshLeg) == null) {
+        // Exact key only — sessionIdForCall aliases must not skip mesh register while a 1:1 lives.
+        if (!manager.hasSession(meshLeg)) {
             manager.registerMeshLink(meshGid, peerId, meshLeg, meshLeg, lookupKey)
         }
         // Also mirror into the UI group so findLeg(keyCheck) can resolve either id.
@@ -753,7 +754,8 @@ object GroupCallCoordinator {
         linkId: String
     ) {
         val manager = IrohDialManager.get(ctx)
-        if (manager.sessionIdForCall(linkId) != null) return
+        // Exact key only (see hasSession / findTelecomCallKey notes for mesh vs 1:1).
+        if (manager.hasSession(linkId)) return
         val fromGroup = GroupCallRegistry.get(groupId)?.participantForLeg(linkId)
         val lookup = fromGroup?.lookupKey
             ?: linkId.substringAfterLast('/').takeIf { it.isNotBlank() && it != linkId }
