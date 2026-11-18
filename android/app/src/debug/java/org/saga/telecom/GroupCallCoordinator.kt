@@ -114,7 +114,13 @@ object GroupCallCoordinator {
                 // DialManager may still hold the pairwise session if Telecom Connection was
                 // dropped from the registry (InCall buried / answer race). Refuse only when
                 // there is no live dial session either.
-                if (IrohDialManager.get(app).soleLiveCallKey() == null) {
+                val dial = IrohDialManager.get(app)
+                if (dial.soleLiveCallKey() == null) {
+                    Log.e(
+                        TAG,
+                        "REFUSED_NO_IROH_CALL connections=0 sessions=${dial.sessionCount()} " +
+                            "groupCurrent=[${GroupCallRegistry.current()?.groupId}]"
+                    )
                     return AddOutcome.REFUSED_NO_IROH_CALL
                 }
                 Log.w(TAG, "requestAdd: Connection registry empty; promoting via dial session")

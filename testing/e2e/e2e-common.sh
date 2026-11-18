@@ -601,10 +601,10 @@ add_participant() {
   local nonce
   nonce="$(date +%s%N 2>/dev/null || echo "$RANDOM")"
   ADD_PARTICIPANT_LAST_NONCE="$nonce"
-  # Do not redirect am stderr: harness needs to see start failures.
-  # Bring MainActivity forward explicitly so SINGLE_TOP onNewIntent receives extras
-  # (confirm_unencrypted) even when SagaInCallActivity is currently focused.
-  adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
+  # Deliver onto SagaInCallActivity (singleTask) so the live Iroh Connection /
+  # DialManager session stays in the same foreground task. Starting MainActivity
+  # buried InCall and produced REFUSED_NO_IROH_CALL with an empty registry.
+  adb -s "$serial" shell am start -n org.saga/.ui.SagaInCallActivity \
     -a org.saga.TEST_ADD_PARTICIPANT \
     --es add_contact "$contact" \
     --es contact_name "$contact" \

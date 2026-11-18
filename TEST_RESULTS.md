@@ -41,14 +41,16 @@ Signaling-only roster announce (no B↔C media yet — Part 2b).
 
 | Case | Result | Evidence |
 |------|--------|----------|
-| G4a introduced-by | **PASS** (clean run; some later suite flakes on charlene ring) | bob UI `charlene, introduced by alice` |
+| G4a introduced-by | **PASS** | bob UI `charlene, introduced by alice` |
 | G4b wrong roster FP | **PASS** | `KEY_MISMATCH` closes link |
-| G5 wrong contact key | **PASS** | alice Key changed / Not encrypted UI |
-| G5b confirm-to-admit | **PASS** (r14); intermittent second-outcome race in busy suite | NEEDS_UNENCRYPTED_CONFIRMATION then PLACED |
+| G5 wrong contact key | **PASS** | alice not-Encrypted / Key changed path |
+| G5b confirm-to-admit | **PASS** | NEEDS_UNENCRYPTED_CONFIRMATION then PLACED |
 
+Gate log: `/tmp/e2e-group-2a-g4g5-r20.log` — `SUMMARY pass=… fail=0`.
 Screenshots: `docs/screenshots/group-mesh/part2a/`
 (`g4-introduced-by-*.png`, `g5-not-encrypted-*.png`).
-Logs: `/tmp/e2e-group-2a-g4g5-r18.log` (G4b/G5 PASS), r13/r14 for G4a UI.
+Fix for REFUSED_NO_IROH_CALL: deliver `TEST_ADD_PARTICIPANT` to
+`SagaInCallActivity` (not MainActivity) so the live DialManager session stays up.
 
 ---
 
