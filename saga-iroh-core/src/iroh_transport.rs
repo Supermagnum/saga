@@ -1014,28 +1014,23 @@ pub fn ensure_roster_listener(session_id: &str) {
         };
         let sid = session_id.to_string();
         runtime().spawn(async move {
-            loop {
-                match conn.accept_bi().await {
-                    Ok((_send, mut recv)) => match read_roster(&mut recv, &hs).await {
-                        Ok(roster) => {
-                            if let Some((lookup, endpoint, fp, intro)) =
-                                decode_introduction(&roster)
-                            {
-                                info!(
-                                    "[Saga Roster] introduction received session=[{sid}] peer=[{lookup}] by=[{intro}]"
-                                );
-                                crate::bridge_notify_roster_introduction(
-                                    "", &lookup, &endpoint, &fp, &intro,
-                                );
-                            } else {
-                                warn!(
-                                    "[Saga Roster] decode_introduction returned none session=[{sid}]"
-                                );
-                            }
+            while let Ok((_send, mut recv)) = conn.accept_bi().await {
+                match read_roster(&mut recv, &hs).await {
+                    Ok(roster) => {
+                        if let Some((lookup, endpoint, fp, intro)) = decode_introduction(&roster) {
+                            info!(
+                                "[Saga Roster] introduction received session=[{sid}] peer=[{lookup}] by=[{intro}]"
+                            );
+                            crate::bridge_notify_roster_introduction(
+                                "", &lookup, &endpoint, &fp, &intro,
+                            );
+                        } else {
+                            warn!(
+                                "[Saga Roster] decode_introduction returned none session=[{sid}]"
+                            );
                         }
-                        Err(e) => warn!("[Saga Roster] read failed session=[{sid}]: {e}"),
-                    },
-                    Err(_) => break,
+                    }
+                    Err(e) => warn!("[Saga Roster] read failed session=[{sid}]: {e}"),
                 }
             }
             if let Ok(mut started) = ROSTER_LISTENERS.lock() {
