@@ -238,6 +238,39 @@ start_listener() {
   sleep 3
 }
 
+# After force-stop / Telecom drain, am start can race the dying process. Poll and
+# re-launch until pidof succeeds (or attempts exhausted).
+ensure_saga_process_up() {
+  local serial="$1" label="${2:-saga}" attempts="${3:-5}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if saga_process_running "$serial"; then
+      return 0
+    fi
+    record "PROCESS:INFO $label [$serial] not running — start attempt $i/$attempts"
+    start_listener "$serial"
+  done
+  if saga_process_running "$serial"; then
+    return 0
+  fi
+  record "PROCESS:FAIL $label [$serial] Saga still not running after $attempts starts"
+  return 1
+}
+
+# Re-assert PhoneAccount enabled after process recycle. Application.onCreate
+# re-registers the account; dumpsys briefly shows [ ] then [X], and placeCall
+# during that window yields IROH_ABORT_OUTGOING_FAILED (Telecom rejected).
+reenable_saga_phone_account() {
+  local serial="$1"
+  adb -s "$serial" shell cmd telecom set-phone-account-enabled \
+    org.saga/org.saga.telecom.SagaConnectionService saga_iroh 0 >/dev/null 2>&1 || true
+  sleep 0.5
+  if phone_account_enabled "$serial"; then
+    return 0
+  fi
+  enable_saga_phone_account "$serial" || true
+}
+
 ensure_callee_listening() {
   local serial="$1"
   # Prefer live native relay-ready over logcat listen markers. Logcat can lose
@@ -255,6 +288,8 @@ ensure_callee_listening() {
   fi
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
+  ensure_saga_process_up "$serial" "callee-listen" 4 || return 1
+  reenable_saga_phone_account "$serial"
   if poll_for_relay_native "$serial" "listen-native" "$LISTEN_POLL_MAX_SECS"; then
     return 0
   fi
@@ -268,9 +303,13 @@ ensure_callee_listening() {
 warm_encrypted_caller() {
   local serial="$1"
   adb -s "$serial" shell am force-stop org.saga
-  sleep 1
+  # Extra settle: force-stop is async; immediate am start flakes as "Saga not running"
+  # after ghost-drain re-warm (Case 2b/3 under multi-AVD load).
+  sleep 2
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
+  ensure_saga_process_up "$serial" "caller-warm" 5 || return 1
+  reenable_saga_phone_account "$serial"
   wait_for_relay_online "$serial" "caller"
 }
 
@@ -304,21 +343,31 @@ contact_call() {
         record "TELECOM:FAIL caller [$caller] ghost call after warm — abort dial"
         return 1
       }
+      # Drain can leave Saga dead (ENDCALL / cleanup races under multi-AVD load).
+      ensure_saga_process_up "$caller" "caller-post-drain" 3 || true
       warm_encrypted_caller "$caller" || return 1
       if ! telecom_no_live_calls "$caller"; then
         ensure_telecom_idle "$caller" "caller-rewarm" 20 || {
           record "TELECOM:FAIL caller [$caller] ghost persists after re-warm — abort dial"
           return 1
         }
+        ensure_saga_process_up "$caller" "caller-post-rewarm-drain" 3 || return 1
+        reenable_saga_phone_account "$caller"
+        wait_for_relay_online "$caller" "caller" || return 1
       fi
     fi
     adb -s "$caller" logcat -c
   else
     adb -s "$caller" logcat -c
     adb -s "$caller" shell am force-stop org.saga
-    sleep 1
+    sleep 2
     clear_stuck_telephony_calls "$caller"
     ensure_telecom_idle "$caller" "caller-post-stop" 15 || true
+    # Cellular Case 1/2c: bring process + PA up before TEST_CONTACT_CALL so the
+    # cue path is not lost to a cold-start race / disabled PhoneAccount flash.
+    start_listener "$caller"
+    ensure_saga_process_up "$caller" "caller-cellular" 4 || return 1
+    reenable_saga_phone_account "$caller"
   fi
   # Re-check callee relay immediately before dial: warm_encrypted_caller takes several
   # seconds during which the callee can lose its home relay (RELAY_POLL used to latch
@@ -334,6 +383,12 @@ contact_call() {
     fi
     # Fresh callee logcat so RING checkpoints cannot match a prior call in this process.
     adb -s "$callee" logcat -c 2>/dev/null || true
+  fi
+  # Final guard: never dial with a dead caller (ghost re-warm flake → empty cue / ABORT).
+  if ! saga_process_running "$caller"; then
+    record "PROCESS:FAIL caller [$caller] not running immediately before dial"
+    ensure_saga_process_up "$caller" "caller-pre-dial" 3 || return 1
+    reenable_saga_phone_account "$caller"
   fi
   adb -s "$caller" shell am start -n org.saga/.ui.MainActivity \
     -a org.saga.TEST_CONTACT_CALL --es contact_name "$contact_name"
