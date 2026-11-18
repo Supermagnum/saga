@@ -533,10 +533,7 @@ async fn handle_inbound_connection(conn: Connection) {
 fn watch_remote_close(session_id: String, conn: Connection) {
     runtime().spawn(async move {
         let err = conn.closed().await;
-        let removed = SESSIONS
-            .lock()
-            .ok()
-            .and_then(|mut m| m.remove(&session_id));
+        let removed = SESSIONS.lock().ok().and_then(|mut m| m.remove(&session_id));
         let Some(session) = removed else {
             // Local disconnect already cleaned up.
             return;
@@ -549,9 +546,7 @@ fn watch_remote_close(session_id: String, conn: Connection) {
         if let Ok(mut started) = ROSTER_LISTENERS.lock() {
             started.remove(&session_id);
         }
-        info!(
-            "[Saga Iroh] remote close session=[{session_id}] err={err:?} — notifying peer left"
-        );
+        info!("[Saga Iroh] remote close session=[{session_id}] err={err:?} — notifying peer left");
         crate::bridge_notify_session_closed(&session_id, "remote disconnect");
     });
 }
