@@ -51,6 +51,9 @@ object GroupCallCoordinator {
     /** A leg whose Connection never shows up (placeCall rejected) is rolled back after this. */
     private const val LEG_CREATE_TIMEOUT_MS = 20_000L
 
+    /** Retry roster announce once if a peer session was not Encrypted yet (G3 Bob↔Charlene). */
+    private const val ANNOUNCE_RETRY_MS = 1_500L
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** Handshake settle runs on Dispatchers.Default — Toast requires the main looper. */
@@ -425,8 +428,16 @@ object GroupCallCoordinator {
     /**
      * Tell other pairwise legs about a newly verified participant (G4a "introduced by") and
      * announce existing confirmed peers to the joiner so both sides can open mesh-join (G3).
+     *
+     * Announces that hit a peer session still mid-handshake return false; one delayed retry
+     * covers the Bob-not-yet-Encrypted race that otherwise leaves Charlene waiting forever.
      */
-    private fun maybeAnnounceIntroduction(ctx: Context, groupId: String, newLeg: MeshParticipant) {
+    private fun maybeAnnounceIntroduction(
+        ctx: Context,
+        groupId: String,
+        newLeg: MeshParticipant,
+        isRetry: Boolean = false
+    ) {
         val group = GroupCallRegistry.get(groupId) ?: return
         val confirmed = group.participantForLeg(newLeg.telecomCallKey)?.takeIf { it.keyCheck.confirmed }
             ?: return
@@ -436,11 +447,21 @@ object GroupCallCoordinator {
             ?: newSessionId?.let { IrohNativeBridge.sessionPeerFingerprint(it) }
             ?: return
         val introducerLabel = localPeerLabel(ctx)
+        var failures = 0
         // Existing peers learn about the joiner (Bob learns Charlene).
         for (peer in group.participants) {
             if (peer.telecomCallKey == confirmed.telecomCallKey) continue
-            val sessionId = manager.sessionIdForCall(peer.telecomCallKey) ?: continue
-            IrohNativeBridge.announceIntroducedPeer(
+            val sessionId = manager.sessionIdForCall(peer.telecomCallKey)
+            if (sessionId == null) {
+                Log.w(
+                    TAG,
+                    "announce skip — no session for peer=[${peer.lookupKey}] " +
+                        "(joiner=[${confirmed.lookupKey}])"
+                )
+                failures++
+                continue
+            }
+            val ok = IrohNativeBridge.announceIntroducedPeer(
                 sessionId,
                 groupId,
                 confirmed.lookupKey,
@@ -448,6 +469,14 @@ object GroupCallCoordinator {
                 fp,
                 introducerLabel
             )
+            if (!ok) {
+                failures++
+                Log.w(
+                    TAG,
+                    "announce joiner failed peerSession=[$sessionId] " +
+                        "joiner=[${confirmed.lookupKey}] to=[${peer.lookupKey}]"
+                )
+            }
         }
         // Joiner learns about each existing confirmed peer (Charlene learns Bob).
         if (newSessionId != null) {
@@ -459,7 +488,7 @@ object GroupCallCoordinator {
                         IrohNativeBridge.sessionPeerFingerprint(it)
                     }
                     ?: continue
-                IrohNativeBridge.announceIntroducedPeer(
+                val ok = IrohNativeBridge.announceIntroducedPeer(
                     newSessionId,
                     groupId,
                     peer.lookupKey,
@@ -467,7 +496,26 @@ object GroupCallCoordinator {
                     peerFp,
                     introducerLabel
                 )
+                if (!ok) {
+                    failures++
+                    Log.w(
+                        TAG,
+                        "announce existing peer failed joinerSession=[$newSessionId] " +
+                            "peer=[${peer.lookupKey}]"
+                    )
+                }
             }
+        } else {
+            Log.w(TAG, "announce reverse skipped — no session for joiner=[${confirmed.lookupKey}]")
+            failures++
+        }
+        if (failures > 0 && !isRetry) {
+            val legKey = confirmed.telecomCallKey
+            Log.i(TAG, "announce retry scheduled failures=$failures leg=[$legKey]")
+            mainHandler.postDelayed({
+                val latest = GroupCallRegistry.get(groupId)?.participantForLeg(legKey) ?: return@postDelayed
+                maybeAnnounceIntroduction(ctx, groupId, latest, isRetry = true)
+            }, ANNOUNCE_RETRY_MS)
         }
     }
 

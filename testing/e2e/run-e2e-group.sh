@@ -429,11 +429,29 @@ setup_group4() {
   if [[ "$STATE" == "group4" ]]; then return 0; fi
   setup_group3 || return 1
   start_peer "laptop-join" || return 1
+  # Keep InCall + dial sessions alive after G2/G3 probes; REFUSED_NO_IROH_CALL means the
+  # adder lost its live Iroh leg (process restart / concurrent harness contention).
+  keep_incall_front "$SERIAL_A"
+  keep_incall_front "$SERIAL_B"
+  keep_incall_front "$SERIAL_C"
+  sleep 1
   add_participant "$SERIAL_A" "laptop"
   sleep 2
   local outcome
   outcome="$(add_participant_outcome "$SERIAL_A" "laptop")"
-  if [[ "$outcome" != "PLACED" ]]; then
+  if [[ "$outcome" == "REFUSED_NO_IROH_CALL" ]]; then
+    record "SETUP:INFO add laptop REFUSED_NO_IROH_CALL — rebuilding group3 then retry"
+    stop_peer 2>/dev/null || true
+    STATE="none"
+    setup_group3 || return 1
+    start_peer "laptop-join" || return 1
+    keep_incall_front "$SERIAL_A"
+    sleep 1
+    add_participant "$SERIAL_A" "laptop"
+    sleep 2
+    outcome="$(add_participant_outcome "$SERIAL_A" "laptop")"
+  fi
+  if [[ "$outcome" != "PLACED" && "$outcome" != "REFUSED_DUPLICATE" ]]; then
     record "SETUP:FAIL add laptop outcome=[${outcome:-none}]"
     return 1
   fi
@@ -546,7 +564,16 @@ case_g3() {
      && [[ "${bob_sessions:-0}" -ge 2 && "${char_sessions:-0}" -ge 2 ]]; then
     record "G3:PASS bob<->charlene direct link Encrypted; distinct media sessions bob=$bob_sessions charlene=$char_sessions"
   else
-    record "G3:PENDING_MESH no direct bob<->charlene link (backend=[${backend:-PAIRWISE_SESSIONS}]; media sessions bob=${bob_sessions:-0} charlene=${char_sessions:-0}; mesh JNI not shipped)"
+    # "mesh JNI not shipped" was a stale canned string — mesh is in mock-token debug APKs.
+    # Distinguish wait/dial races (roster mesh logs present) from a truly missing path.
+    local mesh_path="absent"
+    if check_log "$SERIAL_B" "roster mesh|MESH_NO_RELAY|notifyMeshPeerState" \
+       || check_log "$SERIAL_C" "roster mesh|MESH_NO_RELAY|notifyMeshPeerState"; then
+      mesh_path="wait-or-dial-race"
+    elif check_log "$SERIAL_A" "announce joiner failed|announce_introduced_peer: session"; then
+      mesh_path="announce-failed"
+    fi
+    record "G3:PENDING_MESH no direct bob<->charlene link (backend=[${backend:-PAIRWISE_SESSIONS}]; media sessions bob=${bob_sessions:-0} charlene=${char_sessions:-0}; mesh_path=[$mesh_path])"
   fi
   save_logs g3
 }
