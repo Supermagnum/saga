@@ -82,7 +82,12 @@ object GroupCallRegistry {
     }
 
     fun setKeyCheck(groupId: String, legKey: String, keyCheck: KeyCheck) {
-        update(groupId) { g -> g.updateLeg(legKey) { it.copy(keyCheck = keyCheck) } }
+        // Mesh JNI emits mesh-* group ids; the UI model often lives under grp-*. Prefer the
+        // group that actually owns the leg so ENCRYPTED_LEGS / padlock state stay accurate.
+        val ownerId = get(groupId)?.takeIf { it.participantForLeg(legKey) != null }?.groupId
+            ?: findLeg(legKey)?.first?.groupId
+            ?: groupId
+        update(ownerId) { g -> g.updateLeg(legKey) { it.copy(keyCheck = keyCheck) } }
     }
 
     /** Confirmed-encrypted remote legs in [groupId] (for e2e ENCRYPTED_LEGS accounting). */

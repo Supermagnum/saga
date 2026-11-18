@@ -634,11 +634,13 @@ Notes:
 Small-group encrypted mesh (up to 4 participants) is implemented for
 **debug / development builds only** (Part 1 / issue #30). **Release builds
 compile Iroh group calls out** (no Add participant UI, no Iroh
-`Conference`, no mesh-join ALPN / roster path in the release `.so`). Reason:
-G4/G5 failures showed a group could display Encrypted without every
-participant's key verified — release must never show that misleading
-padlock. Carrier conference (Phase 4, cleartext dialer parity) stays in
-release unchanged. Larger SFU-style groups remain forward-looking.
+`Conference`, no mesh-join ALPN / roster path in the release `.so`). Debug
+G1–G11 core cases PASS on API 35 (2026-11-18 release gate); leftovers
+(G6 hear-three with 1:1 saga-peer, G11 A/B auto-link to laptop, API 29
+3-AVD relay provision) keep the surface out of release until a
+human-reviewed enable PR. Carrier conference (Phase 4, cleartext dialer
+parity) stays in release unchanged. Larger SFU-style groups remain
+forward-looking.
 
 ### 14.1 Carrier conference vs encrypted groups
 
