@@ -114,6 +114,25 @@ object GroupCallInCallUi {
         return true
     }
 
+    /** True when the InCall UI is showing an Iroh group (≥2 remote links). */
+    fun hasActiveGroup(): Boolean = currentGroupForUi() != null
+
+    /**
+     * Hold/resume every group link's media (spec §14.2.2). Returns true when a group was
+     * active so the caller can skip the 1:1 hold path (G9). Media-first: do not rely on
+     * Telecom Conference hold/unhold (emulator Call.STATE_HOLDING is flaky).
+     * Uses [SagaCallMediaController.setHeldAll] so engine keys always match (G9).
+     */
+    fun holdGroupOrNull(@Suppress("UNUSED_PARAMETER") activity: SagaInCallActivity, held: Boolean): Boolean {
+        if (currentGroupForUi() == null) return false
+        SagaCallMediaController.setHeldAll(held)
+        return true
+    }
+
+    /** Whether any group engine is currently held (survives InCall activity recreation). */
+    fun isGroupHeld(): Boolean =
+        currentGroupForUi() != null && SagaCallMediaController.anyHeld()
+
     fun markConnectCueConsumed(callId: String) {
         GroupCallRegistry.markLegConnectCueConsumed(callId)
     }

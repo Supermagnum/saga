@@ -873,9 +873,11 @@ object GroupCallCoordinator {
             connection.onDisconnect()
             return true
         }
-        // No Connection (never created / already gone): just drop the model row.
+        // No Connection (mesh-join / already gone): close native session then drop the model row.
         val found = GroupCallRegistry.findLeg(telecomCallKey) ?: return false
-        onLegEnded(context, found.second.telecomCallKey)
+        val app = remember(context)
+        IrohDialManager.get(app).endCall(found.second.telecomCallKey)
+        onLegEnded(app, found.second.telecomCallKey)
         return true
     }
 
@@ -890,13 +892,21 @@ object GroupCallCoordinator {
 
     /**
      * Local user leaves the group. Closes our links; others keep theirs (no host, no group end
-     * signal). In native mesh this is meshClose.
+     * signal). Mesh-only legs (no Telecom Connection) still go through DialManager.endCall so
+     * [IrohNativeBridge.meshRemovePeer] runs; peers keep their mutual links (G8b).
      */
     fun leaveGroup(context: Context, groupId: String) {
         val group = GroupCallRegistry.get(groupId) ?: return
+        val app = remember(context)
         group.participants.map { it.telecomCallKey }.forEach { key ->
             val connection = SagaIrohConnectionRegistry.get(key)
-            if (connection != null) connection.onDisconnect() else onLegEnded(context, key)
+            if (connection != null) {
+                connection.onDisconnect()
+            } else {
+                // Mesh-join legs often have no Connection; still close the native link.
+                IrohDialManager.get(app).endCall(key)
+                onLegEnded(app, key)
+            }
         }
     }
 

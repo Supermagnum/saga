@@ -61,6 +61,15 @@ object GroupCallInCallUi {
         @Suppress("UNUSED_PARAMETER") muted: Boolean
     ): Boolean = false
 
+    fun hasActiveGroup(): Boolean = false
+
+    fun holdGroupOrNull(
+        @Suppress("UNUSED_PARAMETER") activity: SagaInCallActivity,
+        @Suppress("UNUSED_PARAMETER") held: Boolean
+    ): Boolean = false
+
+    fun isGroupHeld(): Boolean = false
+
     fun markConnectCueConsumed(@Suppress("UNUSED_PARAMETER") callId: String) {
         // no-op
     }

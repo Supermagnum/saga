@@ -296,13 +296,57 @@ class IrohDialManager private constructor(context: Context) {
     }
 
     fun endCall(telecomCallKey: String) {
-        val session = sessions.remove(telecomCallKey)
+        // Resolve +1555… vs 1555… / group-leg aliases so leave/hangup always closes QUIC (G8).
+        val resolved = findTelecomCallKey(telecomCallKey) ?: telecomCallKey
+        val session = sessions.remove(resolved) ?: sessions.remove(telecomCallKey)
         val sessionId = session?.sessionId
-        SagaCallMediaController.stop(telecomCallKey, sessionId)
+        if (session == null) {
+            Log.w(TAG, "endCall: no session for key=[$telecomCallKey] resolved=[$resolved]")
+        }
+        SagaCallMediaController.stop(resolved, sessionId)
+        if (resolved != telecomCallKey) {
+            SagaCallMediaController.stop(telecomCallKey, sessionId)
+        }
         session?.disconnect()
+        lookupKeys.remove(resolved)
+        lookupKeys.remove(telecomCallKey)
+        incomingConnections.remove(resolved)
+        incomingConnections.remove(telecomCallKey)
+        pendingIncomingActivation.remove(resolved)
+        pendingIncomingActivation.remove(telecomCallKey)
+    }
+
+    /**
+     * Peer closed the QUIC session (native [IrohNativeBridge.notifySessionClosed]).
+     * Tears down only this leg so a group call continues for remaining participants (G8).
+     * Native already removed the Rust session; do not call [IrohNativeBridge.disconnect] again.
+     */
+    fun onRemoteSessionClosed(sessionId: String, reason: String) {
+        val telecomCallKey = sessions.entries.firstOrNull { it.value.sessionId == sessionId }?.key
+        if (telecomCallKey == null) {
+            Log.i(TAG, "remote session closed session=[$sessionId] — no local mapping ($reason)")
+            return
+        }
+        Log.i(
+            TAG,
+            "remote session closed session=[$sessionId] key=[$telecomCallKey] reason=[$reason]"
+        )
+        sessions.remove(telecomCallKey)
         lookupKeys.remove(telecomCallKey)
         incomingConnections.remove(telecomCallKey)
         pendingIncomingActivation.remove(telecomCallKey)
+        SagaCallMediaController.stop(telecomCallKey, sessionId)
+        val connection = org.saga.telecom.SagaIrohConnectionRegistry.get(telecomCallKey)
+        if (connection != null) {
+            try {
+                connection.setDisconnected(DisconnectCause(DisconnectCause.REMOTE))
+                connection.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "remote close disconnect UI failed: ${e.message}")
+            }
+            org.saga.telecom.SagaIrohConnectionRegistry.remove(telecomCallKey)
+        }
+        GroupCallCoordinator.onLegEnded(appContext, telecomCallKey)
     }
 
     fun continueUnencryptedMedia(telecomCallKey: String, lookupKey: String) {
@@ -317,9 +361,13 @@ class IrohDialManager private constructor(context: Context) {
         Log.i(TAG, "§5a continue → plain RTP media call=[$telecomCallKey] lookup=[$lookupKey]")
     }
 
-    fun sessionIdForCall(telecomCallKey: String): String? = sessions[telecomCallKey]?.sessionId
+    fun sessionIdForCall(telecomCallKey: String): String? =
+        sessions[telecomCallKey]?.sessionId
+            ?: findTelecomCallKey(telecomCallKey)?.let { sessions[it]?.sessionId }
 
-    fun lookupKeyForCall(telecomCallKey: String): String? = lookupKeys[telecomCallKey]
+    fun lookupKeyForCall(telecomCallKey: String): String? =
+        lookupKeys[telecomCallKey]
+            ?: findTelecomCallKey(telecomCallKey)?.let { lookupKeys[it] }
 
     /**
      * Sole live dial session key (1:1 promotion / roster-intro fallback when Telecom

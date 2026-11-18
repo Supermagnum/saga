@@ -558,18 +558,25 @@ class SagaInCallActivity : AppCompatActivity() {
     }
 
     private fun toggleHold() {
+        // Group: derive current hold from live engines (InCall may be recreated between taps,
+        // so the local [held] field alone used to re-hold instead of resume — missing held=false).
+        if (GroupCallInCallUi.hasActiveGroup()) {
+            val nextHeld = !GroupCallInCallUi.isGroupHeld()
+            GroupCallInCallUi.holdGroupOrNull(this, nextHeld)
+            held = nextHeld
+            binding.toggleHold.text = getString(if (held) R.string.resume else R.string.hold)
+            refreshAudioStatus()
+            refreshMultiCallUi()
+            return
+        }
         val call = focusedCall() ?: return
-        val roles = MultiCallActions.classify(telecomCalls())
-        if (call.state == Call.STATE_HOLDING) {
+        if (call.state == Call.STATE_HOLDING || held) {
             call.unhold()
             held = false
+            SagaCallMediaController.setHeld(callId, rustSessionId(), false)
         } else if (MultiCallActions.canHold(call)) {
             call.hold()
             held = true
-            // If another call is held and we just held active with no other active, try unhold peer.
-            roles.held.firstOrNull()?.let { other ->
-                // leave held; swap is explicit
-            }
             SagaCallMediaController.setHeld(callId, rustSessionId(), true)
         }
         binding.toggleHold.text = getString(if (held) R.string.resume else R.string.hold)
