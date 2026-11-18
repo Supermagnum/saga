@@ -250,7 +250,10 @@ async fn drive_initiator(
     )
     .await;
     let (hs, security, prefix) = match outcome {
-        HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => {
+        HandshakeOutcome::Encrypted {
+            output,
+            peer_fingerprint_hex: _,
+        } => {
             let prefix = output.session_key_debug_prefix();
             #[cfg(debug_assertions)]
             eprintln!(
@@ -314,7 +317,10 @@ async fn drive_responder(
     )
     .await;
     let (hs, security, prefix) = match outcome {
-        HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => {
+        HandshakeOutcome::Encrypted {
+            output,
+            peer_fingerprint_hex: _,
+        } => {
             let prefix = output.session_key_debug_prefix();
             #[cfg(debug_assertions)]
             eprintln!(
@@ -401,7 +407,10 @@ pub async fn host_pair_roundtrip(
             )
             .await;
             let hs = match outcome {
-                HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => Some(output),
+                HandshakeOutcome::Encrypted {
+                    output,
+                    peer_fingerprint_hex: _,
+                } => Some(output),
                 HandshakeOutcome::Failed { .. } => None,
             };
             let remote = incoming.remote_id();
@@ -436,7 +445,10 @@ pub async fn host_pair_roundtrip(
     )
     .await;
     let hs_a = match outcome {
-        HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => {
+        HandshakeOutcome::Encrypted {
+            output,
+            peer_fingerprint_hex: _,
+        } => {
             let _ = send.finish();
             Some(output)
         }
