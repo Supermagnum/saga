@@ -1,13 +1,81 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-18 (Part 2c lifecycle G8/G9/G11)
+**Last updated:** 2026-11-18 (release gate — group mesh)
 
-**Status:** Part 2c (`feat/group-lifecycle-g8-g9-g11`) — leave continues,
-mute/hold on every link, callee can add. G8a/G8b/G9/G11 core PASS. G11
-Alice/Bob auto-link to laptop still PENDING_MESH (roster announce over mesh
-peers). Group calls remain compile-out of release until the release gate.
-[#49](https://github.com/Supermagnum/saga/issues/49) fixed on main. Multi-peer
-[#30](https://github.com/Supermagnum/saga/issues/30).
+**Status:** Release gate **BLOCKED for enabling Iroh group calls in release**.
+API 35 G1–G11 core PASS after fixing a Part 2c session-alias regression that
+skipped mesh `registerMeshLink` while a 1:1 was live. G2/G4/G5/G6 **10/10**.
+Leftovers: G6 hear-three (saga-peer CLI is 1:1; host_mesh covers 4-peer),
+G11 A/B auto-link to laptop, G5 bob Not-encrypted UI via mesh roster, and
+API 29 full G provision (relay native=0 under 3-AVD load). Group calls stay
+compile-out of release. [#30](https://github.com/Supermagnum/saga/issues/30).
+
+---
+
+## 2026-11-18 — Release gate (G1–G11) + mesh session-alias fix
+
+Branch: `fix/group-mesh-session-alias-g3` (from main after #57 / Part 2c).
+
+### Gate criteria (from mesh prompt)
+
+| Criterion | Result |
+|-----------|--------|
+| G1–G11 all PASS on API 35 | **Core PASS** (`fail=0`); see PENDING leftovers |
+| G2/G4/G5/G6 10/10 consecutive | **10/10 OK** (`/tmp/e2e-group-gate-10x.log`) |
+| Regression suite | recorded below when complete |
+| Screenshots (3/4-person, introduced-by, Not encrypted, Key changed, admit) | `docs/screenshots/group-mesh/release-gate/` + Part 2a Key changed; admit via G5b intents |
+| Enable group calls in release | **Not done** — leftovers remain; trust UI flip needs human merge |
+
+### Root cause fixed (G2/G3 false PENDING)
+
+Part 2c `findTelecomCallKey` fell back to `sessions.singleOrNull()`. With a live
+1:1, `sessionIdForCall(meshLeg)` returned that session, so `registerMeshLink`
+was skipped; mesh encrypted in Rust but never logged `Handshake settled` /
+`[Saga Media] start session=` for the peer digits. Fix: drop the singleOrNull
+fallback; mesh register uses exact `hasSession(meshLeg)`.
+
+### Emulator API 35 ×3 (`5554`/`5556`/`5558`)
+
+| Case | Result | Notes |
+|------|--------|-------|
+| G1 | **PASS** | 1:1 Encrypted |
+| G2 | **PASS** | adder links + bob↔charlene third link Encrypted |
+| G3 | **PASS** | bob=2 charlene=2 media sessions; mesh markers |
+| G4 / G4b | **PASS** | introduced-by; KEY_MISMATCH |
+| G5 / G5b | **PASS** | wrong-key not Encrypted on alice; confirm-to-admit |
+| G5 bob UI | **PENDING_MESH** | bob Not-encrypted via mesh roster still soft |
+| G6 | **PASS** + **PENDING_MESH** | alice 3 Encrypted; hear-three needs mesh-capable saga-peer |
+| G7 | **PASS** | 5th refused |
+| G8a / G8b | **PASS** | leave continues |
+| G9 | **PASS** | mute + hold/resume |
+| G10 | **PASS** | carrier held; no Merge |
+| G11 | **PASS** + **PENDING_MESH** | callee→laptop Encrypted; A/B auto-link still open |
+
+Log: `/tmp/e2e-group-release-gate-full.log` — `SUMMARY pass=93 fail=0 pending_mesh=3`.
+Soak: `/tmp/e2e-group-gate-10x.log` — `SOAK_RESULT ok_runs=10/10`.
+
+### API 29 mixed G
+
+`SERIAL_B=emulator-5560` full G: **PROVISION:FAIL** — bob relay `native=0` after
+120s (+ retry) under 3-AVD load (`/tmp/e2e-group-release-gate-api29b.log`).
+Same class as historical API 29 relay warm-up pressure; not counted as mesh
+product FAIL. Standalone Alice35→Bob29 Case2: first attempt `RELAY:FAIL` at suite start;
+retry **CASE2:PASS** + **CASE2b:PASS** (`/tmp/e2e-api29-case2-release-gate-r2.log`).
+
+### Regression (self-merge gates for alias fix)
+
+| Gate | Result | Log |
+|------|--------|-----|
+| API 35 Step5 Cases 1–10 + 4b + C3–C5 + INBOUND_REJECT | **PASS** (C1/C2 NEEDS_HARDWARE; CASEB Settings UI known soft-fail) | `/tmp/e2e-step5-release-gate-api35.log` |
+| RING 4b/6/10 ×20 | **20/20** | `/tmp/ring-regress-release-gate.log` |
+| `verifyReleaseApkHygiene` | **PASS** | `/tmp/hygiene-release-gate.log` |
+| `check-release-so` (release arm64) | **PASS** (mesh-join absent) | `/tmp/hygiene-so-release-gate.log` |
+| API 29 Case2 (Alice35→Bob29) | **PASS** (CASE2+2b on retry) | `/tmp/e2e-api29-case2-release-gate-r2.log` |
+
+### Release enable decision
+
+**Leave Iroh group calls compiled out of release.** Remaining PENDING_MESH and
+the trust-UI surface of enabling release require a separate human-reviewed PR.
 
 ---
 

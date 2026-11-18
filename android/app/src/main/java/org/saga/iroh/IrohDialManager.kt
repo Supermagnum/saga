@@ -391,15 +391,23 @@ class IrohDialManager private constructor(context: Context) {
             lookupKeys.entries.firstOrNull { it.value.filter { ch -> ch.isDigit() } == digits }
                 ?.key
                 ?.let { return it }
-            sessions.keys.firstOrNull { it.filter { ch -> ch.isDigit() } == digits }?.let { return it }
+            // Exact digit-key only — never treat a mesh-* / group leg id's concatenated
+            // digits as a phone match (that falsely aliased mesh legs to the live 1:1).
+            sessions.keys.firstOrNull { key ->
+                key.filter { ch -> ch.isDigit() } == digits && !key.contains('/')
+            }?.let { return it }
         }
         IrohNodeId.parse(lookupKey)?.let { id ->
             val peerUri = SagaCallUri.forPeer(id).toString()
             if (sessions.containsKey(peerUri)) return peerUri
         }
-        return sessions.keys.firstOrNull { it.contains(lookupKey) }
-            ?: sessions.keys.singleOrNull()
+        // Do not fall back to sessions.singleOrNull(): with a live 1:1 already open,
+        // that made sessionIdForCall(meshLeg) non-null and skipped registerMeshLink (G3).
+        return null
     }
+
+    /** Exact session map membership (mesh register must not use alias fallbacks). */
+    fun hasSession(telecomCallKey: String): Boolean = sessions.containsKey(telecomCallKey)
 
     fun handleMidCallRehandshake(
         telecomCallKey: String?,
