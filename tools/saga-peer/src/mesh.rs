@@ -230,7 +230,10 @@ async fn establish_link(
             let outcome =
                 run_responder(&identity, &local, &remote, !encrypted, &mut recv, &mut send).await;
             let hs = match outcome {
-                HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => Some(output),
+                HandshakeOutcome::Encrypted {
+                    output,
+                    peer_fingerprint_hex: _,
+                } => Some(output),
                 HandshakeOutcome::Failed { .. } => None,
             };
             let mut got = None;
@@ -270,7 +273,10 @@ async fn establish_link(
     .await;
     let _ = send.finish();
     let hs = match outcome {
-        HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => Some(output),
+        HandshakeOutcome::Encrypted {
+            output,
+            peer_fingerprint_hex: _,
+        } => Some(output),
         HandshakeOutcome::Failed { .. } => None,
     };
     if encrypted && hs.is_none() {
