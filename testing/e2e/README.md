@@ -208,11 +208,11 @@ Result tags: `PASS`, `FAIL` (exit 1), `NEEDS_HARDWARE` (emulator cannot exercise
 | Case | What it checks | Expected on pairwise scaffold |
 |------|----------------|-------------------------------|
 | G1 | alice -> bob 1:1 Encrypted, no group markers | PASS |
-| G2 | alice adds charlene; alice has 2 Encrypted links; screenshots; PCM metrics | PASS (third link PENDING_MESH) |
-| G3 | bob <-> charlene direct link, distinct media sessions | PENDING_MESH |
-| G4 | charlene deleted from bob -> "introduced by alice"; wrong roster fingerprint -> KEY_MISMATCH | PENDING_MESH |
-| G5 | wrong key -> not Encrypted on alice; key-less peer needs confirm to admit | alice side PASS, bob side PENDING_MESH; confirm-to-admit PASS |
-| G6 | add laptop; alice has 3 Encrypted links; 6-link mesh and hear-three | adder links PASS, mesh PENDING_MESH |
+| G2 | alice adds charlene; alice has 2 Encrypted links; screenshots; PCM metrics | PASS (3 of 3 links with mesh-join B↔C) |
+| G3 | bob <-> charlene direct link, distinct media sessions | PASS (roster-driven mesh-join) |
+| G4 | charlene deleted from bob -> "introduced by alice"; wrong roster fingerprint -> KEY_MISMATCH | PASS (Part 2a) |
+| G5 | wrong key -> not Encrypted on alice; key-less peer needs confirm to admit | PASS (Part 2a) |
+| G6 | add laptop; alice has 3 Encrypted links; 6-link mesh and hear-three | Alice 3 Encrypted PASS; 6-link hear-three PENDING_MESH (saga-peer 1:1) |
 | G7 | 5th participant refused | PASS |
 | G8 | bob leaves (alice + charlene continue); alice leaves (bob + charlene continue) | first PASS, second PENDING_MESH |
 | G9 | mute and hold reach every link | PASS (hold NEEDS_HARDWARE if UI tap fails) |

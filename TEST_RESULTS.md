@@ -1,13 +1,49 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-18 (Part 2a group trust G4/G5)
+**Last updated:** 2026-11-18 (Part 2b true mesh G3/G2/G6)
 
-**Status:** Part 2a (`feat/group-trust-g4-g5`) — trust-first for group calls
-(G4/G5). Encrypted only after authenticated link fingerprint matches contact
-or roster; Key changed / Not verified UI; signaling-only roster announce for
-"introduced by". True mesh media (G3/G2/G6) is Part 2b. Group calls remain
-compile-out of release. [#49](https://github.com/Supermagnum/saga/issues/49)
-fixed on main. Multi-peer still tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
+**Status:** Part 2b (`feat/group-true-mesh-g3-g2-g6`) — roster-driven
+Bob↔Charlene `saga/mesh-join/1` direct SRTP (encode-once MeshMixer, no relay).
+G3 PASS; G2 3-of-3 links PASS; G6 Alice 3 Encrypted adder links PASS. Full
+6-link hear-all with saga-peer still PENDING_MESH (CLI is 1:1; host_mesh covers
+the 4-peer model). Group calls remain compile-out of release. Part 2a trust
+rules unchanged. [#49](https://github.com/Supermagnum/saga/issues/49) fixed on
+main. Multi-peer still tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
+
+---
+
+## 2026-11-18 — Part 2b true mesh (G3, then G2/G6)
+
+Branch: `feat/group-true-mesh-g3-g2-g6` (from main after #55 / Part 2a).
+
+### Behaviour
+
+- User-initiated adds stay `PAIRWISE_SESSIONS` (Telecom ring via `saga/voice/1`).
+- On roster introduction, the intro recipient opens a direct mesh-join media
+  link (`meshOpen` + `meshAddPeer` when local EndpointId is smaller). No ring.
+- `MESH_NO_RELAY` debug logs: MeshMixer encodes local capture only; never
+  forwards one peer's media to another.
+- Mesh `startMedia` logs `[Saga Media] start session=` so e2e media_sessions
+  counts mesh links. KeyCheck from 2a applies to mesh ENCRYPTED settles.
+
+### Host
+
+| Gate | Result |
+|------|--------|
+| `saga-peer --test host_mesh` | **PASS** 5/5 |
+| `saga-media --test mesh` | **PASS** |
+
+### Emulator (API 35 ×3: 5554/5556/5558)
+
+| Case | Result | Evidence |
+|------|--------|----------|
+| G3 Bob↔Charlene direct | **PASS** | Encrypted both ways; media sessions bob=2 charlene=2; `notifyMeshPeerState` |
+| G2 3-of-3 links | **PASS** | Alice n=2 Encrypted; bob↔charlene third link Encrypted |
+| G6 Alice 3 Encrypted | **PASS** | bob+charlene+laptop |
+| G6 full 6-link / hear-three | **PENDING_MESH** | saga-peer CLI is 1:1; host_mesh covers 4-peer model |
+
+Logs: `/tmp/e2e-group-2b-g3g2g6.log`, `/tmp/e2e-group-2b-g2g6.log`.
+Screenshots: `docs/screenshots/group-mesh/part2b/`.
 
 ---
 

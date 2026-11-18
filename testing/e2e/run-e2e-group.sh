@@ -171,6 +171,30 @@ clear_all_logs() {
   done
 }
 
+# Enlarge ring buffers so Handshake/ENCRYPTED_LEGS markers are not rotated out by
+# high-volume iroh poll_send spam before G2/G6 settled_count runs (default is 2 MiB).
+enlarge_logcat_buffers() {
+  local s
+  for s in "$SERIAL_A" "$SERIAL_B" "$SERIAL_C"; do
+    adb -s "$s" logcat -G 16M 2>/dev/null || true
+  done
+}
+
+# Alice's encrypted group-leg count. Prefer durable ENCRYPTED_LEGS (survives spam);
+# fall back to distinct Handshake settled lookups.
+encrypted_legs_count() {
+  local serial="$1"
+  local n
+  n="$(adb_logcat_dump "$serial" \
+    | rg -o 'ENCRYPTED_LEGS group=\[[^]]+\] count=[0-9]+' \
+    | tail -1 | rg -o 'count=[0-9]+' | cut -d= -f2 || true)"
+  if [[ -n "$n" ]]; then
+    echo "$n"
+    return 0
+  fi
+  settled_count "$serial" Encrypted
+}
+
 # Foreground the in-call UI, screenshot it and dump the view tree (ui text assertions).
 capture_group_ui() {
   local serial="$1" name="$2"
@@ -353,8 +377,8 @@ join_via() {
   local outcome="" attempt
   for attempt in 1 2 3; do
     # Fresh callee logcat each attempt so RING checkpoints cannot match a prior leg.
+    # Do not clear the adder: settled_count(G2/G6) needs prior Encrypted settles (e.g. bob).
     adb -s "$callee" logcat -c 2>/dev/null || true
-    adb -s "$adder" logcat -c 2>/dev/null || true
     keep_incall_front "$adder"
     sleep 0.5
     add_participant "$adder" "$name"
@@ -481,7 +505,7 @@ case_g2() {
   wait_for_handshake_log "$SERIAL_C" "settled to \[Encrypted\]" "g2-charlene" 45 || true
   local backend n_a
   backend="$(backend_of "$SERIAL_A")"
-  n_a="$(settled_count "$SERIAL_A" Encrypted)"
+  n_a="$(encrypted_legs_count "$SERIAL_A")"
   capture_group_ui "$SERIAL_A" "g2-3person-alice"
   capture_group_ui "$SERIAL_B" "g2-3person-bob"
   capture_group_ui "$SERIAL_C" "g2-3person-charlene"
@@ -703,7 +727,7 @@ case_g6() {
   setup_group4 || { record "G6:FAIL could not establish 4-person group"; return 0; }
   local backend n_a
   backend="$(backend_of "$SERIAL_A")"
-  n_a="$(settled_count "$SERIAL_A" Encrypted)"
+  n_a="$(encrypted_legs_count "$SERIAL_A")"
   capture_group_ui "$SERIAL_A" "g6-4person-alice"
   capture_group_ui "$SERIAL_B" "g6-4person-bob"
   capture_group_ui "$SERIAL_C" "g6-4person-charlene"
@@ -900,6 +924,7 @@ echo "=== Saga group call E2E G1-G11 (local-only, 3 emulators + saga-peer) ==="
 echo "serials: alice=$SERIAL_A bob=$SERIAL_B charlene=$SERIAL_C  cases: $G_CASES"
 echo "out: $OUT_DIR  screencaps: $SCREENCAP_DIR"
 preflight
+enlarge_logcat_buffers
 
 if ! one_time_provision; then
   record "PROVISION:FAIL baseline for alice/bob/charlene"

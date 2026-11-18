@@ -214,6 +214,8 @@ object GroupCallCoordinator {
             )
         }
         GroupCallRegistry.put(next.withParticipant(participant))
+        // Snapshot already-confirmed legs (e.g. promoted Encrypted 1:1) before the new dial.
+        logEncryptedLegs(sizeProbe.groupId, legKey, KeyCheck.UNVERIFIED)
 
         SagaDialer.placeIrohCall(
             app,
@@ -302,7 +304,11 @@ object GroupCallCoordinator {
     /** Native mesh link changed state. */
     fun onMeshPeerState(groupId: String, linkId: String, state: Int) {
         val connection = SagaIrohConnectionRegistry.get(linkId)
-        val ctx = appContextOrNull() ?: return
+        val ctx = appContextOrNull()
+            ?: org.saga.iroh.IrohIncomingCallBridge.appContextOrNull()
+            ?: return
+        remember(ctx)
+        ensureMeshDialSession(ctx, groupId, linkId)
         val manager = IrohDialManager.get(ctx)
         when (state) {
             IrohNativeBridge.MESH_PEER_LEFT -> {
@@ -325,6 +331,7 @@ object GroupCallCoordinator {
                     if (connection != null) connection.onDisconnect() else onLegEnded(ctx, linkId)
                     return
                 }
+                if (check.confirmed) logEncryptedLegs(groupId, linkId, check)
                 manager.onMeshLinkState(linkId, state, connection)
             }
             else -> manager.onMeshLinkState(linkId, state, connection)
@@ -376,11 +383,23 @@ object GroupCallCoordinator {
                 TAG,
                 "key confirmed group=[${group.groupId}] link=[${leg.telecomCallKey}] check=[$check]"
             )
+            logEncryptedLegs(group.groupId, leg.telecomCallKey, check)
             // After a verified add, announce on other encrypted pairwise legs so peers can
-            // show "introduced by" without a media mesh (G4a; G3 still PENDING_MESH).
+            // open a direct mesh-join media link (G3) and show "introduced by" (G4a).
             maybeAnnounceIntroduction(app, group.groupId, leg)
         }
         return check
+    }
+
+    /** Durable e2e marker — must survive iroh poll_send logcat rotation (G2/G6). */
+    private fun logEncryptedLegs(groupId: String, lastLeg: String, check: KeyCheck) {
+        val keys = GroupCallRegistry.confirmedEncryptedKeys(groupId)
+        val count = GroupCallRegistry.confirmedEncryptedCount(groupId)
+        Log.i(
+            TAG,
+            "ENCRYPTED_LEGS group=[$groupId] count=$count " +
+                "keys=[${keys.joinToString(",")}] last=[$lastLeg] check=[$check]"
+        )
     }
 
     /** Roster fingerprint supplied with an introduction for this leg, if any. */
@@ -392,18 +411,20 @@ object GroupCallCoordinator {
         linkId: String,
         linkFingerprintHex: String?
     ): KeyCheck {
-        val leg = GroupCallRegistry.get(groupId)?.participantForLeg(linkId) ?: return KeyCheck.UNVERIFIED
+        val leg = GroupCallRegistry.get(groupId)?.participantForLeg(linkId)
+            ?: GroupCallRegistry.findLeg(linkId)?.second
+            ?: return KeyCheck.UNVERIFIED
         val local = ContactKeyStore.fingerprintHexForPhone(ctx, leg.lookupKey)
         return RosterKeyCheck.evaluate(
             linkFingerprintHex = linkFingerprintHex,
             localContactFingerprintHex = local,
-            rosterFingerprintHex = pendingRoster[linkId]
+            rosterFingerprintHex = pendingRoster[linkId] ?: pendingRoster[leg.telecomCallKey]
         )
     }
 
     /**
-     * Signaling-only: tell other pairwise legs about a newly verified participant so they can
-     * show "introduced by" without dialling that peer yet (media mesh is Part 2b).
+     * Tell other pairwise legs about a newly verified participant (G4a "introduced by") and
+     * announce existing confirmed peers to the joiner so both sides can open mesh-join (G3).
      */
     private fun maybeAnnounceIntroduction(ctx: Context, groupId: String, newLeg: MeshParticipant) {
         val group = GroupCallRegistry.get(groupId) ?: return
@@ -415,6 +436,7 @@ object GroupCallCoordinator {
             ?: newSessionId?.let { IrohNativeBridge.sessionPeerFingerprint(it) }
             ?: return
         val introducerLabel = localPeerLabel(ctx)
+        // Existing peers learn about the joiner (Bob learns Charlene).
         for (peer in group.participants) {
             if (peer.telecomCallKey == confirmed.telecomCallKey) continue
             val sessionId = manager.sessionIdForCall(peer.telecomCallKey) ?: continue
@@ -426,6 +448,26 @@ object GroupCallCoordinator {
                 fp,
                 introducerLabel
             )
+        }
+        // Joiner learns about each existing confirmed peer (Charlene learns Bob).
+        if (newSessionId != null) {
+            for (peer in group.participants) {
+                if (peer.telecomCallKey == confirmed.telecomCallKey) continue
+                if (!peer.keyCheck.confirmed) continue
+                val peerFp = ContactKeyStore.fingerprintHexForPhone(ctx, peer.lookupKey)
+                    ?: manager.sessionIdForCall(peer.telecomCallKey)?.let {
+                        IrohNativeBridge.sessionPeerFingerprint(it)
+                    }
+                    ?: continue
+                IrohNativeBridge.announceIntroducedPeer(
+                    newSessionId,
+                    groupId,
+                    peer.lookupKey,
+                    peer.endpointId,
+                    peerFp,
+                    introducerLabel
+                )
+            }
         }
     }
 
@@ -468,7 +510,8 @@ object GroupCallCoordinator {
 
     /**
      * Roster introduction received over an existing encrypted pairwise link (G4a).
-     * Registers the peer as introduced without opening a media link (2b).
+     * Registers the peer for UI, then opens a direct mesh-join media link when JNI is
+     * available (G3). The intro recipient dials; the peer accepts without a Telecom ring.
      */
     fun onRosterIntroduction(
         context: Context,
@@ -572,10 +615,138 @@ object GroupCallCoordinator {
         GroupCallRegistry.put(base.withParticipant(participant))
         Log.i(
             TAG,
-            "roster introduction group=[${base.groupId}] peer=[$lookupKey] by=[$introducerName] " +
-                "(signaling only; no media link yet)"
+            "roster introduction group=[${base.groupId}] peer=[$lookupKey] by=[$introducerName]"
         )
+        // G3: intro recipient dials a direct mesh-join media link (no Telecom ring).
+        maybeOpenRosterMeshLink(app, base.groupId, lookupKey, endpointId, legKey)
         mainHandler.post { syncConference(app, base.groupId) }
+    }
+
+    /**
+     * Open a saga/mesh-join/1 media link to an introduced peer. Smaller EndpointId dials;
+     * the other side accepts (no Telecom ring). Group id is a stable mesh-* id derived from
+     * the two peer labels so both ends share the hello group without a wire change.
+     */
+    private fun maybeOpenRosterMeshLink(
+        ctx: Context,
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        legKey: String
+    ) {
+        if (!IrohNativeBridge.isMeshNativeAvailable()) {
+            Log.w(TAG, "roster mesh skipped — mesh JNI unavailable peer=[$lookupKey]")
+            return
+        }
+        val peerId = IrohNodeId.parse(endpointId) ?: IrohNodeId(endpointId)
+        val localLabel = localPeerDigits(ctx)
+        val peerDigits = lookupKey.filter { it.isDigit() }.ifEmpty { lookupKey }
+        val meshGid = meshPairGroupId(localLabel, peerDigits)
+        val meshLeg = GroupCallState.legKey(meshGid, peerDigits)
+        // Keep roster voucher under both the UI leg key and the mesh link id.
+        pendingRoster[legKey]?.let { pendingRoster[meshLeg] = it }
+        if (!IrohNativeBridge.meshOpen(meshGid)) {
+            Log.e(TAG, "roster meshOpen failed group=[$meshGid] (ui group=[$groupId])")
+            return
+        }
+        val manager = IrohDialManager.get(ctx)
+        if (manager.sessionIdForCall(meshLeg) == null) {
+            manager.registerMeshLink(meshGid, peerId, meshLeg, meshLeg, lookupKey)
+        }
+        // Also mirror into the UI group so findLeg(keyCheck) can resolve either id.
+        val uiGroup = GroupCallRegistry.get(groupId)
+        if (uiGroup != null && uiGroup.participantForLeg(meshLeg) == null) {
+            uiGroup.participantForLeg(legKey)?.let { p ->
+                GroupCallRegistry.put(
+                    uiGroup.withoutLeg(legKey).withParticipant(p.copy(telecomCallKey = meshLeg))
+                )
+            }
+        }
+        val localEp = IrohNativeBridge.localEndpointId()
+        val shouldDial = when {
+            localEp.isNullOrBlank() -> true // fall back to dial; peer ignores duplicate insert
+            else -> localEp < peerId.raw
+        }
+        val ok = if (shouldDial) {
+            IrohNativeBridge.meshAddPeer(meshGid, meshLeg, peerId.raw)
+        } else {
+            Log.i(TAG, "roster mesh wait for peer dial group=[$meshGid] leg=[$meshLeg]")
+            true
+        }
+        Log.i(
+            TAG,
+            "roster mesh link group=[$meshGid] leg=[$meshLeg] peer=[$lookupKey] " +
+                "endpoint=[${peerId.raw}] dial=$shouldDial ok=$ok (no relay; direct SRTP)"
+        )
+        Log.i(TAG, "MESH_NO_RELAY direct mesh-join only; introducer must not forward peer media")
+    }
+
+    /** Stable mesh group id for a pairwise introduced link (both ends compute the same value). */
+    private fun meshPairGroupId(localDigits: String, peerDigits: String): String {
+        val a = localDigits.filter { it.isDigit() }.ifEmpty { localDigits }
+        val b = peerDigits.filter { it.isDigit() }.ifEmpty { peerDigits }
+        val (lo, hi) = if (a <= b) a to b else b to a
+        return "mesh-$lo-$hi"
+    }
+
+    private fun localPeerDigits(ctx: Context): String {
+        val prefs = ctx.getSharedPreferences("saga_dev_identity", Context.MODE_PRIVATE)
+        return prefs.getString("peer_label", null)?.filter { it.isDigit() }?.ifEmpty { null }
+            ?: prefs.getString("peer_label", "local")!!
+    }
+
+    /**
+     * Ensure DialManager knows about an inbound mesh link so handshake / media settle.
+     * link_id is `{groupId}/{lookupKey}` from native mesh.
+     */
+    private fun ensureMeshDialSession(
+        ctx: Context,
+        groupId: String,
+        linkId: String
+    ) {
+        val manager = IrohDialManager.get(ctx)
+        if (manager.sessionIdForCall(linkId) != null) return
+        val fromGroup = GroupCallRegistry.get(groupId)?.participantForLeg(linkId)
+        val lookup = fromGroup?.lookupKey
+            ?: linkId.substringAfterLast('/').takeIf { it.isNotBlank() && it != linkId }
+            ?: return
+        val endpoint = fromGroup?.endpointId ?: lookup
+        val peerId = IrohNodeId.parse(endpoint) ?: IrohNodeId(endpoint)
+        if (fromGroup == null) {
+            // Inbound mesh before / without a prior roster row: seed a minimal participant.
+            val existing = GroupCallRegistry.get(groupId)
+                ?: GroupCallState(groupId = groupId, backend = MeshBackend.NATIVE_MESH)
+            if (existing.participants.none { it.telecomCallKey == linkId } && existing.canAddMore()) {
+                val digits = lookup.filter { it.isDigit() }
+                val name = when (digits) {
+                    "15550100030" -> "charlene"
+                    "15550100020" -> "laptop"
+                    "15550100010" -> "bob"
+                    "15550100011" -> "alice"
+                    else -> lookup
+                }
+                val keyResolvable = ContactKeyStore.hasResolvableKey(ctx, lookup) ||
+                    (digits.isNotEmpty() && ContactKeyStore.hasResolvableKey(ctx, digits))
+                GroupCallRegistry.put(
+                    existing.withParticipant(
+                        MeshParticipant(
+                            lookupKey = lookup,
+                            endpointId = endpoint,
+                            displayName = name,
+                            introducerName = null,
+                            snapshot = connectingSnapshot(ctx),
+                            rustSessionId = linkId,
+                            telecomCallKey = linkId,
+                            introduced = true,
+                            knownContact = keyResolvable,
+                            keyCheck = KeyCheck.UNVERIFIED
+                        )
+                    )
+                )
+            }
+        }
+        manager.registerMeshLink(groupId, peerId, linkId, linkId, lookup)
+        Log.i(TAG, "inbound mesh dial session registered group=[$groupId] link=[$linkId] lookup=[$lookup]")
     }
 
     /** Create / update the Telecom Conference so it contains every live leg (idempotent). */
