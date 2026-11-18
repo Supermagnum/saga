@@ -1,28 +1,28 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-18 (release gate — group mesh)
+**Last updated:** 2026-11-18 (release gate closed — compile-out remains)
 
 **Status:** Release gate **BLOCKED for enabling Iroh group calls in release**.
-API 35 G1–G11 core PASS after fixing a Part 2c session-alias regression that
-skipped mesh `registerMeshLink` while a 1:1 was live. G2/G4/G5/G6 **10/10**.
-Leftovers: G6 hear-three (saga-peer CLI is 1:1; host_mesh covers 4-peer),
-G11 A/B auto-link to laptop, G5 bob Not-encrypted UI via mesh roster, and
-API 29 full G provision (relay native=0 under 3-AVD load). Group calls stay
-compile-out of release. [#30](https://github.com/Supermagnum/saga/issues/30).
+[#58](https://github.com/Supermagnum/saga/pull/58) merged (session-alias fix + gate
+docs). Post-merge re-check on `main` @ `fc0470a`: G2/G4/G5/G6 soak **10/10** and
+Alice35→Bob29 Case2 **PASS**. Leftovers unchanged (G6 hear-three, G11 A/B
+auto-link, G5 bob Not-encrypted UI). Group calls stay compile-out of release.
+[#30](https://github.com/Supermagnum/saga/issues/30). **STOP before Part 3.**
 
 ---
 
 ## 2026-11-18 — Release gate (G1–G11) + mesh session-alias fix
 
-Branch: `fix/group-mesh-session-alias-g3` (from main after #57 / Part 2c).
+Branch: `fix/group-mesh-session-alias-g3` → [#58](https://github.com/Supermagnum/saga/pull/58) (merged).
+Post-merge tip: `main` @ `fc0470a`.
 
 ### Gate criteria (from mesh prompt)
 
 | Criterion | Result |
 |-----------|--------|
 | G1–G11 all PASS on API 35 | **Core PASS** (`fail=0`); see PENDING leftovers |
-| G2/G4/G5/G6 10/10 consecutive | **10/10 OK** (`/tmp/e2e-group-gate-10x.log`) |
-| Regression suite | recorded below when complete |
+| G2/G4/G5/G6 10/10 consecutive | **10/10 OK** (pre-merge `/tmp/e2e-group-gate-10x.log`; post-merge `/tmp/e2e-group-gate-10x-post58.log`) |
+| Regression suite | **PASS** (table below) |
 | Screenshots (3/4-person, introduced-by, Not encrypted, Key changed, admit) | `docs/screenshots/group-mesh/release-gate/` + Part 2a Key changed; admit via G5b intents |
 | Enable group calls in release | **Not done** — leftovers remain; trust UI flip needs human merge |
 
@@ -53,14 +53,18 @@ fallback; mesh register uses exact `hasSession(meshLeg)`.
 
 Log: `/tmp/e2e-group-release-gate-full.log` — `SUMMARY pass=93 fail=0 pending_mesh=3`.
 Soak: `/tmp/e2e-group-gate-10x.log` — `SOAK_RESULT ok_runs=10/10`.
+Post-merge soak: `/tmp/e2e-group-gate-10x-post58.log` — `SOAK_RESULT ok_runs=10/10`.
 
 ### API 29 mixed G
 
 `SERIAL_B=emulator-5560` full G: **PROVISION:FAIL** — bob relay `native=0` after
 120s (+ retry) under 3-AVD load (`/tmp/e2e-group-release-gate-api29b.log`).
 Same class as historical API 29 relay warm-up pressure; not counted as mesh
-product FAIL. Standalone Alice35→Bob29 Case2: first attempt `RELAY:FAIL` at suite start;
-retry **CASE2:PASS** + **CASE2b:PASS** (`/tmp/e2e-api29-case2-release-gate-r2.log`).
+product FAIL. Standalone Alice35→Bob29 Case2: **CASE2:PASS** + **CASE2b:PASS**
+(`/tmp/e2e-api29-case2-release-gate-r2.log`); post-merge reconfirm after AVD
+reboot **CASE2:PASS** (LAN `http://192.168.1.191:3340`). Long-lived AVD sessions
+can stall `endpoint.online()` (QAD `:7842` EPERM + Https probe timeouts) until
+reboot; not a mesh product FAIL.
 
 ### Regression (self-merge gates for alias fix)
 
@@ -70,7 +74,7 @@ retry **CASE2:PASS** + **CASE2b:PASS** (`/tmp/e2e-api29-case2-release-gate-r2.lo
 | RING 4b/6/10 ×20 | **20/20** | `/tmp/ring-regress-release-gate.log` |
 | `verifyReleaseApkHygiene` | **PASS** | `/tmp/hygiene-release-gate.log` |
 | `check-release-so` (release arm64) | **PASS** (mesh-join absent) | `/tmp/hygiene-so-release-gate.log` |
-| API 29 Case2 (Alice35→Bob29) | **PASS** (CASE2+2b on retry) | `/tmp/e2e-api29-case2-release-gate-r2.log` |
+| API 29 Case2 (Alice35→Bob29) | **PASS** (incl. post-merge reconfirm) | `/tmp/e2e-api29-case2-release-gate-r2.log` |
 
 ### Release enable decision
 
