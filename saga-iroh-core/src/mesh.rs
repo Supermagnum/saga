@@ -732,7 +732,10 @@ impl MeshNode {
         .await;
         let _ = send.finish();
         let hs = match outcome {
-            HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => Arc::new(output),
+            HandshakeOutcome::Encrypted {
+                output,
+                peer_fingerprint_hex: _,
+            } => Arc::new(output),
             HandshakeOutcome::Failed { reason } => {
                 conn.close(0u32.into(), b"saga mesh handshake failed");
                 return Err(format!("handshake failed: {reason}"));
@@ -875,7 +878,10 @@ impl MeshNode {
         )
         .await;
         let hs = match outcome {
-            HandshakeOutcome::Encrypted { output, peer_fingerprint_hex: _ } => Arc::new(output),
+            HandshakeOutcome::Encrypted {
+                output,
+                peer_fingerprint_hex: _,
+            } => Arc::new(output),
             HandshakeOutcome::Failed { reason } => {
                 return Err(format!("handshake failed: {reason}"));
             }

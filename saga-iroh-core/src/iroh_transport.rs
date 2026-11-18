@@ -976,10 +976,10 @@ pub fn handshake_output(session_id: &str) -> Option<Arc<HandshakeOutput>> {
 /// 64-char lowercase hex fingerprint authenticated by this session's handshake.
 /// None when the handshake is not Encrypted or the peer identity is unknown.
 pub fn peer_fingerprint(session_id: &str) -> Option<String> {
-    SESSIONS
-        .lock()
-        .ok()
-        .and_then(|m| m.get(session_id).and_then(|s| s.peer_fingerprint_hex.clone()))
+    SESSIONS.lock().ok().and_then(|m| {
+        m.get(session_id)
+            .and_then(|s| s.peer_fingerprint_hex.clone())
+    })
 }
 
 /// Sessions that already have a roster accept_bi loop (avoid competing listeners).
