@@ -284,6 +284,17 @@ object IrohNativeBridge {
         return available
     }
 
+    /** Local Iroh endpoint id (64 hex), or null when the endpoint is not up. */
+    fun localEndpointId(): String? {
+        if (!ensureLoaded()) return null
+        return try {
+            nativeLocalEndpointId()
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "localEndpointId unavailable: ${e.message}")
+            null
+        }
+    }
+
     fun meshOpen(groupId: String): Boolean {
         if (!isMeshNativeAvailable()) return false
         return nativeMeshOpen(groupId)
@@ -383,6 +394,7 @@ object IrohNativeBridge {
     private external fun nativeOnLocalAnswered(sessionId: String): Boolean
     private external fun nativeIsSendArmed(sessionId: String): Boolean
     private external fun nativeRekeyMedia(sessionId: String): Long
+    private external fun nativeLocalEndpointId(): String?
     private external fun nativeMeshIsAvailable(): Boolean
     private external fun nativeMeshOpen(groupId: String): Boolean
     private external fun nativeMeshAddPeer(groupId: String, linkId: String, peerId: String): Boolean
