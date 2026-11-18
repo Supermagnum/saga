@@ -209,7 +209,8 @@ pub(crate) fn bridge_notify_incoming_call(
 }
 
 /// Pairwise signaling-only roster introduction (G4a).
-#[cfg(feature = "iroh-transport")]
+/// Only referenced from the mock-token roster accept loop (debug/E2E builds).
+#[cfg(all(feature = "iroh-transport", feature = "mock-token"))]
 pub(crate) fn bridge_notify_roster_introduction(
     group_id: &str,
     lookup_key: &str,
