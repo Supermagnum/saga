@@ -11,14 +11,21 @@ import org.saga.contacts.ContactKeyRepository
  * lowercase hex ASCII (Base64-wrapped in the MIME row). Iroh EndpointIds are
  * separate: dial peers use phone-digit labels (`15550100010`), not the token
  * fingerprint.
+ *
+ * [hasResolvableKey] means "a stored long-term fingerprint exists for this
+ * contact". A dialable phone-digit label alone is not a resolvable key
+ * (G5b: key-less peers need explicit confirm-to-admit).
  */
 object ContactKeyStore {
     /** 64 lowercase hex chars — ephemeral-session wire fingerprint format. */
     private val FINGERPRINT_HEX = Regex("^[0-9a-f]{64}$")
 
+    /**
+     * Context-free probe used only for the `nokey` suffix test hook.
+     * Prefer [hasResolvableKey] with a [Context] for real contact lookups.
+     */
     fun hasResolvableKey(peerOrLookupId: String): Boolean {
         if (peerOrLookupId.endsWith("nokey", ignoreCase = true)) return false
-        if (IrohNodeId.parse(peerOrLookupId) != null) return true
         return false
     }
 
@@ -27,9 +34,17 @@ object ContactKeyStore {
         if (peerOrLookupId.startsWith("content://")) {
             return ContactKeyRepository.readPublicKeyBytes(context, Uri.parse(peerOrLookupId)) != null
         }
-        val fromPhone = ContactKeyRepository.readPublicKeyBytesForPhone(context, peerOrLookupId)
-        if (fromPhone != null) return true
-        return IrohNodeId.parse(peerOrLookupId) != null
+        return ContactKeyRepository.readPublicKeyBytesForPhone(context, peerOrLookupId) != null
+    }
+
+    /** Stored contact fingerprint (64 lowercase hex), or null when absent/invalid. */
+    fun fingerprintHexForPhone(context: Context, peerOrLookupId: String): String? {
+        val bytes = if (peerOrLookupId.startsWith("content://")) {
+            ContactKeyRepository.readPublicKeyBytes(context, Uri.parse(peerOrLookupId))
+        } else {
+            ContactKeyRepository.readPublicKeyBytesForPhone(context, peerOrLookupId)
+        } ?: return null
+        return fingerprintHexFromKeyBytes(bytes)
     }
 
     /**

@@ -16,10 +16,14 @@ enum class KeyCheck {
     UNVERIFIED,
     CONFIRMED_LOCAL_CONTACT,
     CONFIRMED_ROSTER,
+    KEY_CHANGED,
     MISMATCH;
 
     val confirmed: Boolean
         get() = this == CONFIRMED_LOCAL_CONTACT || this == CONFIRMED_ROSTER
+
+    val rejected: Boolean
+        get() = this == KEY_CHANGED || this == MISMATCH
 }
 
 data class MeshParticipant(
@@ -115,10 +119,35 @@ object ConnectCuePolicy {
     }
 }
 
+/** Same trust rule as debug: never confirm without a link fingerprint; roster mismatch rejects. */
 object RosterKeyCheck {
+    private val FINGERPRINT_HEX = Regex("^[0-9a-f]{64}$")
+
+    private fun normalize(raw: String?): String? =
+        raw?.trim()?.lowercase()?.takeIf { FINGERPRINT_HEX.matches(it) }
+
+    private fun same(a: String, b: String): Boolean =
+        java.security.MessageDigest.isEqual(
+            a.toByteArray(Charsets.US_ASCII),
+            b.toByteArray(Charsets.US_ASCII)
+        )
+
     fun evaluate(
         linkFingerprintHex: String?,
         localContactFingerprintHex: String?,
         rosterFingerprintHex: String?
-    ): KeyCheck = KeyCheck.UNVERIFIED
+    ): KeyCheck {
+        val link = normalize(linkFingerprintHex) ?: return KeyCheck.UNVERIFIED
+        val local = normalize(localContactFingerprintHex)
+        val roster = normalize(rosterFingerprintHex)
+        if (local != null && !same(link, local)) {
+            return KeyCheck.KEY_CHANGED
+        }
+        if (roster != null && !same(link, roster)) {
+            return KeyCheck.MISMATCH
+        }
+        if (local != null) return KeyCheck.CONFIRMED_LOCAL_CONTACT
+        if (roster != null) return KeyCheck.CONFIRMED_ROSTER
+        return KeyCheck.UNVERIFIED
+    }
 }

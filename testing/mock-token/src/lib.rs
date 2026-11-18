@@ -63,8 +63,14 @@ mod tests {
 
         match (&a_out, &b_out) {
             (
-                HandshakeOutcome::Encrypted { output: oa },
-                HandshakeOutcome::Encrypted { output: ob },
+                HandshakeOutcome::Encrypted {
+                    output: oa,
+                    peer_fingerprint_hex: fp_a,
+                },
+                HandshakeOutcome::Encrypted {
+                    output: ob,
+                    peer_fingerprint_hex: fp_b,
+                },
             ) => {
                 assert_eq!(
                     oa.saga_session_key.as_slice(),
@@ -72,6 +78,8 @@ mod tests {
                 );
                 assert_eq!(oa.transcript_hash, ob.transcript_hash);
                 assert_eq!(oa.shared_secret.as_slice(), ob.shared_secret.as_slice());
+                assert_eq!(fp_a, &bob.fingerprint_hex_string());
+                assert_eq!(fp_b, &alice.fingerprint_hex_string());
             }
             _ => panic!("handshake failed: {a_out:?} {b_out:?}"),
         }
@@ -104,8 +112,8 @@ mod tests {
 
         match (&a_out, &b_out) {
             (
-                HandshakeOutcome::Encrypted { output: oa },
-                HandshakeOutcome::Encrypted { output: ob },
+                HandshakeOutcome::Encrypted { output: oa, .. },
+                HandshakeOutcome::Encrypted { output: ob, .. },
             ) => assert_eq!(
                 oa.saga_session_key.as_slice(),
                 ob.saga_session_key.as_slice()

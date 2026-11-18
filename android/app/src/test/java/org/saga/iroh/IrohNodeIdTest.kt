@@ -23,6 +23,8 @@ class IrohNodeIdTest {
     @Test
     fun contactKeyStore_nokeySuffix() {
         assertFalse(ContactKeyStore.hasResolvableKey("peer-nokey"))
-        assertTrue(ContactKeyStore.hasResolvableKey("peer-valid12"))
+        // Context-free probe never treats a dialable label as a resolvable key (G5b).
+        assertFalse(ContactKeyStore.hasResolvableKey("peer-valid12"))
+        assertFalse(ContactKeyStore.hasResolvableKey("15550100040"))
     }
 }

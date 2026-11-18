@@ -250,6 +250,11 @@ teardown_all() {
   for s in "$SERIAL_A" "$SERIAL_B" "$SERIAL_C"; do
     clear_stuck_telephony_calls "$s"
     adb -s "$s" shell am force-stop org.saga
+    sleep 0.5
+    # Force-stop leaves RINGING/ACTIVE Telecom rows until anomaly watchdog; drain now
+    # so the next setup_pair dial does not hit max_ringing / miss onCallAdded.
+    clear_stuck_telephony_calls "$s"
+    ensure_telecom_idle "$s" "teardown-$s" 15 || true
   done
   STATE="none"
   sleep 1
@@ -265,7 +270,13 @@ one_time_provision() {
   return 0
 }
 
-# alice -> bob, bob answers, wait Encrypted on both.
+# Bring SagaInCallActivity to the front without ending the live Telecom/Iroh call.
+keep_incall_front() {
+  local serial="$1"
+  adb -s "$serial" shell am start -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
+}
+
+# alice -> bob, bob answers, wait Encrypted on both. Leaves InCall up on both.
 setup_pair() {
   teardown_all
   local s
@@ -278,30 +289,105 @@ setup_pair() {
     record "SETUP:FAIL alice->bob dial"
     return 1
   fi
-  wait_for_incoming_ringing "$SERIAL_B" "bob group-setup" || return 1
+  wait_for_incoming_ringing "$SERIAL_B" "bob group-setup" 60 || return 1
+  # Answer, then keep InCall in front so Connection/registry stay live for adds.
   answer_incoming "$SERIAL_B" "$LOOKUP_ALICE"
-  wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "pair-alice" 45 || return 1
-  wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\]" "pair-bob" 45 || return 1
+  keep_incall_front "$SERIAL_B"
+  keep_incall_front "$SERIAL_A"
+  # Initiator may settle Encrypted before answer; wait long enough either way.
+  if ! wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "pair-alice" 60; then
+    record "SETUP:INFO pair-alice Encrypted miss — re-answer bob and retry settle"
+    answer_incoming "$SERIAL_B" "$LOOKUP_ALICE"
+    keep_incall_front "$SERIAL_B"
+    keep_incall_front "$SERIAL_A"
+    wait_for_handshake_log "$SERIAL_A" "settled to \[Encrypted\]" "pair-alice-retry" 45 || return 1
+  fi
+  if ! wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\]" "pair-bob" 60; then
+    record "SETUP:INFO pair-bob Encrypted miss — re-answer and retry"
+    answer_incoming "$SERIAL_B" "$LOOKUP_ALICE"
+    keep_incall_front "$SERIAL_B"
+    wait_for_handshake_log "$SERIAL_B" "settled to \[Encrypted\]" "pair-bob-retry" 45 || return 1
+  fi
+  keep_incall_front "$SERIAL_A"
+  keep_incall_front "$SERIAL_B"
+  # Do not force-stop or ENDCALL alice/bob here — adds need the live Iroh leg.
   adb -s "$SERIAL_C" logcat -c 2>/dev/null || true
   STATE="pair"
+  return 0
+}
+
+# Prepare callee for an inbound group leg without touching the adder's live call.
+# Soft path: if Saga is up and home-relay is already Ready, do not force-stop (that
+# was dropping Charlene's relay and causing G4a inbound_accepted MISSING).
+prepare_callee_for_join() {
+  local callee="$1"
+  clear_stuck_telephony_calls "$callee" 2>/dev/null || true
+  ensure_telecom_idle "$callee" "join-callee-$callee" 20 || true
+  if saga_process_running "$callee" && \
+     [[ "$(query_relay_ready_native "$callee")" == "$RELAY_READY_NATIVE" ]]; then
+    record "SETUP:INFO $callee already relay-ready — skipping force-stop"
+    adb -s "$callee" logcat -c 2>/dev/null || true
+    return 0
+  fi
+  ensure_callee_listening "$callee" || return 1
+  wait_for_relay_online "$callee" "join-callee" || return 1
+  # Re-check immediately before returning — native Ready can race a disconnect.
+  if [[ "$(query_relay_ready_native "$callee")" != "$RELAY_READY_NATIVE" ]]; then
+    record "SETUP:INFO $callee relay not Ready after listen — fresh warm"
+    wait_for_fresh_relay_online "$callee" "join-callee-rewarm" || return 1
+  fi
+  adb -s "$callee" logcat -c 2>/dev/null || true
   return 0
 }
 
 # ADDER adds NAME (callee ringing on CALLEE_SERIAL answers with ANSWER_LOOKUP).
 join_via() {
   local adder="$1" name="$2" callee="$3" answer_lookup="$4" digits="$5"
-  adb -s "$callee" logcat -c 2>/dev/null || true
-  add_participant "$adder" "$name"
-  sleep 2
-  local outcome
-  outcome="$(add_participant_outcome "$adder" "$name")"
-  if [[ "$outcome" != "PLACED" ]]; then
+  prepare_callee_for_join "$callee" || {
+    record "SETUP:FAIL $name callee not listening before add"
+    return 1
+  }
+  # Never drain/end the adder call — only re-show InCall so requestAdd sees the leg.
+  keep_incall_front "$adder"
+  sleep 1
+  local outcome="" attempt
+  for attempt in 1 2 3; do
+    # Fresh callee logcat each attempt so RING checkpoints cannot match a prior leg.
+    adb -s "$callee" logcat -c 2>/dev/null || true
+    adb -s "$adder" logcat -c 2>/dev/null || true
+    keep_incall_front "$adder"
+    sleep 0.5
+    add_participant "$adder" "$name"
+    outcome="$(wait_add_participant_outcome "$adder" "$name" 12 || true)"
+    # REFUSED_DUPLICATE after a prior PLACED in this join is fine (intent redelivery).
+    if [[ "$outcome" == "PLACED" || "$outcome" == "REFUSED_DUPLICATE" ]]; then
+      if wait_for_incoming_ringing "$callee" "$name group-leg" 45; then
+        break
+      fi
+      record "SETUP:INFO $name PLACED but no ring (attempt=$attempt) — rewarm callee relay"
+      # Adder call stays up; only rewarm the callee that lost home-relay.
+      wait_for_fresh_relay_online "$callee" "join-rewarm-$name" || true
+      outcome=""
+      continue
+    fi
+    record "SETUP:INFO add $name attempt=$attempt outcome=[${outcome:-none}] -- re-showing InCall"
+    keep_incall_front "$adder"
+    sleep 1
+  done
+  if [[ "$outcome" != "PLACED" && "$outcome" != "REFUSED_DUPLICATE" ]]; then
     record "SETUP:FAIL add $name outcome=[${outcome:-none}]"
     return 1
   fi
-  wait_for_incoming_ringing "$callee" "$name group-leg" || return 1
+  # If the successful attempt already saw RING above, this is a fast re-check.
+  wait_for_incoming_ringing "$callee" "$name group-leg" 20 || return 1
   answer_incoming "$callee" "$answer_lookup"
-  wait_encrypted_for "$adder" "$digits" 60
+  keep_incall_front "$adder"
+  if ! wait_encrypted_for "$adder" "$digits" 60; then
+    record "SETUP:FAIL $name did not reach Encrypted on adder"
+    return 1
+  fi
+  keep_incall_front "$adder"
+  return 0
 }
 
 setup_group3() {
@@ -445,51 +531,77 @@ case_g4() {
   # G4a: Charlene removed from Bob's contacts -> shown "introduced by alice".
   # G4b: wrong roster fingerprint for an introduced peer must fail (KEY_MISMATCH).
   setup_pair || { record "G4:FAIL could not establish 1:1 baseline"; return 0; }
-  if ! delete_contact_by_name "$SERIAL_B" "charlene"; then
-    record "G4:NEEDS_HARDWARE could not delete charlene from bob contacts via adb content on this image"
-    return 0
+  local g4a_ready=0
+  if delete_contact_by_name "$SERIAL_B" "charlene"; then
+    record "G4:INFO charlene removed from bob contacts"
+    g4a_ready=1
+  elif clear_contact_key "$SERIAL_B" "charlene"; then
+    record "G4:INFO charlene Saga key cleared on bob (contact row kept; hasResolvableKey=false)"
+    g4a_ready=1
+  else
+    record "G4:NEEDS_HARDWARE could not delete/clear charlene key on bob via adb content"
   fi
-  record "G4:INFO charlene removed from bob contacts"
   adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
-  if join_via "$SERIAL_A" "charlene" "$SERIAL_C" "$LOOKUP_ALICE" "15550100030"; then
+  if [[ "$g4a_ready" -eq 1 ]] && join_via "$SERIAL_A" "charlene" "$SERIAL_C" "$LOOKUP_ALICE" "15550100030"; then
     local backend
     backend="$(backend_of "$SERIAL_A")"
-    capture_group_ui "$SERIAL_B" "g4-introduced-by-bob"
+    # Roster intro is async (accept_bi on bob); wait for the UI marker before capturing.
+    local intro_wait=0
+    while [[ $intro_wait -lt 30 ]]; do
+      capture_group_ui "$SERIAL_B" "g4-introduced-by-bob"
+      if ui_has "$OUT_DIR/g4-introduced-by-bob.xml" 'introduced by'; then
+        break
+      fi
+      sleep 1
+      intro_wait=$((intro_wait + 1))
+    done
     capture_group_ui "$SERIAL_A" "g4-introduced-by-alice"
     if ui_has "$OUT_DIR/g4-introduced-by-bob.xml" 'introduced by'; then
       record "G4:PASS bob shows charlene as introduced by alice"
     elif [[ "${backend:-PAIRWISE_SESSIONS}" == "NATIVE_MESH" ]]; then
       record "G4:FAIL mesh backend active but bob UI has no 'introduced by' ($SCREENCAP_DIR/g4-introduced-by-bob.png)"
     else
-      record "G4:PENDING_MESH bob learns charlene only via the mesh roster; backend=[${backend:-PAIRWISE_SESSIONS}]"
+      # Pairwise scaffold can still deliver a signaling-only roster intro (2a).
+      record "G4:FAIL bob UI has no 'introduced by' after roster announce ($SCREENCAP_DIR/g4-introduced-by-bob.png) backend=[${backend:-PAIRWISE_SESSIONS}]"
     fi
-  else
+  elif [[ "$g4a_ready" -eq 1 ]]; then
     record "G4:FAIL charlene did not join"
   fi
   # G4b: fresh pair; bob (no charlene key) adds her as introduced by alice with a WRONG roster fingerprint.
   setup_pair || { record "G4b:FAIL could not rebuild baseline"; return 0; }
   delete_contact_by_name "$SERIAL_B" "charlene" || true
+  clear_contact_key "$SERIAL_B" "charlene" || true
+  prepare_callee_for_join "$SERIAL_C" || true
+  keep_incall_front "$SERIAL_B"
+  sleep 1
   adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
-  adb -s "$SERIAL_C" logcat -c 2>/dev/null || true
-  add_participant "$SERIAL_B" "15550100030" --ez confirm_unencrypted true \
-    --es introduced_by alice --es roster_fingerprint "$FP_WRONG"
-  sleep 3
-  local outcome
-  outcome="$(add_participant_outcome "$SERIAL_B" "15550100030")"
-  if [[ "$outcome" == "PLACED" ]]; then
-    if wait_for_incoming_ringing "$SERIAL_C" "charlene g4b" 40; then
+  local outcome="" attempt
+  for attempt in 1 2 3; do
+    keep_incall_front "$SERIAL_B"
+    sleep 0.5
+    adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
+    add_participant "$SERIAL_B" "15550100030" --ez confirm_unencrypted true \
+      --es confirm_unencrypted true \
+      --es introduced_by alice --es roster_fingerprint "$FP_WRONG"
+    outcome="$(wait_add_participant_outcome "$SERIAL_B" "15550100030" 12 || true)"
+    if [[ "$outcome" == "PLACED" || "$outcome" == "REFUSED_DUPLICATE" ]]; then
+      break
+    fi
+    record "G4b:INFO add attempt=$attempt outcome=[${outcome:-none}] -- re-showing InCall and retrying"
+    keep_incall_front "$SERIAL_B"
+    sleep 1
+  done
+  if [[ "$outcome" == "PLACED" || "$outcome" == "REFUSED_DUPLICATE" ]]; then
+    if wait_for_incoming_ringing "$SERIAL_C" "charlene g4b" 50; then
       answer_incoming "$SERIAL_C" "15550100010"
     fi
     if poll_for_log_marker "$SERIAL_B" "KEY_MISMATCH" "g4b-mismatch" 40 2; then
       record "G4b:PASS wrong roster fingerprint rejected (KEY_MISMATCH, link closed)"
-    elif [[ "$(backend_of "$SERIAL_B")" == "NATIVE_MESH" ]]; then
-      record "G4b:FAIL mesh backend but no KEY_MISMATCH for wrong roster fingerprint"
     else
-      record "G4b:PENDING_MESH roster fingerprint is checked only on mesh links (pairwise scaffold; outcome=PLACED)"
+      record "G4b:FAIL no KEY_MISMATCH for wrong roster fingerprint (backend=$(backend_of "$SERIAL_B"))"
     fi
   else
-    record "G4b:INFO add outcome=[${outcome:-none}] (roster check not reached)"
-    record "G4b:PENDING_MESH roster-fingerprint rejection needs the mesh backend"
+    record "G4b:FAIL add outcome=[${outcome:-none}] (expected PLACED then KEY_MISMATCH)"
   fi
   save_logs g4
   STATE="none"
@@ -501,44 +613,83 @@ case_g5() {
   # 5a: charlene's key on alice is rewritten to bob's fingerprint (wrong key).
   if set_contact_key "$SERIAL_A" "charlene" "$FP_BOB"; then
     record "G5:INFO charlene key on alice rewritten to a wrong fingerprint"
-    adb -s "$SERIAL_C" logcat -c 2>/dev/null || true
-    add_participant "$SERIAL_A" "charlene"
-    sleep 3
-    if wait_for_incoming_ringing "$SERIAL_C" "charlene g5" 40; then
-      answer_incoming "$SERIAL_C" "$LOOKUP_ALICE"
-    fi
-    if poll_for_log_marker "$SERIAL_A" "settled to \[(Downgraded|NeverEncrypted)\] for \[\+?15550100030\]|KEY_MISMATCH" "g5-wrong" 60 2; then
-      capture_group_ui "$SERIAL_A" "g5-not-encrypted-alice"
-      capture_group_ui "$SERIAL_B" "g5-not-encrypted-bob"
-      capture_group_ui "$SERIAL_C" "g5-not-encrypted-charlene"
-      if ui_has "$OUT_DIR/g5-not-encrypted-alice.xml" 'Not encrypted|Encryption failed'; then
-        record "G5:PASS wrong key -> alice shows Not encrypted / Encryption failed"
-      else
-        record "G5:PASS wrong key -> link settled not-Encrypted on alice (UI text not found in dump; see g5-not-encrypted-alice.png)"
+    # Idle/listen charlene only — never ENDCALL/force-stop alice (live pair must stay up).
+    prepare_callee_for_join "$SERIAL_C" || true
+    keep_incall_front "$SERIAL_A"
+    sleep 1
+    adb -s "$SERIAL_A" logcat -c 2>/dev/null || true
+    local g5_outcome="" g5_attempt
+    for g5_attempt in 1 2 3; do
+      keep_incall_front "$SERIAL_A"
+      sleep 0.5
+      adb -s "$SERIAL_A" logcat -c 2>/dev/null || true
+      add_participant "$SERIAL_A" "charlene"
+      g5_outcome="$(wait_add_participant_outcome "$SERIAL_A" "charlene" 12 || true)"
+      if [[ "$g5_outcome" == "PLACED" || "$g5_outcome" == "REFUSED_DUPLICATE" ]]; then
+        break
       fi
-      if ui_has "$OUT_DIR/g5-not-encrypted-bob.xml" 'Not encrypted|Encryption failed'; then
-        record "G5:PASS bob also shows Not encrypted"
+      record "G5:INFO add attempt=$g5_attempt outcome=[${g5_outcome:-none}] -- re-showing InCall"
+      keep_incall_front "$SERIAL_A"
+      sleep 1
+    done
+    if [[ "$g5_outcome" != "PLACED" && "$g5_outcome" != "REFUSED_DUPLICATE" ]]; then
+      record "G5:FAIL add outcome=[${g5_outcome:-none}] (expected PLACED)"
+    elif wait_for_incoming_ringing "$SERIAL_C" "charlene g5" 60; then
+      answer_incoming "$SERIAL_C" "$LOOKUP_ALICE"
+      keep_incall_front "$SERIAL_A"
+      if poll_for_log_marker "$SERIAL_A" "settled to \[(Downgraded|NeverEncrypted)\] for \[\+?15550100030\]|KEY_MISMATCH|KEY_CHANGED" "g5-wrong" 60 2; then
+        capture_group_ui "$SERIAL_A" "g5-not-encrypted-alice"
+        capture_group_ui "$SERIAL_B" "g5-not-encrypted-bob"
+        capture_group_ui "$SERIAL_C" "g5-not-encrypted-charlene"
+        if ui_has "$OUT_DIR/g5-not-encrypted-alice.xml" 'Not encrypted|Encryption failed|Key changed'; then
+          record "G5:PASS wrong key -> alice shows Not encrypted / Encryption failed"
+        else
+          record "G5:PASS wrong key -> link settled not-Encrypted on alice (UI text not found in dump; see g5-not-encrypted-alice.png)"
+        fi
+        if ui_has "$OUT_DIR/g5-not-encrypted-bob.xml" 'Not encrypted|Encryption failed|Key changed'; then
+          record "G5:PASS bob also shows Not encrypted"
+        else
+          record "G5:PENDING_MESH bob only learns charlene's state over the mesh roster (pairwise: adder-only)"
+        fi
       else
-        record "G5:PENDING_MESH bob only learns charlene's state over the mesh roster (pairwise: adder-only)"
+        record "G5:FAIL wrong key did not produce a non-Encrypted link on alice"
       fi
     else
-      record "G5:FAIL wrong key did not produce a non-Encrypted link on alice"
+      record "G5:FAIL charlene never rang after wrong-key add (outcome=[${g5_outcome:-none}])"
     fi
+    # Restore charlene's real key on alice so later cases are not poisoned.
+    set_contact_key "$SERIAL_A" "charlene" "$FP_CHARLENE" || true
   else
     record "G5:NEEDS_HARDWARE could not rewrite charlene key row via adb content update"
   fi
   # 5b: confirm-to-admit for an unknown (key-less) participant label.
   setup_pair || { record "G5b:FAIL could not rebuild baseline"; return 0; }
+  keep_incall_front "$SERIAL_A"
+  sleep 1
   adb -s "$SERIAL_A" logcat -c 2>/dev/null || true
   add_participant "$SERIAL_A" "15550100040"
-  sleep 2
   local first
-  first="$(add_participant_outcome "$SERIAL_A" "15550100040")"
-  add_participant "$SERIAL_A" "15550100040" --ez confirm_unencrypted true
-  sleep 2
+  first="$(wait_add_participant_outcome "$SERIAL_A" "15550100040" 12 || true)"
+  # Keep the live Iroh call: restore InCall, then deliver confirm via MainActivity.
+  # Pass both --ez and --es so confirm_unencrypted survives SINGLE_TOP redelivery.
+  keep_incall_front "$SERIAL_A"
+  sleep 1
+  add_participant "$SERIAL_A" "15550100040" \
+    --ez confirm_unencrypted true \
+    --es confirm_unencrypted true
   local second
-  second="$(add_participant_outcome "$SERIAL_A" "15550100040")"
-  if [[ "$first" == "NEEDS_UNENCRYPTED_CONFIRMATION" && "$second" == "PLACED" ]]; then
+  second="$(wait_add_participant_outcome "$SERIAL_A" "15550100040" 12 || true)"
+  if [[ "$first" == "NEEDS_UNENCRYPTED_CONFIRMATION" && "$second" != "PLACED" ]]; then
+    record "G5b:INFO confirm outcome=[${second:-none}] — restore InCall and retry confirm once"
+    keep_incall_front "$SERIAL_A"
+    sleep 1
+    add_participant "$SERIAL_A" "15550100040" \
+      --ez confirm_unencrypted true \
+      --es confirm_unencrypted true
+    second="$(wait_add_participant_outcome "$SERIAL_A" "15550100040" 12 || true)"
+  fi
+  if [[ "$first" == "NEEDS_UNENCRYPTED_CONFIRMATION" && \
+        ( "$second" == "PLACED" || "$second" == "REFUSED_DUPLICATE" ) ]]; then
     record "G5b:PASS key-less peer needs explicit confirm; admitted only after confirm_unencrypted"
   else
     record "G5b:FAIL confirm-to-admit first=[${first:-none}] second=[${second:-none}]"
@@ -727,8 +878,15 @@ case_g11() {
   else
     record "G11:FAIL charlene->laptop did not reach Encrypted"
   fi
-  if check_log "$SERIAL_A" "Handshake settled to \[Encrypted\] for \[\+?15550100020\]" \
-     || check_log "$SERIAL_B" "Handshake settled to \[Encrypted\] for \[\+?15550100020\]"; then
+  # Prefer separate checks over `if a || b; then` so a mid-edit cannot leave
+  # bash with an unexpected `then` while parsing the rest of the file.
+  local g11_mesh=0
+  if check_log "$SERIAL_A" "Handshake settled to \[Encrypted\] for \[\+?15550100020\]"; then
+    g11_mesh=1
+  elif check_log "$SERIAL_B" "Handshake settled to \[Encrypted\] for \[\+?15550100020\]"; then
+    g11_mesh=1
+  fi
+  if [[ "$g11_mesh" -eq 1 ]]; then
     record "G11:PASS alice/bob also linked to laptop (mesh roster propagation)"
   else
     record "G11:PENDING_MESH alice and bob do not auto-link to laptop (needs mesh roster propagation)"
@@ -750,11 +908,24 @@ if ! one_time_provision; then
 fi
 
 # Capability probe: the installed APK must understand the group debug intents.
+# Force-stop first so a leftover SagaIrohConnection / GroupCallRegistry from
+# PhoneAccount enable or stuck-call drain cannot yield REFUSED_DUPLICATE.
 for s in "$SERIAL_A" "$SERIAL_B" "$SERIAL_C"; do
+  clear_stuck_telephony_calls "$s"
+  adb -s "$s" shell am force-stop org.saga
+  sleep 1
+  clear_stuck_telephony_calls "$s"
+  adb -s "$s" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
   adb -s "$s" logcat -c 2>/dev/null || true
   add_participant "$s" "bob"
-  sleep 2
-  probe="$(add_participant_outcome "$s" "bob")"
+  probe=""
+  for attempt in 1 2 3 4 5; do
+    sleep 2
+    probe="$(add_participant_outcome "$s" "bob")"
+    [[ "$probe" == "REFUSED_NO_IROH_CALL" ]] && break
+    # Cold start on a sleeping emulator can miss the first delivery; retry.
+    add_participant "$s" "bob"
+  done
   if [[ "$probe" != "REFUSED_NO_IROH_CALL" ]]; then
     record "PROVISION:FAIL [$s] APK lacks TEST_ADD_PARTICIPANT (probe outcome=[${probe:-none}]); rebuild and reinstall the debug APK on all three emulators"
     printf '%s\n' "${RESULTS[@]}"
