@@ -203,55 +203,10 @@ class MainActivity : AppCompatActivity() {
                 placeFromInput(preferCellular = preferCellular)
             }
             "org.saga.TEST_ADD_PARTICIPANT" -> {
-                // DEBUG-ONLY (FLAG_DEBUGGABLE): add a Saga contact to the live Iroh call / group.
-                // Extras: add_contact (preferred) or contact_name / lookup_key, confirm_unencrypted,
-                // introduced_by, roster_fingerprint (64 hex; checked against the link key, never
-                // trusted alone), conference (optional group id). Prefer add_contact so a stale
-                // CONTACT_CALL contact_name cannot win if extras were merged on SINGLE_TOP.
-                if (!isDebuggableBuild()) {
-                    Log.e(TAG, "TEST_ADD_PARTICIPANT refused — not a debuggable build")
-                    return
-                }
-                val name = intent.getStringExtra("add_contact")
-                    ?: intent.getStringExtra("contact_name")
-                    ?: intent.getStringExtra("lookup_key")
-                    ?: return
-                // Boolean extras from `am --ez` can be dropped on some SINGLE_TOP redeliveries;
-                // also accept the string form so confirm_unencrypted always applies for G5b.
-                val confirmUnencrypted =
-                    intent.getBooleanExtra("confirm_unencrypted", false) ||
-                        intent.getStringExtra("confirm_unencrypted")
-                            ?.equals("true", ignoreCase = true) == true
-                Log.i(
-                    TAG,
-                    "E2E add request add_contact=[${intent.getStringExtra("add_contact")}] " +
-                        "contact_name=[${intent.getStringExtra("contact_name")}] " +
-                        "lookup_key=[${intent.getStringExtra("lookup_key")}] " +
-                        "confirm_unencrypted=[$confirmUnencrypted] " +
-                        "nonce=[${intent.getStringExtra("e2e_nonce")}] resolved=[$name]"
-                )
-                val target = DialTargetResolver.fromContactDisplayName(this, name)
-                    ?: DialTargetResolver.fromInput(this, name, preferCellular = false)
-                if (target !is DialTarget.Iroh) {
-                    Log.e(TAG, "TEST_ADD_PARTICIPANT requires an Iroh contact, got [$target]")
-                    Toast.makeText(this, "Iroh contact required", Toast.LENGTH_SHORT).show()
-                    Log.i(TAG, "E2E add participant name=[$name] outcome=[REFUSED_NOT_IROH]")
-                    return
-                }
-                val outcome = org.saga.telecom.GroupCallCoordinator.requestAdd(
-                    this,
-                    org.saga.telecom.GroupCallCoordinator.AddRequest(
-                        target = target,
-                        confirmedUnencrypted = confirmUnencrypted,
-                        introducerName = intent.getStringExtra("introduced_by"),
-                        rosterFingerprintHex = intent.getStringExtra("roster_fingerprint"),
-                        groupId = intent.getStringExtra("conference")
-                    )
-                )
-                Log.i(TAG, "E2E add participant name=[$name] outcome=[$outcome]")
-                if (outcome == org.saga.telecom.GroupCallCoordinator.AddOutcome.REFUSED_MAX_PARTICIPANTS) {
-                    Toast.makeText(this, "Call is full", Toast.LENGTH_LONG).show()
-                }
+                // Prefer delivering this via SagaInCallActivity (keeps the live leg visible).
+                // MainActivity still accepts it for older harnesses; restore InCall after.
+                org.saga.telecom.DebugGroupAddIntent.maybeHandle(this, intent)
+                startActivity(Intent(this, SagaInCallActivity::class.java))
             }
             "org.saga.TEST_GROUP_HANGUP_PARTICIPANT" -> {
                 // DEBUG-ONLY (FLAG_DEBUGGABLE): hang up ONE participant; the group keeps running.

@@ -130,11 +130,18 @@ class SagaInCallActivity : AppCompatActivity() {
         }
 
         attachCallCallbacks()
+        // E2E may start/re-deliver TEST_ADD_PARTICIPANT onto InCall so the live
+        // Iroh Connection/DialManager session is not buried under MainActivity.
+        org.saga.telecom.DebugGroupAddIntent.maybeHandle(this, intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (org.saga.telecom.DebugGroupAddIntent.maybeHandle(this, intent)) {
+            refreshMultiCallUi()
+            return
+        }
         callId = intent.getStringExtra(EXTRA_CALL_ID).orEmpty()
         val displayName = intent.getStringExtra(EXTRA_DISPLAY_NAME).orEmpty()
         if (displayName.isNotEmpty()) {

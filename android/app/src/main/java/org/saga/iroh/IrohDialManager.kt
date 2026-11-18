@@ -316,6 +316,9 @@ class IrohDialManager private constructor(context: Context) {
             else -> sessions.keys.firstOrNull()
         }
 
+    /** Debug / E2E: number of live dial sessions (Connection registry may lag). */
+    fun sessionCount(): Int = sessions.size
+
     fun findTelecomCallKey(lookupKey: String): String? {
         if (sessions.containsKey(lookupKey)) return lookupKey
         lookupKeys.entries.firstOrNull { it.value == lookupKey }?.key?.let { return it }
