@@ -264,6 +264,17 @@ object IrohNativeBridge {
     }
 
     /**
+     * Native -> Kotlin: peer closed a live pairwise session (mid-call). Distinct from
+     * [notifyFailed] (connect-phase); DialManager tears down only that leg (G8).
+     */
+    @JvmStatic
+    fun notifySessionClosed(sessionId: String, reason: String) {
+        Log.i(TAG, "notifySessionClosed session=[$sessionId] reason=[$reason]")
+        val ctx = IrohIncomingCallBridge.appContextOrNull() ?: return
+        IrohDialManager.get(ctx).onRemoteSessionClosed(sessionId, reason)
+    }
+
+    /**
      * True when the loaded native library exports the mesh JNI (nativeMesh*).
      *
      * Dual path (see GroupCallCoordinator): when true, a group is one native mesh with one

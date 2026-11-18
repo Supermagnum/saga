@@ -214,10 +214,10 @@ Result tags: `PASS`, `FAIL` (exit 1), `NEEDS_HARDWARE` (emulator cannot exercise
 | G5 | wrong key -> not Encrypted on alice; key-less peer needs confirm to admit | PASS (Part 2a) |
 | G6 | add laptop; alice has 3 Encrypted links; 6-link mesh and hear-three | Alice 3 Encrypted PASS; 6-link hear-three PENDING_MESH (saga-peer 1:1) |
 | G7 | 5th participant refused | PASS |
-| G8 | bob leaves (alice + charlene continue); alice leaves (bob + charlene continue) | first PASS, second PENDING_MESH |
-| G9 | mute and hold reach every link | PASS (hold NEEDS_HARDWARE if UI tap fails) |
+| G8 | bob leaves (alice + charlene continue); alice leaves (bob + charlene continue) | PASS both (Part 2c remote-close + mesh leave) |
+| G9 | mute and hold reach every link | PASS mute + hold/resume (Part 2c setHeldAll) |
 | G10 | incoming cellular during group: hold, no Merge | PASS or NEEDS_HARDWARE (emulator GSM) |
-| G11 | charlene adds laptop | charlene link PASS, propagation to alice/bob PENDING_MESH |
+| G11 | charlene adds laptop | charlene→laptop Encrypted PASS; A/B auto-link PENDING_MESH |
 
 Media metrics: `group_media_probe` injects the speech clip on alice, dumps playout PCM on
 bob/charlene and scores corr / SI-SNR / STOI with `pcm_score.py` (recorded as `METRIC`
