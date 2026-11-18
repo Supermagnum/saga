@@ -2,6 +2,7 @@ package org.saga.telecom
 
 import android.content.Context
 import android.util.Log
+import org.saga.call.KeyCheck
 import org.saga.call.MeshBackend
 import org.saga.dial.DialTarget
 import org.saga.iroh.IrohDialManager
@@ -70,6 +71,35 @@ object GroupCallCoordinator {
     fun onMeshPeerState(groupId: String, linkId: String, state: Int) {
         // no-op
     }
+
+    fun onPairwiseLegEncrypted(
+        context: Context,
+        telecomCallKey: String,
+        sessionId: String
+    ): KeyCheck = KeyCheck.UNVERIFIED
+
+    fun onRosterIntroduction(
+        context: Context,
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        rosterFingerprintHex: String,
+        introducerName: String
+    ) {
+        // no-op
+    }
+
+    fun onRosterIntroductionNative(
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        rosterFingerprintHex: String,
+        introducerName: String
+    ) {
+        // no-op
+    }
+
+    fun appContextForNative(): Context? = null
 
     fun syncConference(context: Context, groupId: String) {
         // no-op

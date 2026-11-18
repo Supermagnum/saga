@@ -25,6 +25,8 @@ use mock_token::{
 };
 use saga_media::CallRole;
 use saga_session::HandshakeOutput;
+#[cfg(feature = "mock-token")]
+use saga_session::{read_roster, write_roster, Roster, RosterEntry};
 
 pub const SAGA_VOICE_ALPN: &[u8] = b"saga/voice/1";
 /// Mesh-join links: pairwise mesh links that must never ring Telecom (see `mesh`).
@@ -127,6 +129,9 @@ struct Session {
     handshake: HandshakePoll,
     /// Full handshake output for SRTP key derivation (saga-media).
     handshake_output: Option<Arc<HandshakeOutput>>,
+    /// Long-term fingerprint authenticated by the handshake (64 lowercase hex).
+    /// Null must never be treated as verified (G4/G5 trust).
+    peer_fingerprint_hex: Option<String>,
     role: CallRole,
     /// RoQ connection established after voice handshake (media path).
     roq: Option<Connection>,
@@ -388,6 +393,7 @@ async fn handle_inbound_connection(conn: Connection) {
                 connection: conn,
                 handshake: HandshakePoll::Pending,
                 handshake_output: None,
+                peer_fingerprint_hex: None,
                 role: CallRole::Callee,
                 roq: None,
             },
@@ -421,7 +427,7 @@ async fn handle_inbound_connection(conn: Connection) {
     };
 
     #[cfg(feature = "mock-token")]
-    let (handshake, handshake_output, roq) = match conn.accept_bi().await {
+    let (handshake, handshake_output, roq, peer_fingerprint_hex) = match conn.accept_bi().await {
         Ok((mut send, mut recv)) => {
             let identity = MockIdentity::from_label(&local_identity_label());
             let Ok(ep) = bind_shared_endpoint() else {
@@ -448,7 +454,10 @@ async fn handle_inbound_connection(conn: Connection) {
             )
             .await;
             match outcome {
-                HandshakeOutcome::Encrypted { output } => {
+                HandshakeOutcome::Encrypted {
+                    output,
+                    peer_fingerprint_hex,
+                } => {
                     #[cfg(debug_assertions)]
                     {
                         let (a, b) = output.session_key_debug_prefix();
@@ -469,14 +478,19 @@ async fn handle_inbound_connection(conn: Connection) {
                             None
                         }
                     };
-                    (HandshakePoll::Encrypted, Some(Arc::new(output)), roq)
+                    (
+                        HandshakePoll::Encrypted,
+                        Some(Arc::new(output)),
+                        roq,
+                        Some(peer_fingerprint_hex),
+                    )
                 }
                 HandshakeOutcome::Failed { reason } => {
                     warn!("inbound mock-token handshake failed: {reason}");
                     if let Ok(mut pending) = PENDING_ROQ.lock() {
                         pending.remove(&remote);
                     }
-                    (HandshakePoll::Failed, None, None)
+                    (HandshakePoll::Failed, None, None, None)
                 }
             }
         }
@@ -488,8 +502,10 @@ async fn handle_inbound_connection(conn: Connection) {
     };
 
     #[cfg(not(feature = "mock-token"))]
-    let (handshake, handshake_output, roq) = (HandshakePoll::Failed, None, None);
+    let (handshake, handshake_output, roq, peer_fingerprint_hex) =
+        (HandshakePoll::Failed, None, None, None);
 
+    let listen_id = session_id.clone();
     if let Ok(mut sessions) = SESSIONS.lock() {
         sessions.insert(
             session_id,
@@ -497,11 +513,15 @@ async fn handle_inbound_connection(conn: Connection) {
                 connection: conn,
                 handshake,
                 handshake_output,
+                peer_fingerprint_hex,
                 role: CallRole::Callee,
                 roq,
             },
         );
         info!("inbound session registered lookup=[{lookup_key}] handshake={handshake:?}");
+    }
+    if handshake == HandshakePoll::Encrypted {
+        ensure_roster_listener(&listen_id);
     }
 }
 
@@ -771,7 +791,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
     };
 
     #[cfg(feature = "mock-token")]
-    let (handshake, handshake_output, roq) = {
+    let (handshake, handshake_output, roq, peer_fingerprint_hex) = {
         let (mut send, mut recv) = connection
             .open_bi()
             .await
@@ -792,7 +812,10 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
         )
         .await;
         match outcome {
-            HandshakeOutcome::Encrypted { output } => {
+            HandshakeOutcome::Encrypted {
+                output,
+                peer_fingerprint_hex,
+            } => {
                 #[cfg(debug_assertions)]
                 {
                     let (a, b) = output.session_key_debug_prefix();
@@ -817,18 +840,24 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
                         }
                     }
                 }
-                (HandshakePoll::Encrypted, Some(Arc::new(output)), roq)
+                (
+                    HandshakePoll::Encrypted,
+                    Some(Arc::new(output)),
+                    roq,
+                    Some(peer_fingerprint_hex),
+                )
             }
             HandshakeOutcome::Failed { reason } => {
                 warn!("mock-token handshake failed: {reason}");
                 let _ = send.finish();
-                (HandshakePoll::Failed, None, None)
+                (HandshakePoll::Failed, None, None, None)
             }
         }
     };
 
     #[cfg(not(feature = "mock-token"))]
-    let (handshake, handshake_output, roq) = {
+    let (handshake, handshake_output, roq, peer_fingerprint_hex) = {
+        let _ = peer_id;
         let (mut send, _recv) = connection
             .open_bi()
             .await
@@ -838,7 +867,7 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("iroh probe write: {e}"))?;
         let _ = send.finish();
-        (HandshakePoll::Failed, None, None)
+        (HandshakePoll::Failed, None, None, None)
     };
 
     info!(
@@ -855,10 +884,14 @@ async fn connect_async(peer_id: &str, session_id: &str) -> Result<(), String> {
                 connection,
                 handshake,
                 handshake_output,
+                peer_fingerprint_hex,
                 role: CallRole::Caller,
                 roq,
             },
         );
+    if handshake == HandshakePoll::Encrypted {
+        ensure_roster_listener(session_id);
+    }
 
     Ok(())
 }
@@ -938,6 +971,224 @@ pub fn handshake_output(session_id: &str) -> Option<Arc<HandshakeOutput>> {
         .lock()
         .ok()
         .and_then(|m| m.get(session_id).and_then(|s| s.handshake_output.clone()))
+}
+
+/// 64-char lowercase hex fingerprint authenticated by this session's handshake.
+/// None when the handshake is not Encrypted or the peer identity is unknown.
+pub fn peer_fingerprint(session_id: &str) -> Option<String> {
+    SESSIONS
+        .lock()
+        .ok()
+        .and_then(|m| m.get(session_id).and_then(|s| s.peer_fingerprint_hex.clone()))
+}
+
+/// Sessions that already have a roster accept_bi loop (avoid competing listeners).
+#[cfg(feature = "mock-token")]
+static ROSTER_LISTENERS: LazyLock<Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// Start accepting roster introductions on an encrypted pairwise session (G4a).
+pub fn ensure_roster_listener(session_id: &str) {
+    #[cfg(feature = "mock-token")]
+    {
+        {
+            let Ok(mut started) = ROSTER_LISTENERS.lock() else {
+                return;
+            };
+            if !started.insert(session_id.to_string()) {
+                return;
+            }
+        }
+        let Some((conn, hs)) = SESSIONS.lock().ok().and_then(|m| {
+            m.get(session_id).and_then(|s| {
+                if s.handshake != HandshakePoll::Encrypted {
+                    return None;
+                }
+                Some((s.connection.clone(), s.handshake_output.clone()?))
+            })
+        }) else {
+            if let Ok(mut started) = ROSTER_LISTENERS.lock() {
+                started.remove(session_id);
+            }
+            return;
+        };
+        let sid = session_id.to_string();
+        runtime().spawn(async move {
+            loop {
+                match conn.accept_bi().await {
+                    Ok((_send, mut recv)) => match read_roster(&mut recv, &hs).await {
+                        Ok(roster) => {
+                            if let Some((lookup, endpoint, fp, intro)) =
+                                decode_introduction(&roster)
+                            {
+                                info!(
+                                    "[Saga Roster] introduction received session=[{sid}] peer=[{lookup}] by=[{intro}]"
+                                );
+                                crate::bridge_notify_roster_introduction(
+                                    "", &lookup, &endpoint, &fp, &intro,
+                                );
+                            } else {
+                                warn!(
+                                    "[Saga Roster] decode_introduction returned none session=[{sid}]"
+                                );
+                            }
+                        }
+                        Err(e) => warn!("[Saga Roster] read failed session=[{sid}]: {e}"),
+                    },
+                    Err(_) => break,
+                }
+            }
+            if let Ok(mut started) = ROSTER_LISTENERS.lock() {
+                started.remove(&sid);
+            }
+        });
+    }
+    #[cfg(not(feature = "mock-token"))]
+    let _ = session_id;
+}
+
+/// Announce one introduced peer over an encrypted pairwise session (signaling only).
+pub fn announce_introduced_peer(
+    session_id: &str,
+    _group_id: &str,
+    lookup_key: &str,
+    endpoint_id: &str,
+    fingerprint_hex: &str,
+    introducer_name: &str,
+) -> bool {
+    #[cfg(feature = "mock-token")]
+    {
+        let endpoint_bytes = match parse_endpoint32(endpoint_id) {
+            Ok(b) => b,
+            Err(_) => match parse_peer_endpoint_id(endpoint_id) {
+                Ok(pk) => *pk.as_bytes(),
+                Err(e) => {
+                    warn!("announce_introduced_peer: bad endpoint_id [{endpoint_id}]: {e}");
+                    return false;
+                }
+            },
+        };
+        let Ok(fp_bytes) = parse_fp32(fingerprint_hex) else {
+            warn!("announce_introduced_peer: bad fingerprint");
+            return false;
+        };
+        let Some((conn, hs)) = SESSIONS.lock().ok().and_then(|m| {
+            m.get(session_id).and_then(|s| {
+                if s.handshake != HandshakePoll::Encrypted {
+                    return None;
+                }
+                Some((s.connection.clone(), s.handshake_output.clone()?))
+            })
+        }) else {
+            return false;
+        };
+        let local_eid = match bind_shared_endpoint() {
+            Ok(ep) => *ep.id().as_bytes(),
+            Err(_) => return false,
+        };
+        let roster = match Roster::new(
+            vec![RosterEntry {
+                endpoint_id: endpoint_bytes,
+                fingerprint: fp_bytes,
+            }],
+            Some(local_eid),
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("announce_introduced_peer: roster: {e}");
+                return false;
+            }
+        };
+        let ok = runtime().block_on(async {
+            match conn.open_bi().await {
+                Ok((mut send, _recv)) => {
+                    if let Err(e) = write_roster(&mut send, &hs, &roster).await {
+                        warn!("announce_introduced_peer write: {e}");
+                        false
+                    } else {
+                        let _ = send.finish();
+                        true
+                    }
+                }
+                Err(e) => {
+                    warn!("announce_introduced_peer open_bi: {e}");
+                    false
+                }
+            }
+        });
+        if ok {
+            info!(
+                "[Saga Roster] announced peer=[{lookup_key}] by=[{introducer_name}] on session=[{session_id}]"
+            );
+        }
+        ok
+    }
+    #[cfg(not(feature = "mock-token"))]
+    {
+        let _ = (
+            session_id,
+            _group_id,
+            lookup_key,
+            endpoint_id,
+            fingerprint_hex,
+            introducer_name,
+        );
+        false
+    }
+}
+
+#[cfg(feature = "mock-token")]
+fn parse_fp32(hex: &str) -> Result<[u8; 32], ()> {
+    let hex = hex.trim().to_ascii_lowercase();
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(());
+    }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| ())?;
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "mock-token")]
+fn parse_endpoint32(raw: &str) -> Result<[u8; 32], ()> {
+    // Iroh public keys are 64 hex chars (32 bytes).
+    parse_fp32(raw)
+}
+
+#[cfg(feature = "mock-token")]
+fn label_display_name(label: &str) -> String {
+    match label {
+        "15550100011" => "alice",
+        "15550100010" => "bob",
+        "15550100030" => "charlene",
+        "15550100020" => "laptop",
+        other => other,
+    }
+    .to_string()
+}
+
+#[cfg(feature = "mock-token")]
+fn decode_introduction(roster: &Roster) -> Option<(String, String, String, String)> {
+    let intro_eid = roster.introducer?;
+    let intro_pk = PublicKey::from_bytes(&intro_eid).ok()?;
+    let intro_label = dev_label_for_endpoint(&intro_pk)?;
+    let intro_name = label_display_name(&intro_label);
+    let local = bind_shared_endpoint().ok()?.id();
+    let peer = roster.participants.iter().find(|p| {
+        PublicKey::from_bytes(&p.endpoint_id)
+            .ok()
+            .map(|pk| pk != local)
+            .unwrap_or(false)
+    })?;
+    let peer_pk = PublicKey::from_bytes(&peer.endpoint_id).ok()?;
+    let lookup = dev_label_for_endpoint(&peer_pk)?;
+    let fp = peer
+        .fingerprint
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    Some((lookup, peer_pk.to_string(), fp, intro_name))
 }
 
 pub fn local_endpoint_id_hex() -> Result<String, String> {

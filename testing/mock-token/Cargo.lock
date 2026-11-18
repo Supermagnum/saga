@@ -973,6 +973,8 @@ dependencies = [
  "async-trait",
  "ephemeral-session",
  "galdr-core",
+ "galdr-vault",
+ "heapless",
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "log",

@@ -40,11 +40,24 @@ enum class KeyCheck {
     /** Unknown contact: link key equals the fingerprint the introducer put in the roster. */
     CONFIRMED_ROSTER,
 
-    /** Link key contradicts the local contact key or the roster fingerprint. Link must not run. */
+    /**
+     * Saved contact key differs from the key the peer presented (treat like §5a).
+     * Never shown as verified; UI status is "Key changed".
+     */
+    KEY_CHANGED,
+
+    /**
+     * Link key contradicts the introducer's roster fingerprint (G4b).
+     * Applies whether or not a local contact key also exists. Link must not run.
+     */
     MISMATCH;
 
     val confirmed: Boolean
         get() = this == CONFIRMED_LOCAL_CONTACT || this == CONFIRMED_ROSTER
+
+    /** Fingerprint disagreed with local contact or roster — media must stay off. */
+    val rejected: Boolean
+        get() = this == KEY_CHANGED || this == MISMATCH
 }
 
 /** One remote person in a group call (one link of the mesh). */
@@ -77,11 +90,17 @@ data class MeshParticipant(
      * actually checked ([KeyCheck.confirmed]); a mismatch is never shown as Encrypted.
      */
     fun effectiveSnapshot(): CallSecuritySnapshot {
+        when (keyCheck) {
+            KeyCheck.KEY_CHANGED -> return keyChangedSnapshot()
+            KeyCheck.MISMATCH -> return notVerifiedSnapshot()
+            else -> Unit
+        }
         val encryptedWithoutCheck =
             snapshot.padlockState == PadlockDisplayState.ENCRYPTED && !keyCheck.confirmed
-        if (keyCheck == KeyCheck.MISMATCH || encryptedWithoutCheck) {
+        if (encryptedWithoutCheck) {
             return notEncryptedSnapshot()
         }
+        // Roster-verified unknown contact: keep Encrypted status, label carries "introduced by".
         return snapshot
     }
 
@@ -95,6 +114,7 @@ data class MeshParticipant(
     /**
      * "Charlene, introduced by Alice" for unknown contacts introduced by a roster peer.
      * [introducedByFmt] is the localized `introduced_by_fmt` ("%1$s, introduced by %2$s").
+     * When the roster key was confirmed, the status line also shows Encrypted with this label.
      */
     fun displayLabel(introducedByFmt: String): String =
         if (showsIntroducedBy()) {
@@ -114,8 +134,27 @@ data class MeshParticipant(
         showDowngradeModal = false
     )
 
+    private fun notVerifiedSnapshot(): CallSecuritySnapshot = CallSecuritySnapshot(
+        padlockState = PadlockDisplayState.KEY_NOT_FOUND,
+        statusText = NOT_VERIFIED_TEXT,
+        playSecureCue = false,
+        playUnsecureCue = false,
+        showDowngradeModal = false
+    )
+
+    /** Contact key differs from the link — §5a-style warning, never verified. */
+    private fun keyChangedSnapshot(): CallSecuritySnapshot = CallSecuritySnapshot(
+        padlockState = PadlockDisplayState.DOWNGRADED,
+        statusText = KEY_CHANGED_TEXT,
+        playSecureCue = false,
+        playUnsecureCue = true,
+        showDowngradeModal = true
+    )
+
     companion object {
         const val NOT_ENCRYPTED_TEXT = "Not encrypted"
+        const val NOT_VERIFIED_TEXT = "Not verified"
+        const val KEY_CHANGED_TEXT = "Key changed"
     }
 }
 
@@ -265,8 +304,10 @@ object RosterKeyCheck {
      * @param localContactFingerprintHex key stored for this contact in Contacts (null = unknown contact)
      * @param rosterFingerprintHex fingerprint the introducer vouches for (null = not introduced)
      *
-     * A saved contact key always wins over the roster. Without an authenticated link
-     * fingerprint nothing is ever confirmed.
+     * Without an authenticated link fingerprint nothing is ever confirmed.
+     * Contact key detects KEY_CHANGED when it disagrees with the link.
+     * A present roster voucher that disagrees with the link is always MISMATCH
+     * (G4b: introducer claim must not be ignored just because a local contact key matches).
      */
     fun evaluate(
         linkFingerprintHex: String?,
@@ -275,10 +316,15 @@ object RosterKeyCheck {
     ): KeyCheck {
         val link = normalize(linkFingerprintHex) ?: return KeyCheck.UNVERIFIED
         val local = normalize(localContactFingerprintHex)
-        if (local != null) {
-            return if (same(link, local)) KeyCheck.CONFIRMED_LOCAL_CONTACT else KeyCheck.MISMATCH
+        val roster = normalize(rosterFingerprintHex)
+        if (local != null && !same(link, local)) {
+            return KeyCheck.KEY_CHANGED
         }
-        val roster = normalize(rosterFingerprintHex) ?: return KeyCheck.UNVERIFIED
-        return if (same(link, roster)) KeyCheck.CONFIRMED_ROSTER else KeyCheck.MISMATCH
+        if (roster != null && !same(link, roster)) {
+            return KeyCheck.MISMATCH
+        }
+        if (local != null) return KeyCheck.CONFIRMED_LOCAL_CONTACT
+        if (roster != null) return KeyCheck.CONFIRMED_ROSTER
+        return KeyCheck.UNVERIFIED
     }
 }

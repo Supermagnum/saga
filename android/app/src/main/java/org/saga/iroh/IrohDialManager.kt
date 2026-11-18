@@ -11,7 +11,9 @@ import org.saga.call.CallOrigin
 import org.saga.call.CallSecuritySnapshot
 import org.saga.call.CallSecurityStateResolver
 import org.saga.call.GroupCallRegistry
+import org.saga.call.KeyCheck
 import org.saga.call.PadlockDisplayState
+import org.saga.call.RosterKeyCheck
 import org.saga.call.SagaCallEventHub
 import org.saga.call.SagaCallRegistry
 import org.saga.handshake.EncryptionEstablishedStore
@@ -72,12 +74,13 @@ class IrohDialManager private constructor(context: Context) {
         )
     }
 
-    fun onIncomingAnswered(telecomCallKey: String) {
-        val connection = incomingConnections[telecomCallKey]
-        if (connection == null) {
-            Log.w(TAG, "onIncomingAnswered: no connection for [$telecomCallKey]")
+    fun onIncomingAnswered(telecomCallKeyOrLookup: String) {
+        val resolved = resolveIncomingCallKey(telecomCallKeyOrLookup)
+        if (resolved == null) {
+            Log.w(TAG, "onIncomingAnswered: no connection for [$telecomCallKeyOrLookup]")
             return
         }
+        val (telecomCallKey, connection) = resolved
         connection.setActive()
         Log.i(TAG, "CHECKPOINT incoming Connection setActive key=[$telecomCallKey]")
         val sessionId = sessions[telecomCallKey]?.sessionId
@@ -92,6 +95,26 @@ class IrohDialManager private constructor(context: Context) {
                 activateConnection = false
             )
         }
+    }
+
+    /** Resolve an answer intent lookup / call key to the live incoming Connection. */
+    private fun resolveIncomingCallKey(
+        telecomCallKeyOrLookup: String
+    ): Pair<String, SagaIrohConnection>? {
+        incomingConnections[telecomCallKeyOrLookup]?.let { return telecomCallKeyOrLookup to it }
+        val viaFind = findTelecomCallKey(telecomCallKeyOrLookup)
+        if (viaFind != null) {
+            incomingConnections[viaFind]?.let { return viaFind to it }
+        }
+        val digits = telecomCallKeyOrLookup.filter { it.isDigit() }
+        if (digits.isNotEmpty()) {
+            incomingConnections.entries.firstOrNull { (key, conn) ->
+                key.filter { it.isDigit() } == digits ||
+                    conn.lookupKey.filter { it.isDigit() } == digits ||
+                    (lookupKeys[key]?.filter { it.isDigit() } == digits)
+            }?.let { return it.key to it.value }
+        }
+        return incomingConnections.entries.singleOrNull()?.let { it.key to it.value }
     }
 
     private fun onIncomingHandshakeSettled(
@@ -282,6 +305,17 @@ class IrohDialManager private constructor(context: Context) {
 
     fun lookupKeyForCall(telecomCallKey: String): String? = lookupKeys[telecomCallKey]
 
+    /**
+     * Sole live dial session key (1:1 promotion / roster-intro fallback when Telecom
+     * Connection registry is empty). Prefers a single session; otherwise first entry.
+     */
+    fun soleLiveCallKey(): String? =
+        when (sessions.size) {
+            0 -> null
+            1 -> sessions.keys.firstOrNull()
+            else -> sessions.keys.firstOrNull()
+        }
+
     fun findTelecomCallKey(lookupKey: String): String? {
         if (sessions.containsKey(lookupKey)) return lookupKey
         lookupKeys.entries.firstOrNull { it.value == lookupKey }?.key?.let { return it }
@@ -375,7 +409,63 @@ class IrohDialManager private constructor(context: Context) {
         state: SagaHandshakeState,
         connection: SagaIrohConnection
     ) {
-        publishHandshakeState(lookupKey, telecomCallKey, state, connection, activateConnection = true)
+        val effective = verifySettledKey(lookupKey, telecomCallKey, state)
+        publishHandshakeState(lookupKey, telecomCallKey, effective, connection, activateConnection = true)
+    }
+
+    /**
+     * After a cryptographic Encrypted settle, compare the authenticated peer fingerprint to
+     * the local contact key and/or roster voucher. Mismatch must never show Encrypted (G4/G5).
+     */
+    private fun verifySettledKey(
+        lookupKey: String,
+        telecomCallKey: String,
+        state: SagaHandshakeState
+    ): SagaHandshakeState {
+        if (state != SagaHandshakeState.Encrypted) return state
+        val sessionId = sessions[telecomCallKey]?.sessionId ?: return state
+        val groupLeg = GroupCallRegistry.findLeg(telecomCallKey)
+        if (groupLeg != null) {
+            val check = GroupCallCoordinator.onPairwiseLegEncrypted(
+                appContext, telecomCallKey, sessionId
+            )
+            if (check.rejected) {
+                Log.e(TAG, "KEY_MISMATCH group leg lookup=[$lookupKey] check=[$check]")
+                val failed = if (check == KeyCheck.KEY_CHANGED ||
+                    encryptionStore.hasEncryptionHistory(lookupKey)
+                ) {
+                    SagaHandshakeState.Downgraded
+                } else {
+                    SagaHandshakeState.NeverEncrypted
+                }
+                // Close after the failed settle is published (caller continues).
+                scope.launch {
+                    delay(50)
+                    GroupCallCoordinator.hangupParticipant(appContext, telecomCallKey)
+                }
+                return failed
+            }
+            if (check.confirmed) return SagaHandshakeState.Encrypted
+            // No contact key and no matching roster: never show Encrypted (G5b / unencrypted admit).
+            return SagaHandshakeState.NeverEncrypted
+        }
+        // 1:1: require a stored contact key that matches the link fingerprint.
+        val local = ContactKeyStore.fingerprintHexForPhone(appContext, lookupKey)
+            ?: return SagaHandshakeState.NeverEncrypted
+        val linkFp = IrohNativeBridge.sessionPeerFingerprint(sessionId)
+        val check = RosterKeyCheck.evaluate(linkFp, local, null)
+        if (check.rejected) {
+            Log.e(TAG, "KEY_MISMATCH 1:1 lookup=[$lookupKey] check=[$check] — refusing Encrypted")
+            return if (check == KeyCheck.KEY_CHANGED ||
+                encryptionStore.hasEncryptionHistory(lookupKey)
+            ) {
+                SagaHandshakeState.Downgraded
+            } else {
+                SagaHandshakeState.NeverEncrypted
+            }
+        }
+        if (!check.confirmed) return SagaHandshakeState.NeverEncrypted
+        return SagaHandshakeState.Encrypted
     }
 
     private fun publishHandshakeState(

@@ -23,6 +23,9 @@ object IrohIncomingCallBridge {
         appContext = context.applicationContext
     }
 
+    /** Application context for native→Kotlin callbacks that may run before any group dial. */
+    fun appContextOrNull(): Context? = appContext
+
     fun onIncomingFromNative(sessionId: String, lookupKey: String, remoteEndpointId: String) {
         val ctx = appContext
         if (ctx == null) {

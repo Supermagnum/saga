@@ -126,6 +126,61 @@ object IrohNativeBridge {
         return nativePollHandshake(sessionId)
     }
 
+    /**
+     * 64-char lowercase hex fingerprint authenticated by a pairwise session handshake.
+     * Null when unknown — never treat null as verified (G4/G5).
+     */
+    fun sessionPeerFingerprint(sessionId: String): String? {
+        if (!ensureLoaded()) return null
+        return try {
+            nativeSessionPeerFingerprint(sessionId)
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "sessionPeerFingerprint unavailable: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Push a signaling-only introduction over an existing encrypted pairwise session so the
+     * peer can show "introduced by" without a media mesh link (G4a; G3 stays PENDING_MESH).
+     */
+    fun announceIntroducedPeer(
+        sessionId: String,
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        fingerprintHex: String,
+        introducerName: String
+    ): Boolean {
+        if (!ensureLoaded()) return false
+        return try {
+            nativeAnnounceIntroducedPeer(
+                sessionId, groupId, lookupKey, endpointId, fingerprintHex, introducerName
+            )
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "announceIntroducedPeer unavailable: ${e.message}")
+            false
+        }
+    }
+
+    /** Native -> Kotlin: roster introduction on an encrypted pairwise link. */
+    @JvmStatic
+    fun notifyRosterIntroduction(
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        fingerprintHex: String,
+        introducerName: String
+    ) {
+        Log.i(
+            TAG,
+            "notifyRosterIntroduction group=[$groupId] peer=[$lookupKey] by=[$introducerName]"
+        )
+        org.saga.telecom.GroupCallCoordinator.onRosterIntroductionNative(
+            groupId, lookupKey, endpointId, fingerprintHex, introducerName
+        )
+    }
+
     /** mode: 1 = SRTP (encrypted), 2 = plain RTP (not-encrypted Iroh). */
     fun startMedia(sessionId: String, mode: Int): Boolean {
         if (!ensureLoaded()) return false
@@ -309,6 +364,15 @@ object IrohNativeBridge {
     private external fun nativePeerDisguiseActive(sessionId: String): Boolean
     private external fun nativeProcessDisguisePcm(pcm: ByteBuffer)
     private external fun nativePollHandshake(sessionId: String): Int
+    private external fun nativeSessionPeerFingerprint(sessionId: String): String?
+    private external fun nativeAnnounceIntroducedPeer(
+        sessionId: String,
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        fingerprintHex: String,
+        introducerName: String
+    ): Boolean
     private external fun nativeStartMedia(sessionId: String, mode: Int): Boolean
     private external fun nativeStopMedia(sessionId: String)
     private external fun nativePushCapturePcm(sessionId: String, frame: ByteBuffer)

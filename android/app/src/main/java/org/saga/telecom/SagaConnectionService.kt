@@ -316,14 +316,26 @@ object SagaIrohConnectionRegistry {
 
     fun all(): List<SagaIrohConnection> = connections.values.toList()
 
-    /** The single live 1:1 Iroh leg that can be promoted to a group (active or held). */
+    /**
+     * The 1:1 Iroh leg that can be promoted to a group (active or held).
+     * Prefers a single ACTIVE connection; if ghost dialing/holding legs exist alongside one
+     * ACTIVE, still returns that ACTIVE leg (roster intro must not be dropped).
+     */
     fun soleLiveLeg(): SagaIrohConnection? {
+        val active = connections.values.filter { it.state == Connection.STATE_ACTIVE }
+        when (active.size) {
+            1 -> return active[0]
+            0 -> Unit
+            else -> return active.firstOrNull()
+        }
         val live = connections.values.filter {
             it.state == Connection.STATE_ACTIVE ||
                 it.state == Connection.STATE_HOLDING ||
-                it.state == Connection.STATE_DIALING
+                it.state == Connection.STATE_DIALING ||
+                it.state == Connection.STATE_RINGING
         }
-        return live.singleOrNull()
+        return live.singleOrNull() ?: live.firstOrNull()
+            ?: connections.values.firstOrNull()
     }
 
     fun conference(groupId: String): SagaIrohConference? = conferences[groupId]
