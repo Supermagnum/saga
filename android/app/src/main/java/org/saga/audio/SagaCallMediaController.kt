@@ -214,6 +214,23 @@ object SagaCallMediaController {
         }
     }
 
+    fun isHeld(telecomCallId: String): Boolean = engines[telecomCallId]?.isHeld() == true
+
+    /** True when any live voice engine is held (group hold toggle oracle). */
+    fun anyHeld(): Boolean = engines.values.any { it.isHeld() }
+
+    /**
+     * Hold/resume every live engine + RoQ session (group mute counterpart).
+     * Spec §14.2.2: hold pauses media on all links for the local device (G9).
+     */
+    fun setHeldAll(held: Boolean) {
+        for ((callId, engine) in engines) {
+            engine.setHeld(held)
+            rustSessions[callId]?.let { IrohNativeBridge.setMediaHeld(it, held) }
+        }
+        Log.i(TAG, "setHeldAll held=$held engines=${engines.size}")
+    }
+
     fun stop(telecomCallId: String, rustSessionId: String?) {
         cancelAnswerWait(telecomCallId)
         engines.remove(telecomCallId)?.stop()

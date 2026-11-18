@@ -208,6 +208,48 @@ pub(crate) fn bridge_notify_incoming_call(
     notify_incoming_call(session_id, lookup_key, remote_endpoint_id);
 }
 
+/// Peer closed the pairwise QUIC session mid-call (G8). Not used for connect-phase failures.
+#[cfg(feature = "iroh-transport")]
+pub(crate) fn bridge_notify_session_closed(session_id: &str, reason: &str) {
+    let Some(vm) = JAVA_VM.get() else {
+        warn!("notifySessionClosed: JavaVM not cached (session=[{session_id}])");
+        return;
+    };
+    let sid = session_id.to_string();
+    let why = reason.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifySessionClosed attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            error!("notifySessionClosed: IrohNativeBridge class not cached");
+            return;
+        };
+        let Ok(jid) = env.new_string(&sid) else {
+            return;
+        };
+        let Ok(jreason) = env.new_string(&why) else {
+            return;
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifySessionClosed",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[JValue::from(&jid), JValue::from(&jreason)],
+        ) {
+            error!("notifySessionClosed failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifySessionClosed");
+    });
+}
+
+#[cfg(not(feature = "iroh-transport"))]
+pub(crate) fn bridge_notify_session_closed(_session_id: &str, _reason: &str) {}
+
 /// Pairwise signaling-only roster introduction (G4a).
 /// Only referenced from the mock-token roster accept loop (debug/E2E builds).
 #[cfg(all(feature = "iroh-transport", feature = "mock-token"))]

@@ -1,14 +1,50 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-18 (Part 2b true mesh G3/G2/G6)
+**Last updated:** 2026-11-18 (Part 2c lifecycle G8/G9/G11)
 
-**Status:** Part 2b (`feat/group-true-mesh-g3-g2-g6`) — roster-driven
-Bob↔Charlene `saga/mesh-join/1` direct SRTP (encode-once MeshMixer, no relay).
-G3 PASS; G2 3-of-3 links PASS; G6 Alice 3 Encrypted adder links PASS. Full
-6-link hear-all with saga-peer still PENDING_MESH (CLI is 1:1; host_mesh covers
-the 4-peer model). Group calls remain compile-out of release. Part 2a trust
-rules unchanged. [#49](https://github.com/Supermagnum/saga/issues/49) fixed on
-main. Multi-peer still tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
+**Status:** Part 2c (`feat/group-lifecycle-g8-g9-g11`) — leave continues,
+mute/hold on every link, callee can add. G8a/G8b/G9/G11 core PASS. G11
+Alice/Bob auto-link to laptop still PENDING_MESH (roster announce over mesh
+peers). Group calls remain compile-out of release until the release gate.
+[#49](https://github.com/Supermagnum/saga/issues/49) fixed on main. Multi-peer
+[#30](https://github.com/Supermagnum/saga/issues/30).
+
+---
+
+## 2026-11-18 — Part 2c lifecycle (G8, G9, G11)
+
+Branch: `feat/group-lifecycle-g8-g9-g11` (from main after #56 / Part 2b).
+
+### Behaviour
+
+- Pairwise remote hang-up: native `connection.closed()` → `notifySessionClosed`
+  → DialManager tears down only that leg (`remaining=N-1`).
+- `endCall` resolves `+1555…` / digit aliases so leave always closes QUIC.
+- `leaveGroup` / hangup close mesh-only legs via `DialManager.endCall` (no
+  Connection required).
+- Hold/resume: `setHeldAll` on every live engine (InCall local `held` flag is
+  not the oracle — engines survive activity recreation).
+- Mute unchanged (`setMutedAllForTest` / per-leg mute). Spec §14.2.2.
+
+### Host
+
+| Gate | Result |
+|------|--------|
+| `saga-peer --test host_mesh` (incl. leave) | **PASS** 5/5 |
+
+### Emulator (API 35 ×3)
+
+| Case | Result | Evidence |
+|------|--------|----------|
+| G8a Bob leaves | **PASS** | Alice `leg ended … remaining=1`; Charlene stays |
+| G8b Alice leaves | **PASS** | Bob↔Charlene mesh continues (no charlene peer-left) |
+| G9 mute | **PASS** | engines=2; muted=false |
+| G9 hold/resume | **PASS** | held=true then held=false via setHeldAll |
+| G11 Charlene adds laptop | **PASS** | Charlene→laptop Encrypted |
+| G11 A/B auto-link laptop | **PENDING_MESH** | roster announce over mesh peers |
+
+Logs: `/tmp/e2e-group-2c-r4.log`. Screenshots:
+`docs/screenshots/group-mesh/part2c/`.
 
 ---
 
