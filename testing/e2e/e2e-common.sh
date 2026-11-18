@@ -170,6 +170,8 @@ wait_for_fresh_relay_online() {
   local serial="$1" role="${2:-device}"
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
+  ensure_saga_process_up "$serial" "$role" 5 || return 1
+  reenable_saga_phone_account "$serial"
   wait_for_relay_online "$serial" "$role"
 }
 
@@ -276,15 +278,18 @@ ensure_callee_listening() {
   # Prefer live native relay-ready over logcat listen markers. Logcat can lose
   # the bind line under long suites while the process is still accepting
   # (issue #49); force-stopping a healthy callee then flakes Case 2.
+  # Do NOT treat a stale LISTEN_MARKER as success — logcat survives force-stop
+  # and Case 2c→3 was returning early then dying as "not running after listen".
   if saga_process_running "$serial"; then
     if [[ "$(query_relay_ready_native "$serial")" == "$RELAY_READY_NATIVE" ]]; then
       return 0
     fi
-    if check_log "$serial" "$LISTEN_MARKER"; then
+    # Process up but not native-ready yet: brief poll before clean recycle.
+    if poll_for_relay_native "$serial" "callee-already-up" 12; then
       return 0
     fi
     adb -s "$serial" shell am force-stop org.saga
-    sleep 1
+    sleep 2
   fi
   adb -s "$serial" logcat -c 2>/dev/null || true
   start_listener "$serial"
@@ -293,6 +298,7 @@ ensure_callee_listening() {
   if poll_for_relay_native "$serial" "listen-native" "$LISTEN_POLL_MAX_SECS"; then
     return 0
   fi
+  # Fresh process only: logcat marker is a fallback after we cleared buffers.
   if poll_for_log_marker "$serial" "$LISTEN_MARKER" "listen" "$LISTEN_POLL_MAX_SECS"; then
     return 0
   fi
