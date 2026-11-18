@@ -7,11 +7,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.saga.iroh.ContactKeyStore
 import org.saga.iroh.IrohNativeBridge
 
 /**
  * Parallel handshake probe over Iroh using mock-token when native library is available.
+ *
+ * Crypto success becomes [SagaHandshakeState.Encrypted] here. Contact / roster trust
+ * (G4/G5) is applied afterward in [org.saga.iroh.IrohDialManager] so a missing contact
+ * key can still be confirmed by a roster fingerprint on a group leg.
  */
 class SagaHandshakeCoordinator(
     private val appContext: Context,
@@ -39,16 +42,13 @@ class SagaHandshakeCoordinator(
 
             val finalState = when (poll) {
                 IrohNativeBridge.HANDSHAKE_ENCRYPTED -> {
-                    if (!ContactKeyStore.hasResolvableKey(appContext, peerAddress)) {
-                        SagaHandshakeState.NeverEncrypted
-                    } else {
-                        encryptionEstablishedStore.markEncryptionEstablished(peerAddress)
-                        SagaHandshakeState.Encrypted
-                    }
+                    encryptionEstablishedStore.markEncryptionEstablished(peerAddress)
+                    SagaHandshakeState.Encrypted
                 }
                 IrohNativeBridge.HANDSHAKE_FAILED -> resolveFailure(peerAddress)
                 else -> resolveFailure(peerAddress)
             }
+            Log.i(TAG, "native poll=[$poll] → [$finalState] for [$peerAddress]")
             onState(finalState)
         }
     }

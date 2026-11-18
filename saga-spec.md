@@ -708,7 +708,18 @@ pattern used by Signal and Messenger for larger groups later:
   avoid glare.
 - **Unknown contacts:** UI shows e.g. "Charlene, introduced by Alice";
   verify against the roster fingerprint. Never show verified without a
-  key check.
+  key check. Roster-verified unknown peers may show
+  "Encrypted · introduced by …" once their own link confirms.
+- **Verification rule:** a peer is marked verified on this device only
+  when (1) this device has its own direct link with completed
+  ephemeral-session + key confirmation, and (2) the long-term key used
+  in that handshake matches the expected fingerprint — the local
+  contact entry if present and matching, otherwise the roster
+  fingerprint from the introducer. Contact mismatch → "Key changed"
+  (§5a-style, never Encrypted). A present roster voucher that disagrees
+  with the link → "Not verified" and the link is closed (`KEY_MISMATCH`),
+  even when a local contact key matches (G4b: introducer claim is not
+  ignored).
 - **Security:** group Encrypted only when every link is encrypted and
   confirmed. Link failure is marked on all screens; §5a applies for a
   previously-encrypted contact; §5b applies per link. Rejoin requires a

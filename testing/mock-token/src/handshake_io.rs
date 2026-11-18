@@ -13,16 +13,26 @@ use saga_session::{
 };
 
 pub enum HandshakeOutcome {
-    Encrypted { output: HandshakeOutput },
+    Encrypted {
+        output: HandshakeOutput,
+        /// 64 lowercase hex of the peer long-term fingerprint authenticated by this handshake.
+        peer_fingerprint_hex: String,
+    },
     Failed { reason: String },
 }
 
 impl std::fmt::Debug for HandshakeOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HandshakeOutcome::Encrypted { output } => {
+            HandshakeOutcome::Encrypted {
+                output,
+                peer_fingerprint_hex,
+            } => {
                 let (a, b) = output.session_key_debug_prefix();
-                write!(f, "Encrypted {{ session_key_hash_prefix: {a:02x}{b:02x} }}")
+                write!(
+                    f,
+                    "Encrypted {{ session_key_hash_prefix: {a:02x}{b:02x}, peer_fp: {peer_fingerprint_hex} }}"
+                )
             }
             HandshakeOutcome::Failed { reason } => write!(f, "Failed {{ reason: {reason:?} }}"),
         }
@@ -32,10 +42,27 @@ impl std::fmt::Debug for HandshakeOutcome {
 impl HandshakeOutcome {
     pub fn session_key(&self) -> Option<[u8; 32]> {
         match self {
-            HandshakeOutcome::Encrypted { output } => Some(*output.saga_session_key),
+            HandshakeOutcome::Encrypted { output, .. } => Some(*output.saga_session_key),
             HandshakeOutcome::Failed { .. } => None,
         }
     }
+
+    pub fn peer_fingerprint_hex(&self) -> Option<&str> {
+        match self {
+            HandshakeOutcome::Encrypted {
+                peer_fingerprint_hex,
+                ..
+            } => Some(peer_fingerprint_hex.as_str()),
+            HandshakeOutcome::Failed { .. } => None,
+        }
+    }
+}
+
+fn fingerprint_hex_from_cert(cert: &LongTermCert) -> String {
+    let mut raw = [0u8; 32];
+    raw.copy_from_slice(cert.fingerprint.as_slice());
+    let hex = InitMessage::encode_fingerprint_hex(&raw);
+    String::from_utf8(hex.to_vec()).expect("fingerprint hex is ascii")
 }
 
 /// XOR the first byte of `eid` for debug fault-injection of channel binding.
@@ -284,7 +311,10 @@ where
     }
     // Drop confirmation key material from retained output after successful verify.
     output.confirmation_key.zeroize();
-    HandshakeOutcome::Encrypted { output }
+    HandshakeOutcome::Encrypted {
+        output,
+        peer_fingerprint_hex: peer.fingerprint_hex_string(),
+    }
 }
 
 /// Responder side of ephemeral-session over a byte stream.
@@ -364,6 +394,7 @@ where
             }
         }
     };
+    let peer_fingerprint_hex = fingerprint_hex_from_cert(&peer_cert);
 
     let (resp, mut output) = match token
         .responder_reply(
@@ -415,7 +446,10 @@ where
         );
     }
     output.confirmation_key.zeroize();
-    HandshakeOutcome::Encrypted { output }
+    HandshakeOutcome::Encrypted {
+        output,
+        peer_fingerprint_hex,
+    }
 }
 
 fn resolve_peer_cert_from_init(init: &InitMessage) -> Result<LongTermCert, TokenError> {

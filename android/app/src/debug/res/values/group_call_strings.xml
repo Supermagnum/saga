@@ -12,6 +12,9 @@
     <string name="add_participant_failed">Could not add participant</string>
     <string name="add_participant_ok">Add</string>
     <string name="introduced_by_fmt">%1$s, introduced by %2$s</string>
+    <string name="encrypted_introduced_by_fmt">Encrypted · introduced by %1$s</string>
+    <string name="participant_key_changed">Key changed</string>
+    <string name="participant_not_verified">Not verified</string>
     <string name="group_max_title">Call is full</string>
     <string name="group_max_participants">A group call can have at most %1$d people, including you. Remove someone before adding another.</string>
     <string name="confirm_add_unencrypted_title">Add without encryption?</string>

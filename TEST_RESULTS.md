@@ -1,11 +1,54 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-17 (issue #49 API 29 Case 2 relay warm-up)
+**Last updated:** 2026-11-18 (Part 2a group trust G4/G5)
 
-**Status:** [#49](https://github.com/Supermagnum/saga/issues/49) fixed on
-`fix/api29-case2-relay-warmup` (app wait + one connect retry; harness
-one warm restart default). Iroh group calls remain compile-out of release;
-Part 1 multi-peer still **INCOMPLETE** ([#30](https://github.com/Supermagnum/saga/issues/30)).
+**Status:** Part 2a (`feat/group-trust-g4-g5`) — trust-first for group calls
+(G4/G5). Encrypted only after authenticated link fingerprint matches contact
+or roster; Key changed / Not verified UI; signaling-only roster announce for
+"introduced by". True mesh media (G3/G2/G6) is Part 2b. Group calls remain
+compile-out of release. [#49](https://github.com/Supermagnum/saga/issues/49)
+fixed on main. Multi-peer still tracked in [#30](https://github.com/Supermagnum/saga/issues/30).
+
+---
+
+## 2026-11-18 — Part 2a group trust (G4/G5)
+
+Branch: `feat/group-trust-g4-g5` (from main after #54). **Do not self-merge**
+(trust / verification UI).
+
+### Verification logic
+
+| Who | When marked verified | Why |
+|-----|----------------------|-----|
+| Contact peer | Own direct link Encrypted **and** handshake FP == Contacts FP | Local contact confirms when it matches |
+| Introduced unknown | Own direct link Encrypted **and** handshake FP == roster FP | Introducer voucher when no contact key |
+| Anyone | Never, if FP missing / mismatch | Null FP is never verified |
+| Roster disagree | Always reject (`KEY_MISMATCH`) | Wrong introducer claim closes the link even if a contact key matches |
+| Contact disagree | `KEY_CHANGED` (§5a-style) | Saved contact FP differs from link FP |
+
+UI: Encrypted; Encrypted · introduced by X; Not verified / Not encrypted;
+Key changed. Group padlock Encrypted only if every link confirmed.
+Signaling-only roster announce (no B↔C media yet — Part 2b).
+
+### Host
+
+| Gate | Result |
+|------|--------|
+| `mock-token` handshake | **PASS** (2 tests) |
+| `GroupCallStateTest` (RosterKeyCheck, Key changed, introduced-by) | **PASS** |
+
+### Emulator (API 35 ×3: 5554/5556/5558)
+
+| Case | Result | Evidence |
+|------|--------|----------|
+| G4a introduced-by | **PASS** (clean run; some later suite flakes on charlene ring) | bob UI `charlene, introduced by alice` |
+| G4b wrong roster FP | **PASS** | `KEY_MISMATCH` closes link |
+| G5 wrong contact key | **PASS** | alice Key changed / Not encrypted UI |
+| G5b confirm-to-admit | **PASS** (r14); intermittent second-outcome race in busy suite | NEEDS_UNENCRYPTED_CONFIRMATION then PLACED |
+
+Screenshots: `docs/screenshots/group-mesh/part2a/`
+(`g4-introduced-by-*.png`, `g5-not-encrypted-*.png`).
+Logs: `/tmp/e2e-group-2a-g4g5-r18.log` (G4b/G5 PASS), r13/r14 for G4a UI.
 
 ---
 

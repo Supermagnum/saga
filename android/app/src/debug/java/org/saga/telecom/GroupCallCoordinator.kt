@@ -19,7 +19,6 @@ import org.saga.call.MeshParticipant
 import org.saga.call.PadlockDisplayState
 import org.saga.call.RosterKeyCheck
 import org.saga.call.SagaCallRegistry
-import org.saga.contacts.ContactKeyRepository
 import org.saga.dial.DialTarget
 import org.saga.iroh.ContactKeyStore
 import org.saga.iroh.IrohDialManager
@@ -53,6 +52,14 @@ object GroupCallCoordinator {
     private const val LEG_CREATE_TIMEOUT_MS = 20_000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Handshake settle runs on Dispatchers.Default — Toast requires the main looper. */
+    private fun toastOnMain(context: Context, resId: Int) {
+        val app = context.applicationContext
+        mainHandler.post {
+            Toast.makeText(app, resId, Toast.LENGTH_LONG).show()
+        }
+    }
 
     data class AddRequest(
         val target: DialTarget.Iroh,
@@ -102,15 +109,35 @@ object GroupCallCoordinator {
             base = existing
         } else {
             val leg = SagaIrohConnectionRegistry.soleLiveLeg()
-                ?: return AddOutcome.REFUSED_NO_IROH_CALL
-            if (!GroupCallPolicy.canFormGroup(listOf(CallOrigin.IROH))) {
-                return AddOutcome.REFUSED_CELLULAR
+                ?: SagaIrohConnectionRegistry.all().firstOrNull()
+            if (leg == null) {
+                // DialManager may still hold the pairwise session if Telecom Connection was
+                // dropped from the registry (InCall buried / answer race). Refuse only when
+                // there is no live dial session either.
+                if (IrohDialManager.get(app).soleLiveCallKey() == null) {
+                    return AddOutcome.REFUSED_NO_IROH_CALL
+                }
+                Log.w(TAG, "requestAdd: Connection registry empty; promoting via dial session")
+                val callKey = IrohDialManager.get(app).soleLiveCallKey()!!
+                val lookup = IrohDialManager.get(app).lookupKeyForCall(callKey) ?: callKey
+                promotedFrom = null
+                val seed = GroupCallState(
+                    groupId = request.groupId ?: newGroupId(),
+                    backend = backendNow()
+                )
+                base = seed.withParticipant(
+                    participantFromLiveSession(app, callKey, lookup, seed)
+                )
+            } else {
+                if (!GroupCallPolicy.canFormGroup(listOf(CallOrigin.IROH))) {
+                    return AddOutcome.REFUSED_CELLULAR
+                }
+                promotedFrom = leg
+                base = GroupCallState(
+                    groupId = request.groupId ?: newGroupId(),
+                    backend = backendNow()
+                )
             }
-            promotedFrom = leg
-            base = GroupCallState(
-                groupId = request.groupId ?: newGroupId(),
-                backend = backendNow()
-            )
         }
 
         val keyResolvable = ContactKeyStore.hasResolvableKey(app, target.lookupKey)
@@ -158,13 +185,8 @@ object GroupCallCoordinator {
             telecomCallKey = legKey,
             introduced = request.introducerName != null,
             knownContact = name != target.lookupKey || keyResolvable,
-            // Pairwise: the 1:1 handshake itself checks the contact key. Mesh: needs the
-            // authenticated link fingerprint (see onMeshPeerState) before it counts as confirmed.
-            keyCheck = if (backend == MeshBackend.PAIRWISE_SESSIONS && keyResolvable) {
-                KeyCheck.CONFIRMED_LOCAL_CONTACT
-            } else {
-                KeyCheck.UNVERIFIED
-            },
+            // Never pre-confirm: wait for the authenticated link fingerprint (pairwise or mesh).
+            keyCheck = KeyCheck.UNVERIFIED,
             addedUnencryptedConfirmed = !keyResolvable && request.confirmedUnencrypted
         )
         // ConcurrentHashMap forbids null values; only record an explicit roster fingerprint.
@@ -255,11 +277,7 @@ object GroupCallCoordinator {
             telecomCallKey = connection.telecomCallKey,
             introduced = introducerName != null,
             knownContact = connection.displayName != connection.lookupKey || keyResolvable,
-            keyCheck = if (state.backend == MeshBackend.PAIRWISE_SESSIONS && keyResolvable) {
-                KeyCheck.CONFIRMED_LOCAL_CONTACT
-            } else {
-                KeyCheck.UNVERIFIED
-            }
+            keyCheck = KeyCheck.UNVERIFIED
         )
         if (rosterFingerprintHex != null) {
             pendingRoster[connection.telecomCallKey] = rosterFingerprintHex
@@ -286,11 +304,18 @@ object GroupCallCoordinator {
                 if (connection != null) connection.onDisconnect() else onLegEnded(ctx, linkId)
             }
             IrohNativeBridge.MESH_PEER_ENCRYPTED -> {
-                val check = evaluateLinkKey(ctx, groupId, linkId)
+                val check = evaluateLinkKey(
+                    ctx, groupId, linkId,
+                    linkFingerprintHex = IrohNativeBridge.meshPeerFingerprint(groupId, linkId)
+                )
                 GroupCallRegistry.setKeyCheck(groupId, linkId, check)
-                if (check == KeyCheck.MISMATCH) {
-                    Log.e(TAG, "KEY_MISMATCH group=[$groupId] link=[$linkId] — closing link")
-                    Toast.makeText(ctx, R.string.participant_key_mismatch, Toast.LENGTH_LONG).show()
+                if (check.rejected) {
+                    Log.e(TAG, "KEY_MISMATCH group=[$groupId] link=[$linkId] check=[$check] — closing link")
+                    toastOnMain(
+                        ctx,
+                        if (check == KeyCheck.KEY_CHANGED) R.string.participant_key_changed
+                        else R.string.participant_key_mismatch
+                    )
                     if (connection != null) connection.onDisconnect() else onLegEnded(ctx, linkId)
                     return
                 }
@@ -300,15 +325,251 @@ object GroupCallCoordinator {
         }
     }
 
-    private fun evaluateLinkKey(ctx: Context, groupId: String, linkId: String): KeyCheck {
+    /**
+     * Pairwise (scaffold) leg settled Encrypted: check the authenticated session fingerprint
+     * against the local contact key and/or roster voucher. Mismatch closes the link.
+     *
+     * @return the [KeyCheck] applied (callers must not show Encrypted when not confirmed)
+     */
+    fun onPairwiseLegEncrypted(
+        context: Context,
+        telecomCallKey: String,
+        sessionId: String
+    ): KeyCheck {
+        val app = remember(context)
+        val found = GroupCallRegistry.findLeg(telecomCallKey) ?: return KeyCheck.UNVERIFIED
+        val (group, leg) = found
+        val linkFp = IrohNativeBridge.sessionPeerFingerprint(sessionId)
+        val localFp = ContactKeyStore.fingerprintHexForPhone(app, leg.lookupKey)
+        val rosterFp = pendingRoster[leg.telecomCallKey]
+        Log.i(
+            TAG,
+            "key check session=[$sessionId] lookup=[${leg.lookupKey}] " +
+                "linkFp=[${linkFp ?: "null"}] localFp=[${localFp ?: "null"}] " +
+                "rosterFp=[${rosterFp ?: "null"}]"
+        )
+        val check = evaluateLinkKey(app, group.groupId, leg.telecomCallKey, linkFp)
+        Log.i(
+            TAG,
+            "key check result group=[${group.groupId}] link=[${leg.telecomCallKey}] check=[$check] " +
+                "rejected=[${check.rejected}] confirmed=[${check.confirmed}]"
+        )
+        GroupCallRegistry.setKeyCheck(group.groupId, leg.telecomCallKey, check)
+        if (check.rejected) {
+            Log.e(
+                TAG,
+                "KEY_MISMATCH group=[${group.groupId}] link=[${leg.telecomCallKey}] check=[$check]"
+            )
+            toastOnMain(
+                app,
+                if (check == KeyCheck.KEY_CHANGED) R.string.participant_key_changed
+                else R.string.participant_key_mismatch
+            )
+        } else if (check.confirmed) {
+            Log.i(
+                TAG,
+                "key confirmed group=[${group.groupId}] link=[${leg.telecomCallKey}] check=[$check]"
+            )
+            // After a verified add, announce on other encrypted pairwise legs so peers can
+            // show "introduced by" without a media mesh (G4a; G3 still PENDING_MESH).
+            maybeAnnounceIntroduction(app, group.groupId, leg)
+        }
+        return check
+    }
+
+    /** Roster fingerprint supplied with an introduction for this leg, if any. */
+    fun pendingRosterFingerprint(legKey: String): String? = pendingRoster[legKey]
+
+    private fun evaluateLinkKey(
+        ctx: Context,
+        groupId: String,
+        linkId: String,
+        linkFingerprintHex: String?
+    ): KeyCheck {
         val leg = GroupCallRegistry.get(groupId)?.participantForLeg(linkId) ?: return KeyCheck.UNVERIFIED
-        val local = ContactKeyRepository.readPublicKeyBytesForPhone(ctx, leg.lookupKey)
-            ?.let { ContactKeyStore.fingerprintHexFromKeyBytes(it) }
+        val local = ContactKeyStore.fingerprintHexForPhone(ctx, leg.lookupKey)
         return RosterKeyCheck.evaluate(
-            linkFingerprintHex = IrohNativeBridge.meshPeerFingerprint(groupId, linkId),
+            linkFingerprintHex = linkFingerprintHex,
             localContactFingerprintHex = local,
             rosterFingerprintHex = pendingRoster[linkId]
         )
+    }
+
+    /**
+     * Signaling-only: tell other pairwise legs about a newly verified participant so they can
+     * show "introduced by" without dialling that peer yet (media mesh is Part 2b).
+     */
+    private fun maybeAnnounceIntroduction(ctx: Context, groupId: String, newLeg: MeshParticipant) {
+        val group = GroupCallRegistry.get(groupId) ?: return
+        val confirmed = group.participantForLeg(newLeg.telecomCallKey)?.takeIf { it.keyCheck.confirmed }
+            ?: return
+        val manager = IrohDialManager.get(ctx)
+        val newSessionId = manager.sessionIdForCall(confirmed.telecomCallKey)
+        val fp = ContactKeyStore.fingerprintHexForPhone(ctx, confirmed.lookupKey)
+            ?: newSessionId?.let { IrohNativeBridge.sessionPeerFingerprint(it) }
+            ?: return
+        val introducerLabel = localPeerLabel(ctx)
+        for (peer in group.participants) {
+            if (peer.telecomCallKey == confirmed.telecomCallKey) continue
+            val sessionId = manager.sessionIdForCall(peer.telecomCallKey) ?: continue
+            IrohNativeBridge.announceIntroducedPeer(
+                sessionId,
+                groupId,
+                confirmed.lookupKey,
+                confirmed.endpointId,
+                fp,
+                introducerLabel
+            )
+        }
+    }
+
+    private fun localPeerLabel(ctx: Context): String {
+        val prefs = ctx.getSharedPreferences("saga_dev_identity", Context.MODE_PRIVATE)
+        return when (val label = prefs.getString("peer_label", null)) {
+            "15550100011" -> "alice"
+            "15550100010" -> "bob"
+            "15550100030" -> "charlene"
+            "15550100020" -> "laptop"
+            null -> "peer"
+            else -> label
+        }
+    }
+
+    /** JNI entry: uses the context remembered from a prior group/call operation. */
+    fun onRosterIntroductionNative(
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        rosterFingerprintHex: String,
+        introducerName: String
+    ) {
+        // Callees may never have dialled a group yet — fall back to the process Application
+        // context installed at IrohIncomingCallBridge.init so introductions are not dropped.
+        val ctx = appContextOrNull()
+            ?: org.saga.iroh.IrohIncomingCallBridge.appContextOrNull()
+        if (ctx == null) {
+            Log.e(
+                TAG,
+                "roster introduction dropped — no Application context " +
+                    "(peer=[$lookupKey] by=[$introducerName])"
+            )
+            return
+        }
+        onRosterIntroduction(
+            ctx, groupId, lookupKey, endpointId, rosterFingerprintHex, introducerName
+        )
+    }
+
+    /**
+     * Roster introduction received over an existing encrypted pairwise link (G4a).
+     * Registers the peer as introduced without opening a media link (2b).
+     */
+    fun onRosterIntroduction(
+        context: Context,
+        groupId: String,
+        lookupKey: String,
+        endpointId: String,
+        rosterFingerprintHex: String,
+        introducerName: String
+    ) {
+        val app = remember(context)
+        val existing = when {
+            groupId.isNotBlank() -> GroupCallRegistry.get(groupId)
+            else -> null
+        } ?: GroupCallRegistry.current()
+        val base = existing ?: run {
+            // Promote the live 1:1 into a group so the introduced peer can appear in the UI.
+            // Prefer Telecom Connection; fall back to DialManager session when the Connection
+            // registry is empty (e.g. InCall buried) but the native pairwise session is live.
+            val leg = SagaIrohConnectionRegistry.soleLiveLeg()
+                ?: SagaIrohConnectionRegistry.all().firstOrNull {
+                    it.state == Connection.STATE_ACTIVE ||
+                        it.state == Connection.STATE_HOLDING ||
+                        it.state == Connection.STATE_DIALING
+                }
+                ?: SagaIrohConnectionRegistry.all().firstOrNull()
+            val gid = groupId.ifBlank { newGroupId() }
+            val seed = GroupCallState(groupId = gid, backend = backendNow())
+            when {
+                leg != null -> seed.withParticipant(participantFromConnection(app, leg, seed))
+                else -> {
+                    val mgr = IrohDialManager.get(app)
+                    val callKey = mgr.soleLiveCallKey()
+                    if (callKey == null) {
+                        Log.e(
+                            TAG,
+                            "roster introduction ignored — no Iroh connection or dial session " +
+                                "(peer=[$lookupKey] by=[$introducerName])"
+                        )
+                        return
+                    }
+                    val introLookup = mgr.lookupKeyForCall(callKey) ?: callKey
+                    seed.withParticipant(
+                        participantFromLiveSession(app, callKey, introLookup, seed)
+                    )
+                }
+            }
+        }
+        val lookupDigits = lookupKey.filter { it.isDigit() }
+        if (base.participants.any {
+                it.lookupKey == lookupKey ||
+                    it.lookupKey.filter { c -> c.isDigit() } == lookupDigits
+            }
+        ) {
+            Log.i(TAG, "roster introduction already present peer=[$lookupKey]")
+            return
+        }
+        if (!base.canAddMore()) return
+        val keyResolvable = ContactKeyStore.hasResolvableKey(app, lookupKey) ||
+            (lookupDigits.isNotEmpty() && ContactKeyStore.hasResolvableKey(app, lookupDigits))
+        val name = when (lookupDigits) {
+            "15550100030" -> "charlene"
+            "15550100020" -> "laptop"
+            "15550100010" -> "bob"
+            "15550100011" -> "alice"
+            else -> lookupKey
+        }
+        val legKey = GroupCallState.legKey(base.groupId, lookupKey)
+        pendingRoster[legKey] = rosterFingerprintHex
+        // Signaling-only: confirm against the introducer's roster voucher (no media link yet).
+        val rosterCheck = RosterKeyCheck.evaluate(
+            linkFingerprintHex = rosterFingerprintHex,
+            localContactFingerprintHex = null,
+            rosterFingerprintHex = rosterFingerprintHex
+        )
+        val participant = MeshParticipant(
+            lookupKey = lookupKey,
+            endpointId = endpointId,
+            displayName = name,
+            introducerName = introducerName,
+            snapshot = if (rosterCheck.confirmed) {
+                connectingSnapshot(app).copy(
+                    padlockState = PadlockDisplayState.ENCRYPTED,
+                    statusText = "Encrypted",
+                    playSecureCue = false,
+                    playUnsecureCue = false
+                )
+            } else {
+                connectingSnapshot(app).copy(
+                    padlockState = PadlockDisplayState.KEY_NOT_FOUND,
+                    statusText = MeshParticipant.NOT_VERIFIED_TEXT,
+                    playSecureCue = false,
+                    playUnsecureCue = false
+                )
+            },
+            rustSessionId = null,
+            telecomCallKey = legKey,
+            introduced = true,
+            knownContact = keyResolvable,
+            keyCheck = rosterCheck
+        )
+        GroupCallRegistry.put(base.withParticipant(participant))
+        Log.i(
+            TAG,
+            "roster introduction group=[${base.groupId}] peer=[$lookupKey] by=[$introducerName] " +
+                "(signaling only; no media link yet)"
+        )
+        mainHandler.post { syncConference(app, base.groupId) }
     }
 
     /** Create / update the Telecom Conference so it contains every live leg (idempotent). */
@@ -449,6 +710,16 @@ object GroupCallCoordinator {
         val snapshot = SagaCallRegistry.get(connection.telecomCallKey)?.snapshot
             ?: SagaCallRegistry.initialSnapshot(CallOrigin.IROH, connection.lookupKey, context)
         val keyResolvable = ContactKeyStore.hasResolvableKey(context, connection.lookupKey)
+        // The 1:1 path already ran verifySettledKey before showing Encrypted. Promoting that
+        // leg into a group must not wipe confirmation (effectiveSnapshot demotes Encrypted
+        // + UNVERIFIED to "Not encrypted").
+        val keyCheck = if (
+            snapshot.padlockState == PadlockDisplayState.ENCRYPTED && keyResolvable
+        ) {
+            KeyCheck.CONFIRMED_LOCAL_CONTACT
+        } else {
+            KeyCheck.UNVERIFIED
+        }
         return MeshParticipant(
             lookupKey = connection.lookupKey,
             endpointId = connection.endpointId,
@@ -458,11 +729,49 @@ object GroupCallCoordinator {
             // The promoted 1:1 keeps its existing key (already used by sessions / media).
             telecomCallKey = connection.telecomCallKey,
             knownContact = connection.displayName != connection.lookupKey || keyResolvable,
-            keyCheck = if (group.backend == MeshBackend.PAIRWISE_SESSIONS && keyResolvable) {
-                KeyCheck.CONFIRMED_LOCAL_CONTACT
-            } else {
-                KeyCheck.UNVERIFIED
-            }
+            keyCheck = keyCheck
+        )
+    }
+
+    /**
+     * Promote a live DialManager session when Telecom Connection is missing from the registry.
+     * Used so roster introductions are not dropped while the pairwise native session is up.
+     */
+    private fun participantFromLiveSession(
+        context: Context,
+        telecomCallKey: String,
+        lookupKey: String,
+        group: GroupCallState
+    ): MeshParticipant {
+        val snapshot = SagaCallRegistry.get(telecomCallKey)?.snapshot
+            ?: SagaCallRegistry.initialSnapshot(CallOrigin.IROH, lookupKey, context)
+        val keyResolvable = ContactKeyStore.hasResolvableKey(context, lookupKey)
+        val digits = lookupKey.filter { it.isDigit() }
+        val displayName = when (digits) {
+            "15550100011" -> "alice"
+            "15550100010" -> "bob"
+            "15550100030" -> "charlene"
+            "15550100020" -> "laptop"
+            else -> lookupKey
+        }
+        val keyCheck = if (
+            snapshot.padlockState == PadlockDisplayState.ENCRYPTED && keyResolvable
+        ) {
+            KeyCheck.CONFIRMED_LOCAL_CONTACT
+        } else if (snapshot.padlockState == PadlockDisplayState.ENCRYPTED) {
+            KeyCheck.CONFIRMED_LOCAL_CONTACT
+        } else {
+            KeyCheck.UNVERIFIED
+        }
+        return MeshParticipant(
+            lookupKey = lookupKey,
+            endpointId = lookupKey,
+            displayName = displayName,
+            snapshot = snapshot,
+            rustSessionId = IrohDialManager.get(context).sessionIdForCall(telecomCallKey),
+            telecomCallKey = telecomCallKey,
+            knownContact = displayName != lookupKey || keyResolvable,
+            keyCheck = keyCheck
         )
     }
 
@@ -486,4 +795,7 @@ object GroupCallCoordinator {
     }
 
     private fun appContextOrNull(): Context? = appContext
+
+    /** For native→Kotlin callbacks that need a Context after a prior group call touched the coordinator. */
+    fun appContextForNative(): Context? = appContext
 }

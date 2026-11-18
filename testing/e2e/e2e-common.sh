@@ -279,8 +279,10 @@ contact_call() {
   local caller="$1" contact_name="$2" callee="${3:-}"
   local encrypted="${4:-false}"
   clear_stuck_telephony_calls "$caller"
+  ensure_telecom_idle "$caller" "caller-pre-warm" 15 || true
   if [[ -n "$callee" ]]; then
     clear_stuck_telephony_calls "$callee"
+    ensure_telecom_idle "$callee" "callee-pre-listen" 15 || true
     ensure_callee_listening "$callee" || {
       record "LISTEN:FAIL callee [$callee] not listening before dial to [$contact_name]"
       return 1
@@ -293,16 +295,39 @@ contact_call() {
   fi
   if [[ "$encrypted" == "true" ]]; then
     warm_encrypted_caller "$caller" || return 1
+    # Warm restart can rebind ConnectionService onto an orphaned Telecom leg and
+    # auto-reconnect (caller Encrypted + callee RINGING) before the harness dials.
+    # Drain + one re-warm so native/registry state matches Telecom idle.
+    if ! telecom_no_live_calls "$caller"; then
+      record "TELECOM:INFO caller [$caller] ghost after warm — drain and re-warm"
+      ensure_telecom_idle "$caller" "caller-post-warm" 20 || {
+        record "TELECOM:FAIL caller [$caller] ghost call after warm — abort dial"
+        return 1
+      }
+      warm_encrypted_caller "$caller" || return 1
+      if ! telecom_no_live_calls "$caller"; then
+        ensure_telecom_idle "$caller" "caller-rewarm" 20 || {
+          record "TELECOM:FAIL caller [$caller] ghost persists after re-warm — abort dial"
+          return 1
+        }
+      fi
+    fi
     adb -s "$caller" logcat -c
   else
     adb -s "$caller" logcat -c
     adb -s "$caller" shell am force-stop org.saga
     sleep 1
+    clear_stuck_telephony_calls "$caller"
+    ensure_telecom_idle "$caller" "caller-post-stop" 15 || true
   fi
   # Re-check callee relay immediately before dial: warm_encrypted_caller takes several
   # seconds during which the callee can lose its home relay (RELAY_POLL used to latch
   # Ready forever → dial with no inbound accept → RING:FAIL first_missing=inbound_accepted).
   if [[ -n "$callee" ]]; then
+    ensure_telecom_idle "$callee" "callee-pre-dial" 20 || {
+      record "TELECOM:FAIL callee [$callee] still ringing/active before dial — abort"
+      return 1
+    }
     if ! wait_for_relay_online "$callee" "callee-pre-dial"; then
       record "RELAY:FAIL callee [$callee] not relay-ready immediately before dial"
       return 1
@@ -317,6 +342,9 @@ contact_call() {
 stop_caller() {
   clear_stuck_telephony_calls "$1"
   adb -s "$1" shell am force-stop org.saga
+  sleep 0.5
+  clear_stuck_telephony_calls "$1"
+  ensure_telecom_idle "$1" "stop-caller" 10 || true
 }
 
 # Ordered inbound-bridge checkpoints (first missing = where the ring path died).
@@ -433,8 +461,13 @@ capture_callee_screencap() {
 
 answer_incoming() {
   local serial="$1" lookup_key="$2"
+  # Answer via MainActivity debug intent, then bring InCall back to the front.
+  # Without the second start, SINGLE_TOP MainActivity can bury SagaInCallActivity and
+  # drop soleLiveLeg visibility for roster introductions (G4a).
   adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
     -a org.saga.TEST_ANSWER_INCOMING --es lookup_key "$lookup_key" >/dev/null 2>&1 || true
+  sleep 0.3
+  adb -s "$serial" shell am start -n org.saga/.ui.SagaInCallActivity >/dev/null 2>&1 || true
 }
 
 # After answer: Encrypted may already have settled while RINGING; wait for send/playout arm.
@@ -559,19 +592,59 @@ provision_clean_baseline_group() {
 # Debug intent org.saga.TEST_ADD_PARTICIPANT (MainActivity, FLAG_DEBUGGABLE only).
 # Extras: --ez confirm_unencrypted true, --es introduced_by NAME,
 #         --es roster_fingerprint HEX64, --es conference GROUP_ID.
-# Outcome is logged as: E2E add participant name=[..] outcome=[PLACED|NEEDS_UNENCRYPTED_CONFIRMATION|...]
+# Always sets add_contact (dedicated key) AND contact_name so a stale CONTACT_CALL
+# contact_name cannot win if SINGLE_TOP merges extras. Outcome log:
+#   E2E add participant name=[..] outcome=[PLACED|NEEDS_UNENCRYPTED_CONFIRMATION|...]
 add_participant() {
   local serial="$1" contact="$2"
   shift 2
+  local nonce
+  nonce="$(date +%s%N 2>/dev/null || echo "$RANDOM")"
+  ADD_PARTICIPANT_LAST_NONCE="$nonce"
+  # Do not redirect am stderr: harness needs to see start failures.
+  # Bring MainActivity forward explicitly so SINGLE_TOP onNewIntent receives extras
+  # (confirm_unencrypted) even when SagaInCallActivity is currently focused.
   adb -s "$serial" shell am start -n org.saga/.ui.MainActivity \
-    -a org.saga.TEST_ADD_PARTICIPANT --es contact_name "$contact" "$@" >/dev/null 2>&1
+    -a org.saga.TEST_ADD_PARTICIPANT \
+    --es add_contact "$contact" \
+    --es contact_name "$contact" \
+    --es e2e_nonce "$nonce" \
+    "$@"
 }
 
 # Last logged add-participant outcome on SERIAL for contact (empty if none).
+# Optional 3rd arg: e2e_nonce to match a specific add (avoids stale / cleared-log races).
 add_participant_outcome() {
-  local serial="$1" contact="$2"
-  adb_logcat_dump "$serial" | rg -o "E2E add participant name=\[$contact\] outcome=\[[A-Z_]+\]" \
-    | tail -1 | rg -o 'outcome=\[[A-Z_]+\]' | sed 's/outcome=\[\(.*\)\]/\1/' || true
+  local serial="$1" contact="$2" nonce="${3:-}"
+  local line=""
+  if [[ -n "$nonce" ]]; then
+    # Prefer the request line with this nonce, then the following outcome for the same contact.
+    if adb_logcat_dump "$serial" | rg -q "E2E add request .*nonce=\[$nonce\]"; then
+      line="$(adb_logcat_dump "$serial" | rg "E2E add participant name=\[$contact\] outcome=\[[A-Z_]+\]" | tail -1 || true)"
+    fi
+  else
+    line="$(adb_logcat_dump "$serial" | rg "E2E add participant name=\[$contact\] outcome=\[[A-Z_]+\]" | tail -1 || true)"
+  fi
+  [[ -n "$line" ]] || return 0
+  echo "$line" | rg -o 'outcome=\[[A-Z_]+\]' | sed 's/outcome=\[\(.*\)\]/\1/' || true
+}
+
+# Poll until an add outcome appears (or timeout). Uses ADD_PARTICIPANT_LAST_NONCE when set.
+wait_add_participant_outcome() {
+  local serial="$1" contact="$2" max_secs="${3:-12}"
+  local nonce="${ADD_PARTICIPANT_LAST_NONCE:-}"
+  local elapsed=0 outcome=""
+  while (( elapsed < max_secs )); do
+    outcome="$(add_participant_outcome "$serial" "$contact" "$nonce")"
+    if [[ -n "$outcome" ]]; then
+      echo "$outcome"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  echo ""
+  return 1
 }
 
 # Debug intent org.saga.TEST_GROUP_HANGUP_PARTICIPANT: hang up ONE participant locally.
@@ -603,13 +676,35 @@ contact_raw_id() {
 }
 
 delete_contact_by_name() {
-  local serial="$1" name="$2" raw
+  local serial="$1" name="$2" raw attempt
+  for attempt in 1 2 3 4 5; do
+    raw="$(contact_raw_id "$serial" "$name")"
+    if [[ -z "$raw" ]]; then
+      return 0
+    fi
+    # Prefer sync-adapter delete; fall back to direct raw_contacts URI.
+    adb -s "$serial" shell "content delete --uri 'content://com.android.contacts/raw_contacts?caller_is_syncadapter=true' --where '_id=$raw'" >/dev/null 2>&1 || true
+    adb -s "$serial" shell "content delete --uri content://com.android.contacts/raw_contacts/$raw" >/dev/null 2>&1 || true
+    sleep 0.4
+    if [[ -z "$(contact_raw_id "$serial" "$name")" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Remove only the Saga pubkey data row so hasResolvableKey becomes false (G4 fallback).
+clear_contact_key() {
+  local serial="$1" name="$2" raw row_id
   raw="$(contact_raw_id "$serial" "$name")"
-  if [[ -z "$raw" ]]; then
-    return 1
-  fi
-  adb -s "$serial" shell "content delete --uri 'content://com.android.contacts/raw_contacts?caller_is_syncadapter=true' --where '_id=$raw'" >/dev/null 2>&1 || true
-  [[ -z "$(contact_raw_id "$serial" "$name")" ]]
+  [[ -n "$raw" ]] || return 1
+  row_id="$(adb -s "$serial" shell "content query --uri content://com.android.contacts/data --projection _id:raw_contact_id:mimetype" 2>/dev/null \
+    | rg "raw_contact_id=$raw, mimetype=vnd.android.cursor.item/vnd.saga.galdralag_pubkey" \
+    | rg -o '_id=[0-9]+' | head -1 | cut -d= -f2 || true)"
+  [[ -n "$row_id" ]] || return 1
+  adb -s "$serial" shell "content delete --uri content://com.android.contacts/data/$row_id" >/dev/null 2>&1 || true
+  ! adb -s "$serial" shell "content query --uri content://com.android.contacts/data --projection _id:raw_contact_id:mimetype" 2>/dev/null \
+    | rg -q "raw_contact_id=$raw, mimetype=vnd.android.cursor.item/vnd.saga.galdralag_pubkey"
 }
 
 # set_contact_key SERIAL NAME FINGERPRINT_HEX64: rewrite the Saga key row of a contact.
@@ -722,21 +817,78 @@ print(f"{x} {y}")
 PY
 }
 
+# True when dumpsys telecom shows no live ringing/dialing/active/held calls.
+telecom_no_live_calls() {
+  local serial="$1"
+  local dump
+  dump="$(timeout 8 adb -s "$serial" shell dumpsys telecom 2>/dev/null || true)"
+  [[ -n "$dump" ]] || return 1
+  # dumpsys prints "Foreground call:" then "null" on the next line when idle.
+  echo "$dump" | rg -U -q 'Foreground call:[[:space:]]*\n[[:space:]]*null' || return 1
+  # Live lists name the call on the following line when occupied: "[Call id=TC@N, ..."
+  if echo "$dump" | rg -U -q 'Ringing calls:[[:space:]]*\n[[:space:]]*\[Call '; then
+    return 1
+  fi
+  if echo "$dump" | rg -U -q 'Active dialing, or connecting calls:[[:space:]]*\n[[:space:]]*\[Call '; then
+    return 1
+  fi
+  if echo "$dump" | rg -U -q 'Holding calls:[[:space:]]*\n[[:space:]]*\[Call '; then
+    return 1
+  fi
+  return 0
+}
+
 # Hang up leftover cellular/emulator GSM calls that block Telecom placeCall
-# ("Aborting call since there's no room").
+# ("Aborting call since there's no room"), and Saga VoIP legs left RINGING after
+# force-stop (Telecom keeps them until anomaly watchdog → max_ringing on next inbound).
 clear_stuck_telephony_calls() {
   local serial="$1"
   local port
   port="$(echo "$serial" | rg -o '[0-9]+$' || true)"
   if [[ -n "$port" ]]; then
     # Cancel common E2E fixture numbers (thor/alice/bob).
-    for n in +15550100012 +15550100011 +15550100010 15550100012 15550100011 15550100010; do
+    for n in +15550100012 +15550100011 +15550100010 15550100012 15550100011 15550100010 \
+             +15550100030 15550100030; do
       timeout 3 adb -s "$serial" emu gsm cancel "$n" >/dev/null 2>&1 || true
     done
   fi
-  timeout 3 adb -s "$serial" shell input keyevent KEYCODE_ENDCALL >/dev/null 2>&1 || true
+  # Bring default-dialer InCallService up so ENDCALL can reach a wedged RINGING call
+  # that never got onCallAdded while Saga was force-stopped.
+  if ! telecom_no_live_calls "$serial"; then
+    timeout 5 adb -s "$serial" shell am start -n org.saga/.ui.MainActivity >/dev/null 2>&1 || true
+    sleep 0.5
+  fi
+  local i
+  for i in 1 2 3; do
+    timeout 3 adb -s "$serial" shell input keyevent KEYCODE_ENDCALL >/dev/null 2>&1 || true
+    sleep 0.2
+  done
   # API 29 often hangs forever on this shell cmd — always bound it.
   timeout 5 adb -s "$serial" shell cmd telecom cleanup-stuck-calls >/dev/null 2>&1 || true
+}
+
+# Poll until Telecom has no live calls (or max_secs). Re-issues ENDCALL/cleanup.
+ensure_telecom_idle() {
+  local serial="$1" label="${2:-telecom}" max_secs="${3:-20}"
+  local elapsed=0
+  if telecom_no_live_calls "$serial"; then
+    return 0
+  fi
+  record "TELECOM:INFO $label [$serial] live calls present — draining"
+  while (( elapsed < max_secs )); do
+    clear_stuck_telephony_calls "$serial"
+    if telecom_no_live_calls "$serial"; then
+      record "TELECOM:PASS $label [$serial] idle after ${elapsed}s"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  record "TELECOM:FAIL $label [$serial] still has live calls after ${max_secs}s"
+  timeout 8 adb -s "$serial" shell dumpsys telecom 2>/dev/null \
+    | rg -n "Ringing calls:|Active dialing|Holding calls:|Foreground call:|Call id=" \
+    | head -40 || true
+  return 1
 }
 
 enable_saga_phone_account() {

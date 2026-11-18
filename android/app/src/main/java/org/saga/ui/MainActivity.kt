@@ -136,13 +136,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        applyAddCallMode(intent)
-        if (intent.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
+        // Deep-copy action+extras so SINGLE_TOP redelivery cannot share a mutable Bundle
+        // with a prior TEST_CONTACT_CALL (seen as ADD action + stale contact_name=bob).
+        val fresh = Intent(intent).setAction(intent.action)
+        intent.extras?.let { fresh.replaceExtras(android.os.Bundle(it)) }
+        setIntent(fresh)
+        applyAddCallMode(fresh)
+        if (fresh.action == SagaPhoneAccountRegistrar.ACTION_SHOW_ONBOARDING) {
             startActivity(Intent(this, PhoneAccountOnboardingActivity::class.java))
             return
         }
-        handleIncomingIntent(intent, autoPlace = intent.action == Intent.ACTION_CALL)
+        handleIncomingIntent(fresh, autoPlace = fresh.action == Intent.ACTION_CALL)
     }
 
     private fun refreshPhoneAccountUi(launchOnboardingIfNeeded: Boolean) {
@@ -178,8 +182,10 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
                 val lookupKey = intent.getStringExtra("lookup_key") ?: return
-                Log.i(TAG, "E2E answer incoming lookup=[$lookupKey]")
-                org.saga.iroh.IrohDialManager.get(this).onIncomingAnswered(lookupKey)
+                val mgr = org.saga.iroh.IrohDialManager.get(this)
+                val callKey = mgr.findTelecomCallKey(lookupKey) ?: lookupKey
+                Log.i(TAG, "E2E answer incoming lookup=[$lookupKey] callKey=[$callKey]")
+                mgr.onIncomingAnswered(callKey)
             }
             "org.saga.TEST_CONTACT_CALL" -> {
                 if (!isDebuggableBuild()) {
@@ -198,28 +204,45 @@ class MainActivity : AppCompatActivity() {
             }
             "org.saga.TEST_ADD_PARTICIPANT" -> {
                 // DEBUG-ONLY (FLAG_DEBUGGABLE): add a Saga contact to the live Iroh call / group.
-                // Extras: contact_name (required), confirm_unencrypted (bool; stands in for the
-                // adder's confirm dialog when the contact has no resolvable key),
-                // introduced_by (name; marks the peer as introduced, shown "X, introduced by Y"
-                // for unknown contacts), roster_fingerprint (64 hex; checked against the link
-                // key, never trusted alone), conference (optional group id).
+                // Extras: add_contact (preferred) or contact_name / lookup_key, confirm_unencrypted,
+                // introduced_by, roster_fingerprint (64 hex; checked against the link key, never
+                // trusted alone), conference (optional group id). Prefer add_contact so a stale
+                // CONTACT_CALL contact_name cannot win if extras were merged on SINGLE_TOP.
                 if (!isDebuggableBuild()) {
                     Log.e(TAG, "TEST_ADD_PARTICIPANT refused — not a debuggable build")
                     return
                 }
-                val name = intent.getStringExtra("contact_name") ?: return
+                val name = intent.getStringExtra("add_contact")
+                    ?: intent.getStringExtra("contact_name")
+                    ?: intent.getStringExtra("lookup_key")
+                    ?: return
+                // Boolean extras from `am --ez` can be dropped on some SINGLE_TOP redeliveries;
+                // also accept the string form so confirm_unencrypted always applies for G5b.
+                val confirmUnencrypted =
+                    intent.getBooleanExtra("confirm_unencrypted", false) ||
+                        intent.getStringExtra("confirm_unencrypted")
+                            ?.equals("true", ignoreCase = true) == true
+                Log.i(
+                    TAG,
+                    "E2E add request add_contact=[${intent.getStringExtra("add_contact")}] " +
+                        "contact_name=[${intent.getStringExtra("contact_name")}] " +
+                        "lookup_key=[${intent.getStringExtra("lookup_key")}] " +
+                        "confirm_unencrypted=[$confirmUnencrypted] " +
+                        "nonce=[${intent.getStringExtra("e2e_nonce")}] resolved=[$name]"
+                )
                 val target = DialTargetResolver.fromContactDisplayName(this, name)
                     ?: DialTargetResolver.fromInput(this, name, preferCellular = false)
                 if (target !is DialTarget.Iroh) {
                     Log.e(TAG, "TEST_ADD_PARTICIPANT requires an Iroh contact, got [$target]")
                     Toast.makeText(this, "Iroh contact required", Toast.LENGTH_SHORT).show()
+                    Log.i(TAG, "E2E add participant name=[$name] outcome=[REFUSED_NOT_IROH]")
                     return
                 }
                 val outcome = org.saga.telecom.GroupCallCoordinator.requestAdd(
                     this,
                     org.saga.telecom.GroupCallCoordinator.AddRequest(
                         target = target,
-                        confirmedUnencrypted = intent.getBooleanExtra("confirm_unencrypted", false),
+                        confirmedUnencrypted = confirmUnencrypted,
                         introducerName = intent.getStringExtra("introduced_by"),
                         rosterFingerprintHex = intent.getStringExtra("roster_fingerprint"),
                         groupId = intent.getStringExtra("conference")

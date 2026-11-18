@@ -110,8 +110,9 @@ class GroupCallStateTest {
 
     @Test
     fun aggregate_keyMismatch_neverEncrypted() {
-        val p = participant("bob", keyCheck = KeyCheck.MISMATCH)
+        val p = participant("bob", keyCheck = KeyCheck.MISMATCH, known = false)
         assertEquals(PadlockDisplayState.KEY_NOT_FOUND, p.effectiveSnapshot().padlockState)
+        assertEquals(MeshParticipant.NOT_VERIFIED_TEXT, p.effectiveSnapshot().statusText)
         assertFalse(group(p, participant("alice")).isEncrypted())
     }
 
@@ -261,9 +262,39 @@ class GroupCallStateTest {
     }
 
     @Test
-    fun rosterCheck_localContactKeyWinsOverRoster() {
-        assertEquals(KeyCheck.CONFIRMED_LOCAL_CONTACT, RosterKeyCheck.evaluate(fpA, fpA, fpB))
-        assertEquals(KeyCheck.MISMATCH, RosterKeyCheck.evaluate(fpA, fpB, fpA))
+    fun rosterCheck_localMatches_rosterMismatch_isMismatch() {
+        // G4b: wrong introducer roster claim must reject even when a local contact key matches.
+        assertEquals(KeyCheck.MISMATCH, RosterKeyCheck.evaluate(fpA, fpA, fpB))
+    }
+
+    @Test
+    fun rosterCheck_localMismatch_isKeyChanged() {
+        // Contact key disagrees with the link → Key changed (§5a), not roster MISMATCH.
+        assertEquals(KeyCheck.KEY_CHANGED, RosterKeyCheck.evaluate(fpA, fpB, fpA))
+        assertEquals(KeyCheck.KEY_CHANGED, RosterKeyCheck.evaluate(fpA, fpB, fpB))
+    }
+
+    @Test
+    fun rosterCheck_localAndRosterBothMatch_confirmedLocal() {
+        assertEquals(KeyCheck.CONFIRMED_LOCAL_CONTACT, RosterKeyCheck.evaluate(fpA, fpA, fpA))
+    }
+
+    @Test
+    fun keyChanged_neverShowsEncrypted() {
+        val p = participant("charlene", keyCheck = KeyCheck.KEY_CHANGED, known = true)
+        assertEquals("Key changed", p.effectiveSnapshot().statusText)
+        assertEquals(PadlockDisplayState.DOWNGRADED, p.effectiveSnapshot().padlockState)
+        assertFalse(group(p, participant("alice")).isEncrypted())
+    }
+
+    @Test
+    fun rosterMismatch_showsNotVerified() {
+        val p = participant(
+            "charlene", introducer = "Alice", known = false, name = "Charlene",
+            keyCheck = KeyCheck.MISMATCH
+        )
+        assertEquals("Not verified", p.effectiveSnapshot().statusText)
+        assertFalse(p.isEncryptedAndConfirmed())
     }
 
     // --- never merge carrier + Iroh -------------------------------------------------------

@@ -208,6 +208,67 @@ pub(crate) fn bridge_notify_incoming_call(
     notify_incoming_call(session_id, lookup_key, remote_endpoint_id);
 }
 
+/// Pairwise signaling-only roster introduction (G4a).
+#[cfg(feature = "iroh-transport")]
+pub(crate) fn bridge_notify_roster_introduction(
+    group_id: &str,
+    lookup_key: &str,
+    endpoint_id: &str,
+    fingerprint_hex: &str,
+    introducer_name: &str,
+) {
+    let Some(vm) = JAVA_VM.get() else {
+        return;
+    };
+    let group_id = group_id.to_string();
+    let lookup_key = lookup_key.to_string();
+    let endpoint_id = endpoint_id.to_string();
+    let fingerprint_hex = fingerprint_hex.to_string();
+    let introducer_name = introducer_name.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifyRosterIntroduction attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            return;
+        };
+        let Ok(jgroup) = env.new_string(&group_id) else {
+            return;
+        };
+        let Ok(jlookup) = env.new_string(&lookup_key) else {
+            return;
+        };
+        let Ok(jep) = env.new_string(&endpoint_id) else {
+            return;
+        };
+        let Ok(jfp) = env.new_string(&fingerprint_hex) else {
+            return;
+        };
+        let Ok(jintro) = env.new_string(&introducer_name) else {
+            return;
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifyRosterIntroduction",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                JValue::from(&jgroup),
+                JValue::from(&jlookup),
+                JValue::from(&jep),
+                JValue::from(&jfp),
+                JValue::from(&jintro),
+            ],
+        ) {
+            error!("notifyRosterIntroduction failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifyRosterIntroduction");
+    });
+}
+
 /// §16: peer voice-disguise chip (informational only — never touches padlock state).
 #[cfg(feature = "iroh-transport")]
 pub(crate) fn notify_peer_disguise(session_id: &str, active: bool) {
@@ -1056,6 +1117,67 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshClose(
     }
     #[cfg(not(feature = "mock-token"))]
     let _ = group;
+}
+
+/// Authenticated long-term fingerprint for a pairwise (1:1) session, or null.
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSessionPeerFingerprint(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+) -> jni::sys::jstring {
+    let Some(session) = jstring_to_rust(&mut env, &session_id) else {
+        return std::ptr::null_mut();
+    };
+    #[cfg(feature = "iroh-transport")]
+    {
+        match iroh_transport::peer_fingerprint(&session) {
+            Some(hex) => env
+                .new_string(hex)
+                .map(|s| s.into_raw())
+                .unwrap_or(std::ptr::null_mut()),
+            None => std::ptr::null_mut(),
+        }
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (session, env);
+        std::ptr::null_mut()
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeAnnounceIntroducedPeer(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    session_id: JString,
+    group_id: JString,
+    lookup_key: JString,
+    endpoint_id: JString,
+    fingerprint_hex: JString,
+    introducer_name: JString,
+) -> jboolean {
+    let (Some(session), Some(group), Some(lookup), Some(endpoint), Some(fp), Some(intro)) = (
+        jstring_to_rust(&mut env, &session_id),
+        jstring_to_rust(&mut env, &group_id),
+        jstring_to_rust(&mut env, &lookup_key),
+        jstring_to_rust(&mut env, &endpoint_id),
+        jstring_to_rust(&mut env, &fingerprint_hex),
+        jstring_to_rust(&mut env, &introducer_name),
+    ) else {
+        return jni::sys::JNI_FALSE;
+    };
+    #[cfg(feature = "iroh-transport")]
+    {
+        jbool(iroh_transport::announce_introduced_peer(
+            &session, &group, &lookup, &endpoint, &fp, &intro,
+        ))
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (session, group, lookup, endpoint, fp, intro);
+        jni::sys::JNI_FALSE
+    }
 }
 
 #[no_mangle]
