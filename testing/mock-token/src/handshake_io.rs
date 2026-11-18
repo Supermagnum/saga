@@ -18,7 +18,9 @@ pub enum HandshakeOutcome {
         /// 64 lowercase hex of the peer long-term fingerprint authenticated by this handshake.
         peer_fingerprint_hex: String,
     },
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 impl std::fmt::Debug for HandshakeOutcome {
