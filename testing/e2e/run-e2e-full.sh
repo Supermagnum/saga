@@ -200,12 +200,19 @@ stop_caller "$SERIAL_B"
 
 echo ""
 echo "=== Case 3: First-time trust (alice calls bob) ==="
+# Case 2c force-stopped bob after a cellular dial; recycle like Case 4b so
+# ensure_callee_listening does not latch onto a dying post-cellular process.
+adb -s "$SERIAL_B" shell am force-stop org.saga
+sleep 2
+clear_stuck_telephony_calls "$SERIAL_B"
+ensure_telecom_idle "$SERIAL_B" "bob-pre-case3" 15 || true
 clear_prefs "$SERIAL_A"
 push_pref "$SERIAL_A" "$E2E_DIR/saga_test_false.xml" saga_test.xml
 if enc_flag "$SERIAL_A" "$PHONE_BOB" 2>/dev/null; then
   record "CASE3:FAIL encryption flag already set before call"
 else
   adb -s "$SERIAL_B" logcat -c 2>/dev/null || true
+  wait_for_fresh_relay_online "$SERIAL_B" "bob (pre-case3)" || true
   contact_call "$SERIAL_A" "$CONTACT_BOB" "$SERIAL_B" true || record "CASE3:FAIL contact_call"
   if wait_for_incoming_ringing "$SERIAL_B" "bob (first-trust)" \
      && capture_callee_screencap "$SERIAL_B" "/tmp/saga-case3-bob-ringing.png" \
