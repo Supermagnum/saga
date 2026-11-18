@@ -212,11 +212,27 @@ class IrohDialManager private constructor(context: Context) {
         when (meshState) {
             IrohNativeBridge.MESH_PEER_PENDING -> publishSecuring(lookupKey, telecomCallKey)
             IrohNativeBridge.MESH_PEER_ENCRYPTED -> {
-                val state = if (ContactKeyStore.hasResolvableKey(appContext, lookupKey)) {
-                    encryptionStore.markEncryptionEstablished(lookupKey)
-                    SagaHandshakeState.Encrypted
-                } else {
-                    SagaHandshakeState.NeverEncrypted
+                // Prefer GroupCall keyCheck (roster or contact) set by onMeshPeerState.
+                val keyCheck = GroupCallRegistry.findLeg(telecomCallKey)?.second?.keyCheck
+                val state = when {
+                    keyCheck?.confirmed == true -> {
+                        encryptionStore.markEncryptionEstablished(lookupKey)
+                        SagaHandshakeState.Encrypted
+                    }
+                    keyCheck?.rejected == true -> {
+                        if (keyCheck == KeyCheck.KEY_CHANGED ||
+                            encryptionStore.hasEncryptionHistory(lookupKey)
+                        ) {
+                            SagaHandshakeState.Downgraded
+                        } else {
+                            SagaHandshakeState.NeverEncrypted
+                        }
+                    }
+                    ContactKeyStore.hasResolvableKey(appContext, lookupKey) -> {
+                        encryptionStore.markEncryptionEstablished(lookupKey)
+                        SagaHandshakeState.Encrypted
+                    }
+                    else -> SagaHandshakeState.NeverEncrypted
                 }
                 if (connection != null) {
                     onHandshakeSettled(lookupKey, telecomCallKey, state, connection)

@@ -85,6 +85,14 @@ object GroupCallRegistry {
         update(groupId) { g -> g.updateLeg(legKey) { it.copy(keyCheck = keyCheck) } }
     }
 
+    /** Confirmed-encrypted remote legs in [groupId] (for e2e ENCRYPTED_LEGS accounting). */
+    fun confirmedEncryptedCount(groupId: String): Int =
+        get(groupId)?.participants?.count { it.keyCheck.confirmed } ?: 0
+
+    fun confirmedEncryptedKeys(groupId: String): List<String> =
+        get(groupId)?.participants?.filter { it.keyCheck.confirmed }?.map { it.lookupKey }
+            ?: emptyList()
+
     /**
      * Gate for plain media on a group leg. Returns true when media must stay off because the
      * link settled without encryption and the adder has not yet confirmed. Encrypted links and

@@ -1075,11 +1075,20 @@ pub fn announce_introduced_peer(
                 Some((s.connection.clone(), s.handshake_output.clone()?))
             })
         }) else {
+            // Common race: joiner confirms while an existing peer is still handshaking.
+            // Kotlin retries once the peer reaches Encrypted.
+            warn!(
+                "announce_introduced_peer: session=[{session_id}] missing or not Encrypted \
+                 (peer=[{lookup_key}])"
+            );
             return false;
         };
         let local_eid = match bind_shared_endpoint() {
             Ok(ep) => *ep.id().as_bytes(),
-            Err(_) => return false,
+            Err(e) => {
+                warn!("announce_introduced_peer: bind endpoint: {e}");
+                return false;
+            }
         };
         let roster = match Roster::new(
             vec![RosterEntry {

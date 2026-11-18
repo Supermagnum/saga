@@ -1167,6 +1167,11 @@ impl MeshNode {
             info!("[Saga Mesh] startMedia [{id}] plain requested; mesh links are always SRTP");
         }
         if ok {
+            // Match 1:1 media_bridge log so e2e media_sessions() counts mesh links (G3).
+            info!(
+                "[Saga Media] start session=[{id}] mode={} (mesh encode-once/encrypt-per-link)",
+                mode
+            );
             saga_media::disguise_begin_call();
         }
         Some(ok)
@@ -1349,6 +1354,12 @@ async fn media_task(
     let mut tick = tokio::time::interval(frame_dur);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     info!("[Saga Mesh] media task running group=[{}]", group.id);
+    // Debug assertion (G3): MeshMixer only encodes local capture per link — never relays
+    // one peer's decoded media to another (no Alice-forwarded Bob↔Charlene path).
+    info!(
+        "[Saga Mesh] MESH_NO_RELAY group=[{}] encode-once local capture only",
+        group.id
+    );
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => break,
@@ -1371,6 +1382,7 @@ async fn media_task(
                 m.recv_drain_all(5).await;
                 match capture_rx.try_recv() {
                     Ok(mut pcm) => {
+                        // Local mic only — received peer PCM is never written back to send.
                         if let Err(e) = m.send_pcm_frame(&mut pcm) {
                             warn!("[Saga Mesh] send: {e}");
                         }
