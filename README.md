@@ -26,6 +26,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 - [Adding contacts](#adding-contacts)
 - [Verifying downloads](#verifying-downloads)
 - [Recommended OS](#recommended-os)
+- [Galdralag hardware](#galdralag-hardware)
 - [Privacy: what Saga does and doesn't protect](#privacy-what-saga-does-and-doesnt-protect)
 - [Testing approach (summary)](#testing-approach-summary)
 - [Troubleshooting](#troubleshooting)
@@ -155,6 +156,19 @@ Unsigned build and signing steps for maintainers: [docs/release.md](docs/release
 It provides a hardened security model relative to typical Android builds, and it
 includes a duress PIN/password feature. Saga does not require GrapheneOS, but it
 is the recommended environment when choosing a device OS.
+
+## Galdralag hardware
+
+[Galdralag](https://github.com/Supermagnum/Galdralag-firmware) is the open
+hardware security token Saga targets for on-token ephemeral key exchange
+(stronger than the current Nitrokey path where the ephemeral private key
+exists briefly in phone memory during the handshake).
+
+**Galdralag hardware support in Saga is waiting on**
+[betrusted-io/xous-core#937](https://github.com/betrusted-io/xous-core/pull/937)
+to be resolved. When that pull request is closed or merged, Saga will add
+Galdralag support. Until then, Encrypted calls require a supported Nitrokey
+OpenPGP card; Galdralag devices are not usable with Saga yet.
 
 ## Privacy: what Saga does and doesn't protect
 
