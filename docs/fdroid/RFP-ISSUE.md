@@ -41,7 +41,6 @@ Categories:
 License: AGPL-3.0-or-later
 
 AuthorName: Saga contributors
-
 WebSite: https://github.com/Supermagnum/saga
 SourceCode: https://github.com/Supermagnum/saga
 IssueTracker: https://github.com/Supermagnum/saga/issues

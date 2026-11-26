@@ -18,7 +18,6 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | F-Droid (RFP + fdroiddata MR) | [`docs/fdroid/`](docs/fdroid/) |
 | Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
-| Maintainer OpenPGP public key | [`keys/maintainer.asc`](keys/maintainer.asc) |
 
 ## Table of contents
 
@@ -187,25 +186,26 @@ release `SHA256SUMS` when published). This is separate from the Android APK
 signing certificate above, and separate from Nitrokey / OpenPGP Aut keys used
 inside Saga calls.
 
-**Maintainer signing key** (OpenPGP):
+**Trust the fingerprint only** — ignore any name or email GnuPG may print from a
+key’s local user ID packet.
 
 | Field | Value |
 |-------|-------|
-| Fingerprint | `80EF2F63B22E9BC26E63B3DC80788803ED4C7A02` |
-| Public key file | [`keys/maintainer.asc`](keys/maintainer.asc) |
-| UID | [redacted] `<>` |
+| OpenPGP fingerprint | `80EF2F63B22E9BC26E63B3DC80788803ED4C7A02` |
 
 **1. Install GnuPG** (if needed): Debian/Ubuntu `sudo apt install gnupg`; Fedora
 `sudo dnf install gnupg2`; macOS `brew install gnupg`.
 
-**2. Import the maintainer public key** from this repository:
+**2. Obtain the public key** out of band (keyserver, or a copy you already trust),
+then confirm the fingerprint:
 
 ```bash
-gpg --import keys/maintainer.asc
+gpg --recv-keys 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
+# or: gpg --import path/to/pubkey.asc
 gpg --fingerprint 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
 ```
 
-Confirm the fingerprint matches the table above before trusting signatures.
+Proceed only if the fingerprint matches exactly.
 
 **3. Verify a detached signature** next to `SHA256SUMS`:
 
@@ -214,10 +214,10 @@ cd compiled   # or the directory with the downloaded release files
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 
-A good result looks like `Good signature from "[redacted]"`. GnuPG may still
-print `WARNING: This key is not certified with a trusted signature!` until you
-assign local trust; that warning does not mean the signature failed — it means
-you have not marked the key as trusted in your own keyring yet.
+Expect a good signature whose **primary key fingerprint** is the value above.
+GnuPG may still print `WARNING: This key is not certified with a trusted
+signature!` until you assign local trust; that does not mean the signature
+failed.
 
 **4. Check the APK hash** after the signature verifies:
 
@@ -225,8 +225,8 @@ you have not marked the key as trusted in your own keyring yet.
 sha256sum -c SHA256SUMS
 ```
 
-**5. Optional — mark the key as ultimately trusted locally** (only after you are
-satisfied the fingerprint is correct, e.g. compared out-of-band):
+**5. Optional — mark the key as ultimately trusted locally** (only after the
+fingerprint matches):
 
 ```bash
 gpg --edit-key 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
