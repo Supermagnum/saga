@@ -16,7 +16,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Historical test log | [TEST_RESULTS.md](TEST_RESULTS.md) |
 | Signed debug APK (local verify) | [`compiled/`](compiled/) |
 | Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
-| F-Droid prep (not submitted) | [`docs/fdroid/`](docs/fdroid/) |
+| F-Droid (RFP + fdroiddata MR) | [`docs/fdroid/`](docs/fdroid/) |
 | Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
 
 ## Table of contents
@@ -33,7 +33,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 
 ## Status
 
-Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid packaging is prepared under `docs/fdroid/` — **not** submitted yet. `applicationId` remains `org.saga` until a final ID is chosen.
+Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid submission is open: [RFP #4874](https://gitlab.com/fdroid/rfp/-/work_items/4874) and [fdroiddata !59255](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/59255). `applicationId` is `org.saga` (change before publish if a final ID is chosen). See [`docs/fdroid/`](docs/fdroid/).
 
 Peer long-term fingerprints and optional Iroh EndpointIds can be exchanged via **My identity** in the app (QR code or `saga://add-contact` link). The peer confirms before the key is written to Contacts; dial prefers a stored EndpointId when present.
 

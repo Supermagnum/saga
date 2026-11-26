@@ -1,9 +1,7 @@
-# Draft fdroiddata metadata for Saga.
-# Modelled on no.navi.app (fdroiddata MR !45644).
-# DO NOT open the fdroiddata MR from this tree — maintainer submits manually.
-#
-# applicationId is currently org.saga. Rename this file and ApplicationName
-# when the final ID is chosen (one-line Gradle follow-up).
+# fdroiddata metadata for Saga (org.saga).
+# Submitted: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/59255
+# RFP: https://gitlab.com/fdroid/rfp/-/work_items/4874
+# applicationId is org.saga; rename this file if the ID changes before publish.
 
 AntiFeatures:
   NonFreeNet:
