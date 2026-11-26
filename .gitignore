@@ -12,3 +12,8 @@ tools/saga-peer/target/
 out/
 *.jks
 *.keystore
+# Exception: curated verified builds under compiled/ (APK + SHA256SUMS + .asc).
+!compiled/
+!compiled/*.apk
+!compiled/SHA256SUMS
+!compiled/SHA256SUMS.asc

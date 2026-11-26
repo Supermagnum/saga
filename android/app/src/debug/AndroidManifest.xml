@@ -16,6 +16,18 @@
                 <action android:name="org.saga.TEST_MIDCALL_REHANDSHAKE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="org.saga.TEST_CONTACT_CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="org.saga.TEST_ANSWER_INCOMING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="org.saga.TEST_MSG_SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- exported=true only in debug so TEST_IN_CALL_UI can be started via adb. -->
