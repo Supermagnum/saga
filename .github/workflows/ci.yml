@@ -95,6 +95,13 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
+      - name: saga-msg fmt / clippy / test
+        working-directory: saga-msg
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
       - name: saga-iroh-core fmt / clippy / test
         working-directory: saga-iroh-core
         run: |

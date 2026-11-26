@@ -4322,6 +4322,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "saga-msg"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "hkdf 0.12.4",
+ "rand 0.8.8",
+ "saga-session",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "zeroize",
+]
+
+[[package]]
 name = "saga-peer"
 version = "0.1.0"
 dependencies = [
@@ -4338,6 +4351,7 @@ dependencies = [
  "mock-token",
  "rubato",
  "saga-media",
+ "saga-msg",
  "saga-session",
  "tokio",
  "zeroize",
@@ -4350,6 +4364,8 @@ dependencies = [
  "async-trait",
  "ephemeral-session",
  "galdr-core",
+ "galdr-vault",
+ "heapless",
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "log",

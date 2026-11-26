@@ -7,6 +7,7 @@ pub mod audio;
 pub mod call;
 pub mod identity;
 pub mod mesh;
+pub mod msg;
 
 pub use audio::{load_wav_mono_48k, write_wav_mono_48k};
 pub use call::{run_call, run_listen, CallOpts, PeerOutcome};
@@ -15,3 +16,4 @@ pub use identity::{
     LABEL_BOB, LABEL_CHARLENE, LABEL_LAPTOP,
 };
 pub use mesh::{host_mesh_roundtrip, HostMesh, MeshFullError, MeshOutcome};
+pub use msg::{host_msg_roundtrip, run_msg_listen, run_msg_send};

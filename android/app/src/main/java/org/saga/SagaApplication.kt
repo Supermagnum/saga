@@ -47,6 +47,7 @@ class SagaApplication : Application() {
             org.saga.handshake.SagaTestFlags.isForceBindingPerturb(this)
         )
         TestContactSeeder.seedIfMissing(this)
+        org.saga.msg.MessageService.init(this)
         val identityLabel = DevIdentityStore.getLabel(this)
         if (identityLabel == null) {
             Log.w(TAG, "No dev identity label — Iroh listener will not bind until identity is set")

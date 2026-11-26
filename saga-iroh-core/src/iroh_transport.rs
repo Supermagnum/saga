@@ -74,7 +74,7 @@ fn is_transient_first_connect_error(err: &str) -> bool {
 ///
 /// Prefer a live `home_relay_status` sample over trusting a one-shot `online()`
 /// completion alone — the endpoint can drop the relay after the first Ready.
-async fn ensure_relay_before_dial(endpoint: &Endpoint, peer_id: &str) -> bool {
+pub(crate) async fn ensure_relay_before_dial(endpoint: &Endpoint, peer_id: &str) -> bool {
     if sample_relay_connected(endpoint) {
         info!("initiator relay already connected before connect to [{peer_id}]");
         return true;
@@ -557,14 +557,20 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
     // android.net.DnsResolver (Private DNS / VPN / Orbot). Elsewhere use iroh defaults.
     // Mesh-join ALPN is debug/mock-token only. Release must not advertise or accept
     // group mesh (G4/G5: Encrypted without every key verified must never ship).
+    // Messaging ALPN (`saga/msg/1`) is a release feature (issue #41 / Part 3).
     #[cfg(feature = "mock-token")]
     let alpns = vec![
         SAGA_VOICE_ALPN.to_vec(),
         SAGA_MESH_JOIN_ALPN.to_vec(),
+        crate::messaging::msg_alpn().to_vec(),
         ROQ_ALPN.to_vec(),
     ];
     #[cfg(not(feature = "mock-token"))]
-    let alpns = vec![SAGA_VOICE_ALPN.to_vec(), ROQ_ALPN.to_vec()];
+    let alpns = vec![
+        SAGA_VOICE_ALPN.to_vec(),
+        crate::messaging::msg_alpn().to_vec(),
+        ROQ_ALPN.to_vec(),
+    ];
     let mut builder = Endpoint::builder(presets::N0).alpns(alpns);
     #[cfg(target_os = "android")]
     {
@@ -666,6 +672,11 @@ async fn bind_endpoint_async() -> Result<EndpointHolder, String> {
                                                         )
                                                     }
                                                 }
+                                                return;
+                                            }
+                                            if alpn == crate::messaging::msg_alpn() {
+                                                // Messaging: never a Telecom ring.
+                                                crate::messaging::handle_inbound(conn).await;
                                                 return;
                                             }
                                             handle_inbound_connection(conn).await;

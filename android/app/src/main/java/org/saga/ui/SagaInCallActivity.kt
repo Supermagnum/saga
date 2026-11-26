@@ -69,6 +69,7 @@ class SagaInCallActivity : AppCompatActivity() {
         binding.toggleMute.setOnClickListener { toggleMute() }
         binding.toggleSpeaker.setOnClickListener { toggleSpeaker() }
         binding.toggleHold.setOnClickListener { toggleHold() }
+        binding.btnMessage.setOnClickListener { openMessageForFocused() }
         binding.btnAddCall.setOnClickListener { launchAddCall() }
         GroupCallInCallUi.bind(this, binding) { refreshMultiCallUi() }
         binding.btnSwap.setOnClickListener { swapCalls() }
@@ -414,6 +415,25 @@ class SagaInCallActivity : AppCompatActivity() {
                 putExtra(MainActivity.EXTRA_ADD_CALL_MODE, true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+        )
+    }
+
+    private fun openMessageForFocused() {
+        val call = focusedCall()
+        val peer = call?.let { SagaCallRegistry.peerIdFromCall(it) }
+            ?.takeIf { it.isNotBlank() && it != "Unknown" }
+            ?: intent.getStringExtra(EXTRA_DISPLAY_NAME).orEmpty()
+        if (peer.isBlank()) {
+            Toast.makeText(this, R.string.msg_no_key, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!org.saga.iroh.ContactKeyStore.hasResolvableKey(this, peer)) {
+            Toast.makeText(this, R.string.msg_no_key, Toast.LENGTH_LONG).show()
+            return
+        }
+        startActivity(
+            Intent(this, org.saga.msg.ChatActivity::class.java)
+                .putExtra(org.saga.msg.ChatActivity.EXTRA_PEER, peer)
         )
     }
 
