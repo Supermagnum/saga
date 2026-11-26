@@ -1,9 +1,10 @@
 AntiFeatures:
   NonFreeNet:
-    en-US: Default encrypted calls use n0 public relays and discovery (*.relay.n0.iroh.link).
-      Relay software is open source, but the default operators are not run by Saga.
-      Private DNS (DoT) is recommended. ISP resolvers such as Telenor Nettvern with
-      Private DNS off can break relay TLS.
+    en-US: Default encrypted calls use n0 public relays and discovery 
+      (*.relay.n0.iroh.link). Relay software is open source, but the default 
+      operators are not run by Saga. Private DNS (DoT) is recommended. ISP 
+      resolvers such as Telenor Nettvern with Private DNS off can break relay 
+      TLS.
 Categories:
   - Phone & SMS
   - Security
@@ -27,8 +28,8 @@ Builds:
     subdir: android
     sudo:
       - apt-get update
-      - apt-get install -y --no-install-recommends build-essential curl ca-certificates
-        cmake python3 pkg-config libssl-dev rustup
+      - apt-get install -y --no-install-recommends build-essential curl 
+        ca-certificates cmake python3 pkg-config libssl-dev rustup
     gradle:
       - yes
     prebuild:
@@ -37,23 +38,25 @@ Builds:
       - rustup target add aarch64-linux-android x86_64-linux-android
       - cargo install cargo-ndk --locked --version 3.5.4
       - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > local.properties
-      - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > ../local.properties
+      - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > 
+        ../local.properties
     build:
       - export ANDROID_NDK_HOME="$$NDK$$"
       - export ANDROID_HOME="$$SDK$$"
       - export ANDROID_NDK_ROOT="$$NDK$$"
       - export SAGA_REQUIRE_NATIVE=1
       - export CMAKE_POLICY_VERSION_MINIMUM=3.5
-      - export SOURCE_DATE_EPOCH="$$SOURCE_DATE_EPOCH$$"
-      - ./gradlew assembleRelease --no-daemon -Psaga.requireNative=true
-      - bash ../scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
+      - gradle assembleRelease -Psaga.requireNative=true
+      - bash ../scripts/check-release-apk.sh 
+        app/build/outputs/apk/release/app-release-unsigned.apk
     ndk: r27c
 
-AllowedAPKSigningKeys: 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
+AllowedAPKSigningKeys: 
+  7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
 
 AutoUpdateMode: None
 UpdateCheckMode: Tags
 UpdateCheckData: 
-  android/app/build.gradle.kts|versionCode\\s*=\\s*(\\d+)|.|versionName\\s*=\\s*\"(.*)\"
+  android/app/build.gradle.kts|versionCode\s*=\s*(\d+)|.|versionName\s*=\s*"(.*)"
 CurrentVersion: 0.1.0-preview.2
 CurrentVersionCode: 2
