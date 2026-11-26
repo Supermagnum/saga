@@ -27,15 +27,18 @@ Still **`org.saga`**. Changing it later requires editing `applicationId` in
 `android/app/build.gradle.kts`, renaming this recipe, and updating the
 fdroiddata MR / Fastlane package paths before F-Droid publishes.
 
-## versionCode / versionName (first pin)
+## versionCode / versionName (current pin)
 
 | Field | Value |
 |-------|-------|
-| `versionName` | `0.1.0-preview.1` |
-| `versionCode` | `1` |
-| git tag / commit | `v0.1.0-preview.1` (`53dcd69bd9a914d2fd00c6a353a211e817dbad72`) |
+| `versionName` | `0.1.0-preview.2` |
+| `versionCode` | `2` |
+| git tag | `v0.1.0-preview.2` |
 
 Keep `android/app/build.gradle.kts` and `org.saga.yml` in sync when bumping.
+Prior tag `v0.1.0-preview.1` remains on GitHub for the first preview release assets.
+`Binaries:` for reproducible developer-signature builds is commented in the
+recipe until signed `saga-0.1.0-preview.2-arm64-v8a.apk` is published.
 
 ## Developer signature (GitHub ↔ F-Droid updates)
 

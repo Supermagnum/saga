@@ -28,16 +28,15 @@ AutoName: Saga
 RepoType: git
 Repo: https://github.com/Supermagnum/saga.git
 
-# Prefer reproducible builds that keep the developer signature so GitHub and
-# F-Droid installs can update each other (see docs/release.md).
-# Primary GitHub asset for phones is arm64-v8a; universal includes x86_64 too.
-Binaries: https://github.com/Supermagnum/saga/releases/download/v0.1.0-preview.1/saga-0.1.0-preview.1-arm64-v8a.apk
+# Re-enable reproducible developer-signature builds once signed GitHub assets
+# exist for this tag (see docs/release.md):
+# Binaries: https://github.com/Supermagnum/saga/releases/download/v%v/saga-%v-arm64-v8a.apk
 AllowedAPKSigningKeys: 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
 
 Builds:
-  - versionName: 0.1.0-preview.1
-    versionCode: 1
-    commit: v0.1.0-preview.1
+  - versionName: 0.1.0-preview.2
+    versionCode: 2
+    commit: v0.1.0-preview.2
     timeout: 14400
     subdir: android
     sudo:
@@ -68,5 +67,5 @@ Builds:
 AutoUpdateMode: None
 UpdateCheckMode: Tags
 UpdateCheckData: android/app/build.gradle.kts|versionCode\\s*=\\s*(\\d+)|.|versionName\\s*=\\s*\"(.*)\"
-CurrentVersion: 0.1.0-preview.1
-CurrentVersionCode: 1
+CurrentVersion: 0.1.0-preview.2
+CurrentVersionCode: 2

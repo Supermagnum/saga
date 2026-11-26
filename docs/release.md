@@ -9,8 +9,8 @@ automation.
 | Field | Value |
 |-------|-------|
 | `applicationId` | `org.saga` (unchanged from Part 5) |
-| `versionName` | `0.1.0-preview.1` |
-| `versionCode` | `1` (monotonic integer; Part 5 / F-Droid scheme) |
+| `versionName` | `0.1.0-preview.2` |
+| `versionCode` | `2` (monotonic integer; Part 5 / F-Droid scheme) |
 
 Bump `versionCode` on every published APK. Keep
 `android/app/build.gradle.kts` and `docs/fdroid/org.saga.yml` in sync.
@@ -68,10 +68,10 @@ build_variant() {
 }
 
 # --- arm64-v8a only (real phones) ---
-build_variant arm64-v8a saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
+build_variant arm64-v8a saga-0.1.0-preview.2-arm64-v8a-unsigned.apk
 
 # --- universal (arm64-v8a + x86_64) if size is acceptable ---
-build_variant arm64-v8a,x86_64 saga-0.1.0-preview.1-universal-unsigned.apk
+build_variant arm64-v8a,x86_64 saga-0.1.0-preview.2-universal-unsigned.apk
 ```
 
 Hygiene must pass (`scripts/check-release-apk.sh` via
@@ -84,12 +84,12 @@ Build each variant **twice** with the same `SOURCE_DATE_EPOCH` and toolchain
 must match. Record hashes in the PR / release checklist.
 
 ```bash
-sha256sum out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk \
-          out/saga-0.1.0-preview.1-universal-unsigned.apk
+sha256sum out/saga-0.1.0-preview.2-arm64-v8a-unsigned.apk \
+          out/saga-0.1.0-preview.2-universal-unsigned.apk
 ```
 
-Local Part B double-build result (`SOURCE_DATE_EPOCH=1731628800`, same
-host toolchain):
+Local Part B double-build result for **0.1.0-preview.1**
+(`SOURCE_DATE_EPOCH=1731628800`, same host toolchain; historical):
 
 | APK | Size | SHA-256 |
 |-----|------|---------|
@@ -114,12 +114,12 @@ APKSIGNER="$ANDROID_HOME/build-tools/36.1.0/apksigner"
   --v1-signing-enabled true \
   --v2-signing-enabled true \
   --v3-signing-enabled true \
-  --out out/saga-0.1.0-preview.1-arm64-v8a.apk \
-  out/saga-0.1.0-preview.1-arm64-v8a-unsigned.apk
+  --out out/saga-0.1.0-preview.2-arm64-v8a.apk \
+  out/saga-0.1.0-preview.2-arm64-v8a-unsigned.apk
 
 # Verify schemes + print certificate digests
 "$APKSIGNER" verify --verbose --print-certs \
-  out/saga-0.1.0-preview.1-arm64-v8a.apk
+  out/saga-0.1.0-preview.2-arm64-v8a.apk
 ```
 
 Certificate SHA-256 (for README “Verifying downloads”, AppVerifier, and

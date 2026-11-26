@@ -82,8 +82,8 @@ android {
         targetSdk = 35
         // Monotonic integer (Part 5 / F-Droid UpdateCheckData). Bump on every
         // published APK; keep in sync with docs/fdroid/org.saga.yml.
-        versionCode = 1
-        versionName = "0.1.0-preview.1"
+        versionCode = 2
+        versionName = "0.1.0-preview.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters.clear()

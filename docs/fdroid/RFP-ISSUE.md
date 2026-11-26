@@ -85,8 +85,8 @@ Description:
 >
 > Licence: AGPL-3.0-or-later. Source: https://github.com/Supermagnum/saga
 >
-> First published build pin: versionName 0.1.0-preview.1, versionCode 1,
-> git tag v0.1.0-preview.1 (commit 53dcd69bd9a914d2fd00c6a353a211e817dbad72).
+> Current build pin: versionName 0.1.0-preview.2, versionCode 2,
+> git tag v0.1.0-preview.2. Prior preview.1 remains published on GitHub Releases.
 
 ### Packager notes
 
