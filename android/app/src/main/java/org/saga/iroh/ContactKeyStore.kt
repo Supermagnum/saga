@@ -34,7 +34,19 @@ object ContactKeyStore {
         if (peerOrLookupId.startsWith("content://")) {
             return ContactKeyRepository.readPublicKeyBytes(context, Uri.parse(peerOrLookupId)) != null
         }
-        return ContactKeyRepository.readPublicKeyBytesForPhone(context, peerOrLookupId) != null
+        if (ContactKeyRepository.readPublicKeyBytesForPhone(context, peerOrLookupId) != null) {
+            return true
+        }
+        // OEM PhoneLookup (notably Samsung) often matches E.164 with '+' but not
+        // bare digit labels used as Iroh peer ids — try both forms.
+        val digits = peerOrLookupId.filter { it.isDigit() }
+        if (digits.isEmpty()) return false
+        if (digits != peerOrLookupId &&
+            ContactKeyRepository.readPublicKeyBytesForPhone(context, digits) != null
+        ) {
+            return true
+        }
+        return ContactKeyRepository.readPublicKeyBytesForPhone(context, "+$digits") != null
     }
 
     /** Stored contact fingerprint (64 lowercase hex), or null when absent/invalid. */

@@ -12,7 +12,9 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Native Iroh core (JNI) | [`saga-iroh-core/`](saga-iroh-core/) |
 | Emulator E2E harness | [`testing/e2e/`](testing/e2e/) |
 | Local Iroh relay (E2E/CI) | [`testing/iroh-relay/`](testing/iroh-relay/) |
-| Test results log | [TEST_RESULTS.md](TEST_RESULTS.md) |
+| Test results (pass evidence) | [`docs/test-results.md`](docs/test-results.md) |
+| Historical test log | [TEST_RESULTS.md](TEST_RESULTS.md) |
+| Signed debug APK (local verify) | [`compiled/`](compiled/) |
 | Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | F-Droid prep (not submitted) | [`docs/fdroid/`](docs/fdroid/) |
 | Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
@@ -21,7 +23,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 
 Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid packaging is prepared under `docs/fdroid/` — **not** submitted yet. `applicationId` remains `org.saga` until a final ID is chosen.
 
-See [TEST_RESULTS.md](TEST_RESULTS.md) for the latest run matrix and blockers.
+See [`docs/test-results.md`](docs/test-results.md) for dated pass evidence (who called whom, Encrypted / messaging). Historical run notes remain in [TEST_RESULTS.md](TEST_RESULTS.md).
 
 Preview APKs (when published) are on the
 [GitHub Releases](https://github.com/Supermagnum/saga/releases) page. See

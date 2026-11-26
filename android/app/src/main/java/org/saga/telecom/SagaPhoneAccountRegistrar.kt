@@ -41,25 +41,32 @@ object SagaPhoneAccountRegistrar {
     fun isAccountEnabled(context: Context): Boolean {
         val telecomManager = context.getSystemService(TelecomManager::class.java) ?: return false
         val handle = phoneAccountHandle(context)
-        var account = telecomManager.getPhoneAccount(handle)
-        if (account == null) {
-            Log.w(TAG, "PhoneAccount missing — re-registering")
-            register(context)
-            account = telecomManager.getPhoneAccount(handle)
+        return try {
+            var account = telecomManager.getPhoneAccount(handle)
+            if (account == null) {
+                Log.w(TAG, "PhoneAccount missing — re-registering")
+                register(context)
+                account = telecomManager.getPhoneAccount(handle)
+            }
+            if (account == null) {
+                Log.e(TAG, "PhoneAccount still missing after register handle=[$handle]")
+                return false
+            }
+            val enabled = account.isEnabled
+            if (!enabled) {
+                Log.w(
+                    TAG,
+                    "PhoneAccount registered but disabled — enable via Calling accounts settings"
+                )
+            }
+            Log.i(TAG, "PhoneAccount present=[true] enabled=[$enabled] handle=[$handle]")
+            enabled
+        } catch (e: SecurityException) {
+            // Some OEM Telecom stacks (Samsung One UI) require READ_PHONE_NUMBERS for
+            // getPhoneAccount; never crash Application.onCreate when the perm is missing.
+            Log.e(TAG, "getPhoneAccount SecurityException — treat as disabled: ${e.message}")
+            false
         }
-        if (account == null) {
-            Log.e(TAG, "PhoneAccount still missing after register handle=[$handle]")
-            return false
-        }
-        val enabled = account.isEnabled
-        if (!enabled) {
-            Log.w(
-                TAG,
-                "PhoneAccount registered but disabled — enable via Calling accounts settings"
-            )
-        }
-        Log.i(TAG, "PhoneAccount present=[true] enabled=[$enabled] handle=[$handle]")
-        return enabled
     }
 
     fun changePhoneAccountsIntent(): Intent {
