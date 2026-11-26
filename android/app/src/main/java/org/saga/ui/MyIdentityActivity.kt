@@ -3,9 +3,11 @@ package org.saga.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,8 +47,22 @@ class MyIdentityActivity : AppCompatActivity() {
         binding.shareLink.setOnClickListener { shareLink() }
         binding.pasteLink.setOnClickListener { promptPasteLink() }
         binding.scanQr.setOnClickListener { pickQrImage.launch("image/*") }
+        binding.nfcShare.setOnClickListener {
+            startActivity(Intent(this, NfcShareActivity::class.java))
+        }
+        binding.nfcReceive.setOnClickListener {
+            startActivity(Intent(this, NfcReceiveActivity::class.java))
+        }
+        wireNfcButtons()
 
         refreshIdentity()
+    }
+
+    private fun wireNfcButtons() {
+        val hasNfc = packageManager.hasSystemFeature(PackageManager.FEATURE_NFC)
+        val hasHce = packageManager.hasSystemFeature(PackageManager.FEATURE_NFC_HOST_CARD_EMULATION)
+        binding.nfcShare.visibility = if (hasHce) View.VISIBLE else View.GONE
+        binding.nfcReceive.visibility = if (hasNfc) View.VISIBLE else View.GONE
     }
 
     override fun onResume() {

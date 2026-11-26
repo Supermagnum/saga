@@ -45,9 +45,12 @@ v1.8.3, OpenPGP 3.4, AUT = **ECDSA BrainpoolP256r1** with public key present.
 
 ## NFC
 
-**Not implemented.** Nitrokey 3 over NFC on Android is reported as FIDO2-only
-for OpenPGP (OpenPGP-over-NFC unsupported). Saga uses USB Host CCID only
-(`android.hardware.usb` + device filter).
+**Token access over NFC is not implemented.** Nitrokey 3 over NFC on Android is
+reported as FIDO2-only for OpenPGP (OpenPGP-over-NFC unsupported). Saga uses USB
+Host CCID only (`android.hardware.usb` + device filter).
+
+Saga **contact-key sharing** over NFC (HCE / reader for `saga://add-contact`
+links) is a separate feature and does not access the token.
 
 ## USB IDs (Android filter + host)
 

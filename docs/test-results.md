@@ -47,6 +47,16 @@ Concrete proof artifacts (host): `/tmp/e2e-samsung-green5/results.log`, `/tmp/e2
 | Host `saga-msg` unit + `host_msg_roundtrip` | **PASS** |
 | CI on merged messaging PR #64 | **PASS** (rust + android) |
 
+## Contact key intake (Parts A–C)
+
+| Path | Where | Result |
+|------|-------|--------|
+| QR / `saga://add-contact` confirm (Part A) | Emulator unit tests | **PASS** (`SagaAddContactLink` / attach probe) |
+| Saga keys rename/move/remove (Part B) | Emulator unit tests | **PASS** (`ContactKeyDirectoryTest`) |
+| NFC HCE APDU / NDEF (Part C) | Emulator unit tests | **PASS** (`Type4NdefApduHandlerTest`, `NdefUriMessageTest`) |
+| NFC UI hidden without hardware | Tablet SM-P613 (no `android.hardware.nfc`) | Expected: Share/Receive NFC buttons hidden |
+| Device-to-device NFC (HCE ↔ reader) | Hardware | **Not tested on hardware** (tablet has no NFC; phone-to-phone HCE not available in this setup) |
+
 ## Signed build
 
 See [`compiled/`](../compiled/) for the verified debug APK, `SHA256SUMS`, and GnuPG signature.

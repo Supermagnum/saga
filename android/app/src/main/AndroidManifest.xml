@@ -18,6 +18,9 @@
     <!-- Tablets (e.g. SM-P613) may expose telephony.ims only; keep installable. -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
 
     <application
         android:name=".SagaApplication"
@@ -109,7 +112,40 @@
                     android:scheme="saga"
                     android:host="add-contact" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                    android:scheme="saga"
+                    android:host="add-contact" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.NfcShareActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MyIdentityActivity"
+            android:label="@string/nfc_share_title" />
+
+        <activity
+            android:name=".ui.NfcReceiveActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MyIdentityActivity"
+            android:label="@string/nfc_receive_title"
+            android:launchMode="singleTop" />
+
+        <service
+            android:name=".nfc.SagaNdefHceService"
+            android:exported="true"
+            android:enabled="false"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/apduservice" />
+        </service>
 
         <activity
             android:name=".msg.ConversationListActivity"
