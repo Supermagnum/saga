@@ -31,8 +31,7 @@ AntiFeatures:
   NonFreeNet:
     en-US: Default encrypted calls use n0 public relays and discovery
       (*.relay.n0.iroh.link). Relay software is open source, but the default
-      operators are not run by Saga. A self-hosted relay URL setting is
-      planned; until then Private DNS (DoT) is recommended.
+      operators are not run by Saga. Private DNS (DoT) is recommended.
 
 Categories:
   - Phone & SMS

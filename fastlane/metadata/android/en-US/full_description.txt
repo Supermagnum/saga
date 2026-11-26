@@ -9,7 +9,7 @@ Voice disguise (pitch / formant) is optional on Saga calls only. Group calls sup
 Honesty notes for this release:
 • Verified on Android emulators (API 35 and API 29), not on physical phones in this prep cycle.
 • Encrypted calls need a supported Nitrokey; Galdralag is not ready yet.
-• Default relays are n0 public relays; a self-hosted relay URL is future work.
+• Default relays are n0 public relays; this release has no in-app self-hosted relay setting.
 • applicationId is currently org.saga (final F-Droid ID may still change before publish).
 
 Licence: AGPL-3.0-or-later. Source: https://github.com/Supermagnum/saga

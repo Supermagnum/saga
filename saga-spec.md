@@ -801,8 +801,8 @@ N0 reachability passes host soaks and emulator soaks when Android Private DNS
   (not cleartext media when session keys stay on endpoints).
 - Reachability when a direct path fails depends on n0 service availability.
 
-**Future work (not implemented):** an advanced settings field for a
-self-hosted relay URL. Default remains n0.
+**Not in this release:** no user-facing self-hosted relay URL setting.
+Default remains n0.
 
 **Gap:** Iroh solves live connectivity, not store-and-forward presence — it
 doesn't help reach a peer whose device is currently offline/asleep. If
@@ -828,7 +828,7 @@ fresh codebase (§10), not a GPLv3 Linphone fork.
 - [ ] Decide whether missed-call/offline presence is a v-next requirement;
       if so, evaluate OpenDHT integration effort at that point.
 - [ ] Prototype token identity <-> Iroh node identity binding.
-- [ ] Advanced self-hosted relay URL setting (opt-in; not the default).
+- [x] No user-facing self-hosted relay URL setting in this release (n0 default).
 
 ## 15. Testing: mock token & two-emulator encryption verification
 

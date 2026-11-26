@@ -4,7 +4,7 @@ Honest assessment for a future fdroiddata submission. Not a submission itself.
 
 | AntiFeature | Apply? | Reasoning |
 |-------------|--------|-----------|
-| **NonFreeNet** | **Yes (recommended)** | Release defaults to n0 public relays (`presets::N0`, `*.relay.n0.iroh.link`) and n0 discovery. Relay *software* is open source, but the default service is operated by n0 and is not trivially user-replaceable in this build (self-hosted relay URL is documented as future work only). Same class of concern as apps that default to a third-party network they do not operate. Prefer declaring `NonFreeNet` with an en-US explanation that the relay code is FOSS and a self-hosted option is planned. |
+| **NonFreeNet** | **Yes (recommended)** | Release defaults to n0 public relays (`presets::N0`, `*.relay.n0.iroh.link`) and n0 discovery. Relay *software* is open source, but the default service is operated by n0 and is not user-replaceable in this build (no in-app self-hosted relay URL). Same class of concern as apps that default to a third-party network they do not operate. Prefer declaring `NonFreeNet` with an en-US explanation that the relay code is FOSS and defaults to operators Saga does not run. |
 | **TetheredNet** | Optional / overlap | If maintainers prefer `TetheredNet` over `NonFreeNet` for “talks to specific hosts not trivial to replace”, that also fits. Do not double-list without guidance from F-Droid review; **pick one** — this draft recommends **NonFreeNet**. |
 | **NonFreeDep** | No | Native stack is built from source (Rust, NDK, Opus via cmake). No proprietary SDKs. |
 | **NonFreeAdd** | No | No proprietary add-ons. |

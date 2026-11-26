@@ -30,11 +30,10 @@ Reasons:
 | **Metadata visible to relay and discovery operators** | n0 (or any home-relay operator) can observe EndpointId pairs, timing/volume, and client IPs when traffic uses the relay; `dns.iroh.link` sees publish/lookup. No cleartext audio when session keys stay on endpoints. See “Discovery metadata” below. |
 | **Dependence on n0 service availability** | Capacity, policy, or regional outages can affect reachability when a direct path is unavailable. Local/custom relay remains the lab and privacy escape hatch. |
 
-### Future work (not implemented)
+### Not in this release
 
-An **advanced setting** for a user-supplied self-hosted relay URL (and later
-optional custom discovery base) — productize the existing E2E
-`saga_iroh_relay` override. Default remains n0; this setting is opt-in only.
+There is **no** user-facing self-hosted relay URL setting. Lab/E2E paths may
+still override via `saga_iroh_relay`; that is not a product commitment.
 
 ## What a relay does (and does not)
 
@@ -84,14 +83,14 @@ Decision above).
 | Reliability | Generally good on clean DNS; host soak with unhijacked DNS: home relay ~3s, voice connect ~70ms. **Telenor Nettvern** (ISP DNS filter / “safe browsing”) rewrites some `*.relay.n0.iroh.link` / `dns.iroh.link` answers → TLS `UnknownIssuer` on N0 HTTPS probes when the app uses the ISP recursive path (Private DNS off). With Android Private DNS (DoT) and Saga’s `AndroidDnsBridge`, probes resolve to real n0 hosts. Do **not** ship in-app pinned Cloudflare/Google resolvers as a workaround (privacy). Emulator NAT + public discovery remains flakier than local relay. |
 | Privacy | See table above: n0 sees EndpointId pairs and envelopes; `dns.iroh.link` sees publish/lookup; user’s recursive DNS sees hostnames. Trust n0’s ops and jurisdiction. No Saga cleartext. |
 | Cost / effort | Free for typical volumes; zero ops. Subject to n0 policy/capacity changes. |
-| F-Droid | Usually fine (no proprietary binary). If n0 were ever considered a “non-free network service” anti-feature, document dependency clearly; self-host is the escape hatch. |
-| User config | None today. Future (not implemented): advanced self-hosted relay URL + optional custom DNS resolver (default off). |
+| F-Droid | Usually fine (no proprietary binary). If n0 were ever considered a “non-free network service” anti-feature, document the dependency clearly (`NonFreeNet`). |
+| User config | None. No in-app self-hosted relay URL or custom DNS resolver setting. |
 
 ## Option B — Self-hosted `iroh-relay` + `iroh-dns-server`
 
 **What it is:** Run your own relay (as in `testing/iroh-relay/`) and optionally an
 iroh-dns / pkarr publisher so dial-by-public-key does not depend on `dns.iroh.link`.
-**Not the release default**; remains the lab path and a future advanced setting.
+**Not the release default**; remains a lab/dev path only (not a product setting).
 
 | Dimension | Assessment |
 |-----------|------------|
