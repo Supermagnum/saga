@@ -83,6 +83,9 @@ class MainActivity : AppCompatActivity() {
         binding.openMyIdentity.setOnClickListener {
             startActivity(Intent(this, MyIdentityActivity::class.java))
         }
+        binding.openSagaKeys.setOnClickListener {
+            startActivity(Intent(this, SagaKeysActivity::class.java))
+        }
         binding.openPrivacy.setOnClickListener {
             startActivity(
                 Intent(

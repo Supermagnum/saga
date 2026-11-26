@@ -189,6 +189,26 @@ class AddContactConfirmActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.add_contact_attach_failed, Toast.LENGTH_SHORT).show()
             return
         }
+        val elsewhere = ContactKeyAttach.findRawContactIdWithFingerprint(this, p.fingerprintHex)
+        if (elsewhere != null && elsewhere.first != rawId) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.saga_keys_duplicate_title)
+                .setMessage(getString(R.string.saga_keys_duplicate_message, elsewhere.second))
+                .setPositiveButton(R.string.saga_keys_move_anyway) { _, _ ->
+                    org.saga.contacts.ContactKeyDirectory.removeKeyRow(this, elsewhere.first)
+                    continueAttachAfterDuplicateCheck(rawId, p)
+                }
+                .setNegativeButton(R.string.add_contact_cancel, null)
+                .show()
+            return
+        }
+        continueAttachAfterDuplicateCheck(rawId, p)
+    }
+
+    private fun continueAttachAfterDuplicateCheck(
+        rawId: Long,
+        p: SagaAddContactLink.Payload
+    ) {
         when (val probe = ContactKeyAttach.probe(this, rawId, p.fingerprintHex)) {
             is ContactKeyAttach.Outcome.NeedsKeyChangeConfirm -> {
                 binding.keyChangeWarning.visibility = View.VISIBLE

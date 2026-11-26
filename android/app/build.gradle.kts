@@ -239,6 +239,7 @@ dependencies {
     // 1.19.x needs AGP >= 9.1 and compileSdk >= 37; keep 1.15 until AGP 9 lands.
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.constraintlayout:constraintlayout:2.2.2")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("com.google.android.material:material:1.14.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

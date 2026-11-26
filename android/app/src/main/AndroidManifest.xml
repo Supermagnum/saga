@@ -90,6 +90,12 @@
             android:label="@string/my_identity_title" />
 
         <activity
+            android:name=".ui.SagaKeysActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="@string/saga_keys_title" />
+
+        <activity
             android:name=".ui.AddContactConfirmActivity"
             android:exported="true"
             android:launchMode="singleTop"
