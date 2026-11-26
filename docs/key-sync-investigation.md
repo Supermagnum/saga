@@ -76,14 +76,31 @@ These are **host SQLite metadata**, same trust model as Fluxer/IRC (not cryptogr
 
 ---
 
-## Open questions (block implementation)
+## Sync export schema (pinned firmware)
 
-1. **Fluxer** — confirm with product owner which service/handle format Saga should match.
-2. **Sync path for Saga Android** — import Galdra `sync export` SQLite on device, USB/NDK bridge to `galdrad`, or manual per-contact key paste?
-3. **Phone number in resolver** — Galdra stores `phone_number` but `resolve_contact_identifier` does not try it; should Saga treat phone as first-class for keyed lookup (already does via ContactsContract)?
+Galdralag-firmware rev `b781bf6fa5ccf8700a5fb061583c31cfa00241a1`
+(`galdra-core-host/src/sync.rs` + `migrations/`):
 
----
+- Package = SQLite with `identities`, `groups`, `group_metadata` (no `audit_log` /
+  `config` required for export).
+- Schema version = `MAX(version)` in `schema_migrations` (migrations 1–8).
+- Contact key material: `identities.pgp_pubkey` (BLOB) + optional
+  `pgp_fingerprint` (OpenPGP hex, **not** Saga's fingerprint).
 
-## Recommended next step (after review)
+Saga maps Brainpool P-256/P-384 verifying keys (raw SEC1 or OID-embedded point)
+to the ephemeral-session fingerprint via JNI
+(`IrohNativeBridge.sagaFingerprintFromPubkey` → `saga_session::fingerprint_hex_from_sec1`).
+Other curves / unparseable OpenPGP blobs are listed as not importable.
 
-Design a one-way **Galdra export → Saga ContactsContract** importer (public keys + optional identifier columns), without assuming token-resident multi-key storage.
+## Resolved by Parts A–D (2026-11-26)
+
+| Path | Saga feature |
+|------|----------------|
+| QR / `saga://add-contact` | Part A — My identity + shared confirm |
+| Name / move / remove keys | Part B — Saga keys screen |
+| NFC device-to-device (where hardware exists) | Part C — HCE share + reader |
+| Galdra `sync export` → Contacts | Part D — one-way SAF importer |
+
+Open product notes (do not block A–D): Fluxer handle format; whether Galdra
+host should put phone in its own resolver chain (Saga already keys Contacts by
+phone digits / EndpointId).

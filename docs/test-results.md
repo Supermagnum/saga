@@ -56,6 +56,8 @@ Concrete proof artifacts (host): `/tmp/e2e-samsung-green5/results.log`, `/tmp/e2
 | NFC HCE APDU / NDEF (Part C) | Emulator unit tests | **PASS** (`Type4NdefApduHandlerTest`, `NdefUriMessageTest`) |
 | NFC UI hidden without hardware | Tablet SM-P613 (no `android.hardware.nfc`) | Expected: Share/Receive NFC buttons hidden |
 | Device-to-device NFC (HCE ↔ reader) | Hardware | **Not tested on hardware** (tablet has no NFC; phone-to-phone HCE not available in this setup) |
+| Galdra sync import mapping (Part D) | Host Rust unit tests + fixture `testing/galdra-sync/` | **PASS** (`galdra_import` SEC1/OID mapping) |
+| Galdra SAF importer UI end-to-end | Hardware / emulator UI | **Not tested on hardware** this pass (unit/schema fixture only) |
 
 ## Signed build
 

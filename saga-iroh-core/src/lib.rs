@@ -31,6 +31,7 @@ mod mesh;
 mod messaging;
 
 mod media_bridge;
+mod galdra_import;
 
 fn init_logging() {
     #[cfg(target_os = "android")]
@@ -1085,6 +1086,25 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId
     {
         let _ = env;
         std::ptr::null_mut()
+    }
+}
+
+/// Map Galdra `pgp_pubkey` bytes to Saga 64-hex fingerprint. Null when not importable.
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeSagaFingerprintFromPubkey(
+    env: JNIEnv,
+    _thiz: JObject,
+    pubkey: jni::objects::JByteArray,
+) -> jni::sys::jstring {
+    let Ok(bytes) = env.convert_byte_array(&pubkey) else {
+        return std::ptr::null_mut();
+    };
+    match galdra_import::saga_fingerprint_hex_from_pubkey(&bytes) {
+        Ok(hex) => env
+            .new_string(hex)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(_) => std::ptr::null_mut(),
     }
 }
 

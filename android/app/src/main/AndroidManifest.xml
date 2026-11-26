@@ -99,6 +99,12 @@
             android:label="@string/saga_keys_title" />
 
         <activity
+            android:name=".ui.GaldraImportActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="@string/galdra_import_title" />
+
+        <activity
             android:name=".ui.AddContactConfirmActivity"
             android:exported="true"
             android:launchMode="singleTop"

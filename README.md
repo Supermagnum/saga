@@ -23,6 +23,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 
 - [Status](#status)
 - [What is Iroh?](#what-is-iroh)
+- [Adding contacts](#adding-contacts)
 - [Verifying downloads](#verifying-downloads)
 - [Recommended OS](#recommended-os)
 - [Privacy: what Saga does and doesn't protect](#privacy-what-saga-does-and-doesnt-protect)
@@ -74,6 +75,31 @@ Iroh moves packets; it does not by itself hide who you talk to or your IP. For
 what relays, discovery, and your network can observe, see
 [Privacy](#privacy-what-saga-does-and-doesnt-protect). Native build and feature
 flags: [`saga-iroh-core/README.md`](saga-iroh-core/README.md).
+
+## Adding contacts
+
+Peer Saga keys live in Android Contacts as a custom MIME row. Every intake path
+treats the key as **untrusted** until you confirm: compare the grouped fingerprint
+**in person** (or another out-of-band channel) with the other person's screen
+before saving.
+
+| Path | How |
+|------|-----|
+| **QR / link** | **My identity** shows your fingerprint, EndpointId, QR, and a shareable `saga://add-contact?…` link. Paste or open the link on the peer; confirm, then attach to an existing contact or create one with a name. |
+| **Saga keys** | List, rename (system Contacts name), move, or remove only the Saga key row. Paste a fingerprint or link to add. |
+| **NFC** | On devices with `android.hardware.nfc` / `nfc.hce`: Share via NFC (HCE, armed only while that screen is open) or Receive via NFC. Hidden when the hardware is missing (for example Galaxy Tab S6 Lite SM-P613). Device-to-device HCE is not assumed tested on every form factor. |
+| **Galdra import** | One-way import of a Galdra `sync export` SQLite file (Storage Access Framework). Only Brainpool P-256/P-384 verifying keys map to Saga fingerprints; others are marked not importable. Additive only — never deletes Contacts data. |
+
+**OpenPGP / hardware tokens (separate from Saga contact fingerprints).** For managing
+OpenPGP keys and tokens on Android, a current F-Droid candidate is
+[PGPony](https://f-droid.org/packages/com.pgpony.android/) (`com.pgpony.android`) —
+OpenPGP with hardware security key support and an OpenKeychain-compatible API.
+Checked **2026-11-26** against F-Droid. Do **not** use OpenKeychain (maintenance
+mode since 2021). PGPony helps with token/OpenPGP setup; it does **not** replace
+Saga's contact fingerprint. The OpenPGP v4 fingerprint GnuPG/PGPony show is a
+**different value** from Saga's ephemeral-session contact fingerprint (SHA-256 of
+the Brainpool AUT SEC1 key). Saga needs Brainpool P-256/P-384 AUT on Nitrokey —
+confirm that workflow against current PGPony docs when provisioning a card.
 
 ## Verifying downloads
 

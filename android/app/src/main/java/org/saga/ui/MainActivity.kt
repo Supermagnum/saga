@@ -86,6 +86,9 @@ class MainActivity : AppCompatActivity() {
         binding.openSagaKeys.setOnClickListener {
             startActivity(Intent(this, SagaKeysActivity::class.java))
         }
+        binding.openGaldraImport.setOnClickListener {
+            startActivity(Intent(this, GaldraImportActivity::class.java))
+        }
         binding.openPrivacy.setOnClickListener {
             startActivity(
                 Intent(

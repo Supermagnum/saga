@@ -320,6 +320,23 @@ object IrohNativeBridge {
         }
     }
 
+    /**
+     * Map Galdra sync-export `pgp_pubkey` bytes to Saga's 64-hex fingerprint.
+     * Null when empty, wrong curve, or native unavailable.
+     */
+    fun sagaFingerprintFromPubkey(pubkey: ByteArray): String? {
+        if (!ensureLoaded()) return null
+        return try {
+            nativeSagaFingerprintFromPubkey(pubkey)
+                ?.trim()
+                ?.lowercase()
+                ?.takeIf { ContactKeyStore.isFingerprintHex(it) }
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "sagaFingerprintFromPubkey unavailable: ${e.message}")
+            null
+        }
+    }
+
     fun meshOpen(groupId: String): Boolean {
         if (!isMeshNativeAvailable()) return false
         return nativeMeshOpen(groupId)
@@ -453,6 +470,7 @@ object IrohNativeBridge {
     private external fun nativeRekeyMedia(sessionId: String): Long
     private external fun nativeLocalEndpointId(): String?
     private external fun nativeLocalFingerprintHex(): String?
+    private external fun nativeSagaFingerprintFromPubkey(pubkey: ByteArray): String?
     private external fun nativeMeshIsAvailable(): Boolean
     private external fun nativeMeshOpen(groupId: String): Boolean
     private external fun nativeMeshAddPeer(groupId: String, linkId: String, peerId: String): Boolean
