@@ -18,6 +18,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | Gating CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | F-Droid (RFP + fdroiddata MR) | [`docs/fdroid/`](docs/fdroid/) |
 | Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
+| Maintainer OpenPGP public key | [`keys/maintainer.asc`](keys/maintainer.asc) |
 
 ## Table of contents
 
@@ -25,6 +26,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 - [What is Iroh?](#what-is-iroh)
 - [Adding contacts](#adding-contacts)
 - [Verifying downloads](#verifying-downloads)
+- [Using GnuPG](#using-gnupg)
 - [Recommended OS](#recommended-os)
 - [Galdralag hardware](#galdralag-hardware)
 - [Privacy: what Saga does and doesn't protect](#privacy-what-saga-does-and-doesnt-protect)
@@ -33,15 +35,38 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 
 ## Status
 
-Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid submission is open: [RFP #4874](https://gitlab.com/fdroid/rfp/-/work_items/4874) and [fdroiddata !59255](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/59255). `applicationId` is `org.saga` (change before publish if a final ID is chosen). See [`docs/fdroid/`](docs/fdroid/).
+Current tagged preview: **`0.1.0-preview.2`** (`versionCode` 2), tag
+[`v0.1.0-preview.2`](https://github.com/Supermagnum/saga/releases/tag/v0.1.0-preview.2).
 
-Peer long-term fingerprints and optional Iroh EndpointIds can be exchanged via **My identity** in the app (QR code or `saga://add-contact` link). The peer confirms before the key is written to Contacts; dial prefers a stored EndpointId when present.
+Implementation runs on Android emulators with contact-based dialing and encrypted
+Iroh calls. **Iroh group calls are supported in release builds** (up to four
+participants with pairwise / mesh links; Add participant on the in-call screen).
+Carrier (cellular) conference is separate and unchanged where the device supports
+it. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on
+API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android
+debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only
+(see [testing/e2e/README.md](testing/e2e/README.md)).
 
-See [`docs/test-results.md`](docs/test-results.md) for dated pass evidence (who called whom, Encrypted / messaging). Historical run notes remain in [TEST_RESULTS.md](TEST_RESULTS.md).
+F-Droid submission is open: [RFP #4874](https://gitlab.com/fdroid/rfp/-/work_items/4874)
+and [fdroiddata !59255](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/59255).
+`applicationId` is `org.saga` (change before publish if a final ID is chosen).
+See [`docs/fdroid/`](docs/fdroid/).
 
-Preview APKs (when published) are on the
-[GitHub Releases](https://github.com/Supermagnum/saga/releases) page. See
-[Verifying downloads](#verifying-downloads) before installing.
+Peer long-term fingerprints and optional Iroh EndpointIds can be exchanged via
+**My identity** in the app (QR code or `saga://add-contact` link). The peer
+confirms before the key is written to Contacts; dial prefers a stored EndpointId
+when present. Other intake paths: Saga keys list, NFC share/receive (when
+hardware is present), and Galdra sync import.
+
+See [`docs/test-results.md`](docs/test-results.md) for dated pass evidence (who
+called whom, Encrypted / messaging). Historical run notes remain in
+[TEST_RESULTS.md](TEST_RESULTS.md).
+
+Preview APKs are on the
+[GitHub Releases](https://github.com/Supermagnum/saga/releases) page. A signed
+debug APK for local verify lives in [`compiled/`](compiled/) (`SHA256SUMS` +
+GnuPG signature). See [Verifying downloads](#verifying-downloads) and
+[Using GnuPG](#using-gnupg) before installing.
 
 ## What is Iroh?
 
@@ -104,13 +129,15 @@ confirm that workflow against current PGPony docs when provisioning a card.
 
 ## Verifying downloads
 
-Release APKs are signed with the maintainer key. Before installing a preview
-build from GitHub:
+Release APKs are signed with the maintainer Android keystore. Before installing a
+preview build from GitHub:
 
-1. Download the APK and the matching `SHA256SUMS` file from the same release.
-2. Check the file hash, for example:
+1. Download the APK and the matching `SHA256SUMS` file from the same release
+   (and `SHA256SUMS.asc` when present).
+2. Prefer verifying the sums file with GnuPG first — see
+   [Using GnuPG](#using-gnupg) — then check the file hash:
    `sha256sum -c SHA256SUMS` (or compare the APK line manually).
-3. Confirm the **signing certificate** SHA-256 matches the fingerprint below
+3. Confirm the **APK signing certificate** SHA-256 matches the fingerprint below
    (not only the APK file hash).
 
 **Signing certificate SHA-256** (hex, no colons):
@@ -147,8 +174,66 @@ Unsigned build and signing steps for maintainers: [docs/release.md](docs/release
 | | |
 |--|--|
 | Encrypted call | ![Encrypted](fastlane/metadata/android/en-US/images/phoneScreenshots/01-encrypted-call.png) |
-| Group call (debug builds only; not in release) | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
+| Group call (supported in release) | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
 | Voice disguise | ![Disguise](fastlane/metadata/android/en-US/images/phoneScreenshots/05-voice-disguise-chip.png) |
+
+## Using GnuPG
+
+[GnuPG](https://gnupg.org/) (`gpg`) checks that a detached signature was made by
+a known key. Saga uses it for `compiled/SHA256SUMS.asc` (and the same pattern for
+release `SHA256SUMS` when published). This is separate from the Android APK
+signing certificate above, and separate from Nitrokey / OpenPGP Aut keys used
+inside Saga calls.
+
+**Maintainer signing key** (OpenPGP):
+
+| Field | Value |
+|-------|-------|
+| Fingerprint | `80EF2F63B22E9BC26E63B3DC80788803ED4C7A02` |
+| Public key file | [`keys/maintainer.asc`](keys/maintainer.asc) |
+| UID | [redacted] `<>` |
+
+**1. Install GnuPG** (if needed): Debian/Ubuntu `sudo apt install gnupg`; Fedora
+`sudo dnf install gnupg2`; macOS `brew install gnupg`.
+
+**2. Import the maintainer public key** from this repository:
+
+```bash
+gpg --import keys/maintainer.asc
+gpg --fingerprint 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
+```
+
+Confirm the fingerprint matches the table above before trusting signatures.
+
+**3. Verify a detached signature** next to `SHA256SUMS`:
+
+```bash
+cd compiled   # or the directory with the downloaded release files
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+A good result looks like `Good signature from "[redacted]"`. GnuPG may still
+print `WARNING: This key is not certified with a trusted signature!` until you
+assign local trust; that warning does not mean the signature failed — it means
+you have not marked the key as trusted in your own keyring yet.
+
+**4. Check the APK hash** after the signature verifies:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+**5. Optional — mark the key as ultimately trusted locally** (only after you are
+satisfied the fingerprint is correct, e.g. compared out-of-band):
+
+```bash
+gpg --edit-key 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
+# then: trust  →  5  →  y  →  quit
+```
+
+For Android OpenPGP card management (Nitrokey), prefer
+[PGPony](https://f-droid.org/packages/com.pgpony.android/) rather than desktop
+GnuPG alone; see [Adding contacts](#adding-contacts).
 
 ## Recommended OS
 

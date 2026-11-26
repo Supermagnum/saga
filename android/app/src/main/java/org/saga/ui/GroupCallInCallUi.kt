@@ -31,8 +31,8 @@ import org.saga.telecom.MultiCallActions
 import org.saga.telecom.SagaIrohConnectionRegistry
 
 /**
- * Debug-only Iroh group-call InCall UI (Add participant, roster rows, leave-group).
- * Release stub compiles this surface out — see src/release.
+ * Iroh group-call InCall UI (Add participant, roster rows, leave-group).
+ * Enabled in release and debug when [GroupCallFeatures.ENABLED] is true.
  */
 object GroupCallInCallUi {
     private val groupDowngradeShown = mutableSetOf<String>()

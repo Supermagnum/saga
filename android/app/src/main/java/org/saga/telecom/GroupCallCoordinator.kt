@@ -29,12 +29,9 @@ import org.saga.iroh.SagaDialer
 import java.util.UUID
 
 /**
- * Orchestrates Iroh group calls: promoting a 1:1 to a group, adding / removing links, the
+ * Orchestrates Iroh group calls (release and debug): promoting a 1:1 to a group,
+ * adding / removing links, the
  * Telecom Conference, and per-link security updates.
- *
- * **Debug source set only.** Release uses a no-op stub (src/release). Reason: G4/G5 failures
- * mean a group could show Encrypted without every participant's key verified — release must
- * never ship that padlock. Carrier conference (Phase 4) is unrelated and stays in release.
  *
  * Dual transport path (documented, see MeshBackend):
  * - Native mesh JNI present in IrohNativeBridge: one mesh group, one link id per peer, link

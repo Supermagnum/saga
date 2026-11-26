@@ -1,5 +1,6 @@
 0.1.0-preview.2
 • Contact key intake: QR/link, Saga keys list, NFC share/receive, Galdra import.
+• Iroh group calls enabled in release (up to four participants).
 • Galdralag hardware status documented (blocked on xous-core#937).
 • F-Droid RFP and fdroiddata metadata submitted.
 • Refreshed signed debug APK under compiled/ for local verify.

@@ -162,9 +162,9 @@ This is an early preview. It has been tested on **Android emulators only**
 (API 35 and API 29), **not on real phones**. It has **not** been security
 audited. Expect bugs.
 
-**Group calls are not included in this preview.** Iroh multi-peer / mesh group
-calling is compiled out of release builds. Carrier (cellular) conference
-behaviour is unchanged where the device supports it.
+**Iroh group calls are included** (up to four participants with pairwise /
+mesh links). Carrier (cellular) conference behaviour is unchanged where the
+device supports it.
 
 ### Encrypted calls and Nitrokey
 
