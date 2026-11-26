@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- USB Host for Nitrokey / future Galdralag CCID (Part 4). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
@@ -76,6 +77,19 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity"
             android:label="@string/licences_title" />
+
+        <activity
+            android:name=".msg.ConversationListActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="@string/msg_conversations_title" />
+
+        <activity
+            android:name=".msg.ChatActivity"
+            android:exported="false"
+            android:parentActivityName=".msg.ConversationListActivity"
+            android:label="@string/msg_action"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".token.NitrokeyPinActivity"

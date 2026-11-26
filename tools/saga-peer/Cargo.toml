@@ -27,6 +27,7 @@ iroh-roq = { git = "https://github.com/Supermagnum/iroh-roq", rev = "c9b02963a1c
 log = "0.4"
 mock-token = { path = "../../testing/mock-token" }
 saga-media = { path = "../../saga-media" }
+saga-msg = { path = "../../saga-msg" }
 saga-session = { path = "../../saga-session" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "signal"] }
 zeroize = { version = "1", features = ["derive"] }

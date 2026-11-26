@@ -251,6 +251,6 @@ decision on issue #29 and unblocks issue #41).
 ## Acceptance checklist (issue #29 Step 1)
 
 - [x] `docs/messaging-evaluation.md` exists with sourced facts per candidate.
-- [ ] Owner records A/B/C decision on issue #29 (**waiting**).
+- [x] Owner decision **C** (Part 3 / issue #41 implementation sequence).
 - [x] No A prototype (A not recommended).
-- [ ] If C confirmed: implementation proceeds under issue #41 (not this PR).
+- [x] If C confirmed: implementation proceeds under issue #41 (Part 3).

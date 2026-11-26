@@ -352,6 +352,38 @@ object IrohNativeBridge {
         IrohIncomingCallBridge.onIncomingFromNative(sessionId, lookupKey, remoteEndpointId)
     }
 
+    /**
+     * Send encrypted Saga-to-Saga text. Returns status:
+     * `delivered` / `sent` / `TOKEN_NEEDED` / `HANDSHAKE_FAILED` / `TOO_LARGE` / `NOT_REACHABLE:…`.
+     * Never logs [text].
+     */
+    fun msgSend(peerId: String, text: String): String {
+        if (!ensureLoaded()) return "TOKEN_NEEDED"
+        return try {
+            nativeMsgSend(peerId, text)
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "msgSend unavailable: ${e.message}")
+            "TOKEN_NEEDED"
+        }
+    }
+
+    fun msgSetForceTokenUnavailable(force: Boolean) {
+        if (ensureLoaded()) {
+            try {
+                nativeMsgSetForceTokenUnavailable(force)
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "msgSetForceTokenUnavailable unavailable: ${e.message}")
+            }
+        }
+    }
+
+    /** Native -> Kotlin: inbound decrypted message (content not logged). */
+    @JvmStatic
+    fun notifyMsgDelivered(peerLabel: String, text: String) {
+        Log.i(TAG, "notifyMsgDelivered peer=[$peerLabel] bytes=${text.length}")
+        org.saga.msg.MessageService.onInboundDelivered(peerLabel, text)
+    }
+
     private fun ensureLoaded(): Boolean {
         if (libraryLoaded) return true
         return try {
@@ -412,4 +444,6 @@ object IrohNativeBridge {
     private external fun nativeMeshRemovePeer(groupId: String, linkId: String)
     private external fun nativeMeshClose(groupId: String)
     private external fun nativeMeshPeerFingerprint(groupId: String, linkId: String): String?
+    private external fun nativeMsgSend(peerId: String, text: String): String
+    private external fun nativeMsgSetForceTokenUnavailable(force: Boolean)
 }

@@ -31,6 +31,20 @@ enum Command {
         #[arg(long)]
         peer: String,
     },
+    /// Listen for an encrypted Saga text message (ALPN saga/msg/1).
+    MsgListen {
+        #[command(flatten)]
+        common: CommonOpts,
+    },
+    /// Send an encrypted Saga text message.
+    MsgSend {
+        #[command(flatten)]
+        common: CommonOpts,
+        #[arg(long)]
+        peer: String,
+        #[arg(long)]
+        text: String,
+    },
     /// List cpal input/output devices (requires --features live-audio).
     Devices,
     /// Print the LAN relay URL (`http://<LAN-IP>:3340`) for peer + emulator configs.
@@ -101,6 +115,27 @@ fn main() -> Result<()> {
             let opts = to_opts(common, Some(peer), false);
             let out = rt.block_on(run_call(opts))?;
             eprintln!("done security={}", out.security);
+            Ok(())
+        }
+        Command::MsgListen { common } => {
+            let text = rt.block_on(saga_peer::run_msg_listen(
+                &common.identity,
+                common.relay.as_deref(),
+                common.public_relay,
+                common.max_secs,
+            ))?;
+            eprintln!("done msg bytes={}", text.len());
+            Ok(())
+        }
+        Command::MsgSend { common, peer, text } => {
+            let status = rt.block_on(saga_peer::run_msg_send(
+                &common.identity,
+                &peer,
+                &text,
+                common.relay.as_deref(),
+                common.public_relay,
+            ))?;
+            eprintln!("done msg status={status}");
             Ok(())
         }
     }

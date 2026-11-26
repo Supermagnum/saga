@@ -73,6 +73,10 @@ class MainActivity : AppCompatActivity() {
         binding.pickContact.setOnClickListener { launchContactPicker() }
         binding.dialIroh.setOnClickListener { placeFromInput(preferCellular = false) }
         binding.dialUnencrypted.setOnClickListener { placeFromInput(preferCellular = true) }
+        binding.openMessages.setOnClickListener {
+            startActivity(Intent(this, org.saga.msg.ConversationListActivity::class.java))
+        }
+        binding.messageContact.setOnClickListener { openMessageForInput() }
         binding.openVoiceDisguise.setOnClickListener {
             startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
         }
@@ -333,6 +337,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun isDebuggableBuild(): Boolean =
         (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+    private fun openMessageForInput() {
+        val raw = binding.peerIdInput.text?.toString()?.trim().orEmpty()
+        val target = DialTargetResolver.fromInput(this, raw, preferCellular = false)
+        val peer = when (target) {
+            is DialTarget.Iroh -> target.lookupKey
+            is DialTarget.Cellular -> target.number
+            else -> raw
+        }
+        if (peer.isBlank()) {
+            Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!org.saga.iroh.ContactKeyStore.hasResolvableKey(this, peer)) {
+            Toast.makeText(this, R.string.msg_no_key, Toast.LENGTH_LONG).show()
+            return
+        }
+        startActivity(
+            Intent(this, org.saga.msg.ChatActivity::class.java)
+                .putExtra(org.saga.msg.ChatActivity.EXTRA_PEER, peer)
+        )
+    }
 
     private fun placeFromInput(preferCellular: Boolean = false) {
         if (!isDialerRoleHeld()) {
