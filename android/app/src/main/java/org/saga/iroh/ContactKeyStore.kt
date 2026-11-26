@@ -8,9 +8,9 @@ import org.saga.contacts.ContactKeyRepository
  * Call-time key resolution bridge: Contacts MIME rows, not fixtures.
  *
  * Contact DATA1 holds the ephemeral-session long-term fingerprint as 64
- * lowercase hex ASCII (Base64-wrapped in the MIME row). Iroh EndpointIds are
- * separate: dial peers use phone-digit labels (`15550100010`), not the token
- * fingerprint.
+ * lowercase hex ASCII (Base64-wrapped in the MIME row). Optional DATA2 may hold
+ * an Iroh EndpointId; dial prefers DATA2 when present, otherwise phone-digit
+ * labels (`15550100010`). The token fingerprint itself is not a dial id.
  *
  * [hasResolvableKey] means "a stored long-term fingerprint exists for this
  * contact". A dialable phone-digit label alone is not a resolvable key

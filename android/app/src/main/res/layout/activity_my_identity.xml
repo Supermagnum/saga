@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/my_identity_title"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/my_identity_help"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/add_contact_fingerprint_label"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/fingerprint_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/add_contact_endpoint_label"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/endpoint_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/qr_image"
+            android:layout_width="256dp"
+            android:layout_height="256dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:contentDescription="@string/my_identity_qr_cd"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/link_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/copy_link"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/my_identity_copy_link" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/share_link"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/my_identity_share_link" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/paste_link"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/my_identity_paste_link" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/scan_qr"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/my_identity_scan_qr" />
+    </LinearLayout>
+</ScrollView>

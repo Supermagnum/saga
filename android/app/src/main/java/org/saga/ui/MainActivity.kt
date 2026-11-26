@@ -80,6 +80,9 @@ class MainActivity : AppCompatActivity() {
         binding.openVoiceDisguise.setOnClickListener {
             startActivity(Intent(this, VoiceDisguiseSettingsActivity::class.java))
         }
+        binding.openMyIdentity.setOnClickListener {
+            startActivity(Intent(this, MyIdentityActivity::class.java))
+        }
         binding.openPrivacy.setOnClickListener {
             startActivity(
                 Intent(

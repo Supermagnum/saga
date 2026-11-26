@@ -62,6 +62,12 @@ openpgp-card / card-backend / card-backend-pcsc (Nitrokey OpenPGP client)
 Android / Google / Jetpack libraries
   Licence: Apache-2.0 (per artifact)
 
+ZXing core (com.google.zxing:core)
+  Maven: com.google.zxing:core:3.5.3
+  Source: https://github.com/zxing/zxing
+  Licence: Apache-2.0
+  Note: FOSS QR encode/decode for add-contact links; no Play Services.
+
 Other Rust and Android dependencies
   See Cargo.lock and Gradle dependency reports for the exact set and licence
   metadata of transitive crates and AARs.

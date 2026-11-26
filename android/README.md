@@ -38,6 +38,11 @@ See [`../saga-iroh-core/README.md`](../saga-iroh-core/README.md). JNI class:
 2. Pick a contact or enter a dial target (phone number, contact name, or dev peer label).
 3. Calls resolve via `DialTargetResolver` — cellular (`tel:`) or Iroh (`saga:`) via `SagaConnectionService`.
 
+**My identity / add-contact:** Main screen → My identity shows the local fingerprint,
+optional EndpointId, and a QR / `saga://add-contact` link. Peers open the link (or
+paste/scan it) in `AddContactConfirmActivity`, confirm, then attach to an existing
+contact or create one. Dial prefers Contacts `DATA2` EndpointId when present.
+
 E2E (two emulators, local relay recommended): [`../testing/e2e/README.md`](../testing/e2e/README.md)
 
 ## Section 13 icons

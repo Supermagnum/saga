@@ -65,14 +65,20 @@ object DialTargetResolver {
             return null
         }
         ContactKeyRepository.readPublicKeyBytes(context, contactUri)?.let { keyBytes ->
+            val endpoint = ContactKeyRepository.readEndpointId(context, contactUri)
             val lookup = phone ?: contactUri.toString()
-            val peer = irohPeerForContactKey(keyBytes, phone) ?: return null
-            Log.i(TAG, "Resolved contact [${displayName ?: lookup}] to Iroh (lookup=[$lookup])")
+            val peer = irohPeerForContactKey(keyBytes, phone, endpoint) ?: return null
+            Log.i(
+                TAG,
+                "Resolved contact [${displayName ?: lookup}] to Iroh " +
+                    "(lookup=[$lookup] endpoint=[${endpoint != null}])"
+            )
             return DialTarget.Iroh(peer, lookup, contactName = displayName)
         }
         if (!phone.isNullOrBlank()) {
             ContactKeyRepository.readPublicKeyBytesForPhone(context, phone)?.let { keyBytes ->
-                val peer = irohPeerForContactKey(keyBytes, phone) ?: return@let null
+                val endpoint = ContactKeyRepository.readEndpointIdForPhone(context, phone)
+                val peer = irohPeerForContactKey(keyBytes, phone, endpoint) ?: return@let null
                 Log.i(TAG, "Resolved contact [${displayName ?: phone}] to Iroh via phone key")
                 return DialTarget.Iroh(peer, phone, contactName = displayName)
             }
@@ -116,7 +122,8 @@ object DialTargetResolver {
                     return DialTarget.Cellular(normalized)
                 }
                 ContactKeyRepository.readPublicKeyBytesForPhone(context, normalized)?.let { keyBytes ->
-                    val peer = irohPeerForContactKey(keyBytes, normalized) ?: return@let null
+                    val endpoint = ContactKeyRepository.readEndpointIdForPhone(context, normalized)
+                    val peer = irohPeerForContactKey(keyBytes, normalized, endpoint) ?: return@let null
                     Log.i(TAG, "Resolved phone [$normalized] to Iroh peer via Contacts key")
                     return DialTarget.Iroh(peer, normalized)
                 }
@@ -217,10 +224,20 @@ object DialTargetResolver {
     }
 
     /**
-     * Iroh peer id stays the phone-digit label. Token fingerprint in Contacts is
-     * only proof the contact is encrypted-capable (and for handshake trust later).
+     * Prefer optional DATA2 EndpointId when present. Otherwise fall back to the
+     * phone-digit peer label. Token fingerprint in Contacts DATA1 is proof the
+     * contact is encrypted-capable (and for handshake trust later), not a dial id.
+     *
+     * Internal so JVM unit tests can cover DATA2 preference without Contacts.
      */
-    private fun irohPeerForContactKey(keyBytes: ByteArray, phone: String?): IrohNodeId? {
+    internal fun irohPeerForContactKey(
+        keyBytes: ByteArray,
+        phone: String?,
+        endpointId: String?
+    ): IrohNodeId? {
+        endpointId?.trim()?.takeIf { it.isNotEmpty() }?.let { ep ->
+            IrohNodeId.parse(ep)?.let { return it }
+        }
         ContactKeyStore.fingerprintHexFromKeyBytes(keyBytes)?.let {
             val digits = phone?.filter { ch -> ch.isDigit() }.orEmpty()
             return IrohNodeId.parse(digits)

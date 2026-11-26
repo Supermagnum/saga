@@ -13,32 +13,58 @@ import android.util.Log
  *
  * Canonical DATA1 payload (after Base64 decode): 64 lowercase hex ASCII bytes —
  * the ephemeral-session wire fingerprint (`InitMessage::encode_fingerprint_hex`).
- * Iroh EndpointIds are not stored here.
  *
- * Dev reset (no Room migration): debug builds always delete+reinsert bob/alice/laptop/thor
- * via [TestContactSeeder] on launch, replacing legacy phone-label DATA1 rows with
- * 64-hex fingerprints. Production builds do not seed; wipe app data or clear
- * Contacts rows manually if upgrading a debug install that still has label rows.
+ * Optional DATA2: Iroh EndpointId (UTF-8 string). When present, dial resolution
+ * prefers DATA2 over phone-digit peer labels. EndpointId MAY live in DATA2;
+ * older rows leave DATA2 empty and keep dialling via phone digits.
+ *
+ * Dev reset (no Room migration): emulator debug builds delete+reinsert
+ * bob/alice/laptop/thor via [TestContactSeeder] on launch. Physical debug
+ * devices only insert missing names. Production builds do not seed.
  */
 object ContactKeyRepository {
     private const val TAG = "[Saga Contact Key Repository]"
 
-    fun writePublicKey(context: Context, rawContactId: Long, keyBytes: ByteArray): Boolean {
+    /**
+     * Write (or replace) the Saga pubkey MIME row for [rawContactId].
+     * [keyBytes] must be the 64-hex fingerprint ASCII (not already Base64).
+     * Optional [endpointId] is stored in DATA2 of the same row.
+     */
+    fun writePublicKey(
+        context: Context,
+        rawContactId: Long,
+        keyBytes: ByteArray,
+        endpointId: String? = null
+    ): Boolean {
         val encoded = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
+        val ep = endpointId?.trim()?.takeIf { it.isNotEmpty() }
         val ops = ArrayList<ContentProviderOperation>()
         ops.add(
-            ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
-                .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
-                .withValue(
-                    ContactsContract.Data.MIMETYPE,
-                    SagaContactsContract.MIME_GALDRALAG_PUBKEY
+            ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection(
+                    "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(rawContactId.toString(), SagaContactsContract.MIME_GALDRALAG_PUBKEY)
                 )
-                .withValue(ContactsContract.Data.DATA1, encoded)
                 .build()
         )
+        val insert = ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+            .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+            .withValue(
+                ContactsContract.Data.MIMETYPE,
+                SagaContactsContract.MIME_GALDRALAG_PUBKEY
+            )
+            .withValue(ContactsContract.Data.DATA1, encoded)
+        if (ep != null) {
+            insert.withValue(ContactsContract.Data.DATA2, ep)
+        }
+        ops.add(insert.build())
         return try {
             context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
-            Log.i(TAG, "Wrote saga pubkey row rawContactId=[$rawContactId] bytes=[${keyBytes.size}]")
+            Log.i(
+                TAG,
+                "Wrote saga pubkey row rawContactId=[$rawContactId] bytes=[${keyBytes.size}] " +
+                    "endpoint=[${ep != null}]"
+            )
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write saga pubkey: ${e.message}")
@@ -48,6 +74,14 @@ object ContactKeyRepository {
 
     fun writeMalformedRow(context: Context, rawContactId: Long, corruptData: String): Boolean {
         val ops = ArrayList<ContentProviderOperation>()
+        ops.add(
+            ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection(
+                    "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(rawContactId.toString(), SagaContactsContract.MIME_GALDRALAG_PUBKEY)
+                )
+                .build()
+        )
         ops.add(
             ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
                 .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
@@ -85,6 +119,25 @@ object ContactKeyRepository {
         }
     }
 
+    fun readEndpointIdByRawContactId(context: Context, rawContactId: Long): String? {
+        val cursor = context.contentResolver.query(
+            ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.Data.DATA2),
+            "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(rawContactId.toString(), SagaContactsContract.MIME_GALDRALAG_PUBKEY),
+            null
+        ) ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            return it.getString(0)?.trim()?.takeIf { s -> s.isNotEmpty() }
+        }
+    }
+
+    fun readEndpointId(context: Context, contactUri: Uri): String? {
+        val contactId = resolveContactId(context, contactUri) ?: return null
+        return queryEndpointForContactId(context, contactId)
+    }
+
     fun readPublicKeyBytesForPhone(context: Context, normalizedPhone: String): ByteArray? {
         val uri = Uri.withAppendedPath(
             ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
@@ -104,6 +157,25 @@ object ContactKeyRepository {
         }
     }
 
+    fun readEndpointIdForPhone(context: Context, normalizedPhone: String): String? {
+        val uri = Uri.withAppendedPath(
+            ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+            Uri.encode(normalizedPhone)
+        )
+        val cursor = context.contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.PhoneLookup._ID),
+            null,
+            null,
+            null
+        ) ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            val contactId = it.getLong(0)
+            return queryEndpointForContactId(context, contactId)
+        }
+    }
+
     fun hasMimeRow(context: Context, contactUri: Uri): Boolean {
         return readPublicKeyBytes(context, contactUri) != null
     }
@@ -119,6 +191,20 @@ object ContactKeyRepository {
         cursor.use {
             if (!it.moveToFirst()) return null
             return decodeData1(it.getString(0))
+        }
+    }
+
+    private fun queryEndpointForContactId(context: Context, contactId: Long): String? {
+        val cursor = context.contentResolver.query(
+            ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.Data.DATA2),
+            "${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(contactId.toString(), SagaContactsContract.MIME_GALDRALAG_PUBKEY),
+            null
+        ) ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            return it.getString(0)?.trim()?.takeIf { s -> s.isNotEmpty() }
         }
     }
 

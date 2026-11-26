@@ -1088,6 +1088,28 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalEndpointId
     }
 }
 
+/// Local ephemeral-session fingerprint (64 lowercase hex) from the mock-token
+/// identity label. Null when mock-token is not compiled in (release Nitrokey builds).
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeLocalFingerprintHex(
+    env: JNIEnv,
+    _thiz: JObject,
+) -> jni::sys::jstring {
+    #[cfg(all(feature = "mock-token", feature = "iroh-transport"))]
+    {
+        let hex = mock_token::MockIdentity::from_label(&iroh_transport::local_identity_label())
+            .fingerprint_hex_string();
+        env.new_string(hex)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }
+    #[cfg(not(all(feature = "mock-token", feature = "iroh-transport")))]
+    {
+        let _ = env;
+        std::ptr::null_mut()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Native mesh JNI (see mesh.rs). Without `mock-token` there is no token
 // backend yet, so the mesh reports unavailable and Kotlin keeps the pairwise

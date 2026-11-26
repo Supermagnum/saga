@@ -19,15 +19,61 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 | F-Droid prep (not submitted) | [`docs/fdroid/`](docs/fdroid/) |
 | Store listing metadata | [`fastlane/metadata/`](fastlane/metadata/) |
 
+## Table of contents
+
+- [Status](#status)
+- [What is Iroh?](#what-is-iroh)
+- [Verifying downloads](#verifying-downloads)
+- [Recommended OS](#recommended-os)
+- [Privacy: what Saga does and doesn't protect](#privacy-what-saga-does-and-doesnt-protect)
+- [Testing approach (summary)](#testing-approach-summary)
+- [Troubleshooting](#troubleshooting)
+
 ## Status
 
 Implementation runs on Android emulators with contact-based dialing and encrypted Iroh calls. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)). F-Droid packaging is prepared under `docs/fdroid/` — **not** submitted yet. `applicationId` remains `org.saga` until a final ID is chosen.
+
+Peer long-term fingerprints and optional Iroh EndpointIds can be exchanged via **My identity** in the app (QR code or `saga://add-contact` link). The peer confirms before the key is written to Contacts; dial prefers a stored EndpointId when present.
 
 See [`docs/test-results.md`](docs/test-results.md) for dated pass evidence (who called whom, Encrypted / messaging). Historical run notes remain in [TEST_RESULTS.md](TEST_RESULTS.md).
 
 Preview APKs (when published) are on the
 [GitHub Releases](https://github.com/Supermagnum/saga/releases) page. See
 [Verifying downloads](#verifying-downloads) before installing.
+
+## What is Iroh?
+
+[Iroh](https://www.iroh.computer/) is the peer-to-peer networking stack Saga uses for
+encrypted voice calls and Saga-to-Saga messaging. It is built by [n0](https://n0.computer/)
+and speaks **QUIC** end to end: peers address each other by cryptographic identity
+rather than by a fixed IP or hostname.
+
+**EndpointId.** Each Saga device has a long-lived Iroh **EndpointId** (public key
+identity on the Iroh network). Dialing a peer means connecting to that EndpointId.
+In this repo, debug/E2E builds often use stable phone-digit peer labels
+(for example `15550100010`) that map to deterministic Iroh keys; production-style
+ids are the usual Iroh hex / base32 forms. Contact rows store the *token*
+fingerprint separately from the EndpointId (optional Contacts `DATA2`).
+
+**Paths.** Iroh prefers a **direct** UDP/QUIC path when NAT allows it. When it
+does not, traffic goes through a **relay** (public n0 relays by default, or a
+local/custom relay for labs and E2E — see [`testing/iroh-relay/`](testing/iroh-relay/)).
+**Discovery** of which address or relay can reach an EndpointId uses n0
+**pkarr/DNS** (`dns.iroh.link` unless overridden).
+
+**How Saga uses it.**
+
+- The dialer places `saga:` calls via Contact keys / EndpointIds
+  (`DialTargetResolver` → JNI in [`saga-iroh-core/`](saga-iroh-core/)).
+- Call media rides **iroh-roq** (RTP over QUIC datagrams); after a successful
+  token handshake, media is also protected with **SRTP** (end-to-end).
+- Saga-to-Saga text uses a separate ALPN, `saga/msg/1`, with the same handshake
+  and trust rules as voice.
+
+Iroh moves packets; it does not by itself hide who you talk to or your IP. For
+what relays, discovery, and your network can observe, see
+[Privacy](#privacy-what-saga-does-and-doesnt-protect). Native build and feature
+flags: [`saga-iroh-core/README.md`](saga-iroh-core/README.md).
 
 ## Verifying downloads
 

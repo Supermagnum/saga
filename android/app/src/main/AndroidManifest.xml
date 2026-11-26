@@ -15,6 +15,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- USB Host for Nitrokey / future Galdralag CCID (Part 4). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!-- Tablets (e.g. SM-P613) may expose telephony.ims only; keep installable. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".SagaApplication"
@@ -79,6 +82,28 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity"
             android:label="@string/licences_title" />
+
+        <activity
+            android:name=".ui.MyIdentityActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="@string/my_identity_title" />
+
+        <activity
+            android:name=".ui.AddContactConfirmActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="@string/add_contact_confirm_title">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="saga"
+                    android:host="add-contact" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".msg.ConversationListActivity"

@@ -3,6 +3,7 @@ package org.saga.contacts
 import android.content.ContentProviderOperation
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.provider.ContactsContract
 import android.util.Base64
 import android.util.Log
@@ -11,13 +12,15 @@ import android.util.Log
  * Ensures bob, alice, laptop, charlene, and thor exist for E2E/manual testing.
  *
  * Saga key rows store the ephemeral-session long-term fingerprint (64 lowercase
- * hex ASCII), Base64-wrapped in DATA1. Iroh dial still uses phone-digit labels.
+ * hex ASCII), Base64-wrapped in DATA1. Iroh dial still uses phone-digit labels
+ * unless DATA2 holds an EndpointId.
  * Thor has no Saga key (cellular-only; must never resolve to an Iroh identity).
  * Laptop is the Linux saga-peer identity on a label unused by cellular fixtures.
  *
- * Dev reset: this seeder deletes and re-inserts named contacts on every debug
- * launch, so legacy phone-label key rows are replaced automatically. No Room
- * migration is required for Contacts MIME data.
+ * Emulators (debug): delete and re-insert named contacts on every launch so
+ * legacy phone-label key rows are replaced automatically.
+ * Physical / tablet devices (debug): insert only when a named contact is missing;
+ * never wipe existing bob/alice/laptop/charlene/thor rows.
  */
 object TestContactSeeder {
     private const val TAG = "[Saga Test Contact Seeder]"
@@ -56,7 +59,39 @@ object TestContactSeeder {
             Log.w(TAG, "WRITE_CONTACTS not granted; skipping test contact seed")
             return
         }
-        CONTACTS.forEach { refreshContact(appContext, it) }
+        val emulator = isEmulator()
+        if (emulator) {
+            Log.i(TAG, "Emulator debug seed: refresh (delete+insert) test contacts")
+            CONTACTS.forEach { refreshContact(appContext, it) }
+        } else {
+            Log.i(TAG, "Physical debug seed: insert only when missing (no wipe)")
+            CONTACTS.forEach { ensureContactExists(appContext, it) }
+        }
+    }
+
+    /**
+     * Emulator / AVD detection. Physical tablets (e.g. Samsung SM-P613) must not
+     * match — those keep existing contacts across launches.
+     */
+    fun isEmulator(): Boolean {
+        val fingerprint = Build.FINGERPRINT.lowercase()
+        val product = Build.PRODUCT.lowercase()
+        val model = Build.MODEL.lowercase()
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        val brand = Build.BRAND.lowercase()
+        val device = Build.DEVICE.lowercase()
+        val hardware = Build.HARDWARE.lowercase()
+        return fingerprint.contains("generic") ||
+            fingerprint.contains("emulator") ||
+            product.contains("sdk") ||
+            product.contains("emulator") ||
+            product.contains("google_sdk") ||
+            model.contains("emulator") ||
+            model.contains("android sdk") ||
+            manufacturer.contains("genymotion") ||
+            (brand.startsWith("generic") && device.startsWith("generic")) ||
+            hardware.contains("goldfish") ||
+            hardware.contains("ranchu")
     }
 
     private fun hasWriteContactsPermission(context: Context): Boolean {
@@ -66,6 +101,14 @@ object TestContactSeeder {
 
     private fun refreshContact(context: Context, seed: SeedContact) {
         deleteContactByName(context, seed.displayName)
+        insertContact(context, seed)
+    }
+
+    private fun ensureContactExists(context: Context, seed: SeedContact) {
+        if (findContactIdByName(context, seed.displayName) != null) {
+            Log.d(TAG, "Keeping existing contact [${seed.displayName}]")
+            return
+        }
         insertContact(context, seed)
     }
 

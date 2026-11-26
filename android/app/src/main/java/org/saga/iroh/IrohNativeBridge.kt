@@ -306,6 +306,20 @@ object IrohNativeBridge {
         }
     }
 
+    /**
+     * Local ephemeral-session fingerprint (64 lowercase hex) from the mock-token
+     * identity, or null when unavailable (release Nitrokey builds / native missing).
+     */
+    fun localFingerprintHex(): String? {
+        if (!ensureLoaded()) return null
+        return try {
+            nativeLocalFingerprintHex()?.trim()?.lowercase()?.takeIf { ContactKeyStore.isFingerprintHex(it) }
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "localFingerprintHex unavailable: ${e.message}")
+            null
+        }
+    }
+
     fun meshOpen(groupId: String): Boolean {
         if (!isMeshNativeAvailable()) return false
         return nativeMeshOpen(groupId)
@@ -438,6 +452,7 @@ object IrohNativeBridge {
     private external fun nativeIsSendArmed(sessionId: String): Boolean
     private external fun nativeRekeyMedia(sessionId: String): Long
     private external fun nativeLocalEndpointId(): String?
+    private external fun nativeLocalFingerprintHex(): String?
     private external fun nativeMeshIsAvailable(): Boolean
     private external fun nativeMeshOpen(groupId: String): Boolean
     private external fun nativeMeshAddPeer(groupId: String, linkId: String, peerId: String): Boolean
