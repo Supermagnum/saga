@@ -1,0 +1,19 @@
+[package]
+name = "saga-msg"
+version = "0.1.0"
+edition = "2021"
+description = "Saga encrypted 1:1 text messaging: key derivation, AEAD seal/open, padding, replay window"
+license = "AGPL-3.0-or-later"
+rust-version = "1.91"
+
+[dependencies]
+aes-gcm = "0.10"
+hkdf = "0.12"
+rand = "0.8"
+saga-session = { path = "../saga-session" }
+sha2 = "0.10"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+hex = "0.4"
