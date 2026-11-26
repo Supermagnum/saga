@@ -30,8 +30,8 @@ mod mesh;
 #[cfg(feature = "iroh-transport")]
 mod messaging;
 
-mod media_bridge;
 mod galdra_import;
+mod media_bridge;
 
 fn init_logging() {
     #[cfg(target_os = "android")]

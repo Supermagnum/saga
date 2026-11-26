@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn sec1_p256_round_trip_stable() {
         let mut sec1 = vec![0x04];
-        sec1.extend(std::iter::repeat(0x11u8).take(64));
+        sec1.extend(std::iter::repeat_n(0x11u8, 64));
         let a = saga_fingerprint_hex_from_pubkey(&sec1).unwrap();
         let b = saga_fingerprint_hex_from_pubkey(&sec1).unwrap();
         assert_eq!(a, b);
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn oid_prefixed_sec1_accepted() {
         let mut sec1 = vec![0x04];
-        sec1.extend(std::iter::repeat(0x22u8).take(64));
+        sec1.extend(std::iter::repeat_n(0x22u8, 64));
         let mut blob = OID_BP256.to_vec();
         blob.extend_from_slice(&sec1);
         let fp = saga_fingerprint_hex_from_pubkey(&blob).unwrap();
