@@ -39,13 +39,15 @@ Current tagged preview: **`0.1.0-preview.2`** (`versionCode` 2), tag
 [`v0.1.0-preview.2`](https://github.com/Supermagnum/saga/releases/tag/v0.1.0-preview.2).
 
 Implementation runs on Android emulators with contact-based dialing and encrypted
-Iroh calls. **Iroh group calls are supported in release builds** (up to four
-participants with pairwise / mesh links; Add participant on the in-call screen).
-Carrier (cellular) conference is separate and unchanged where the device supports
-it. E2E Cases 1–10 (+ conference / onboarding) pass with a **local dev relay** on
-API 35; API 29 is exercised each part. Push/PR CI covers host Rust + Android
-debug with packaged `libsaga_iroh_core.so`; two-emulator E2E stays local-only
-(see [testing/e2e/README.md](testing/e2e/README.md)).
+Iroh calls, and has also been exercised on a **Samsung Galaxy Tab S6 Lite
+(SM-P613)** as a physical peer (encrypted messaging and call answer; see
+[`docs/test-results.md`](docs/test-results.md)). **Iroh group calls are supported
+in release builds** (up to four participants with pairwise / mesh links; Add
+participant on the in-call screen). Carrier (cellular) conference is separate and
+unchanged where the device supports it. E2E Cases 1–10 (+ conference / onboarding)
+pass with a **local dev relay** on API 35; API 29 is exercised each part. Push/PR
+CI covers host Rust + Android debug with packaged `libsaga_iroh_core.so`;
+two-emulator E2E stays local-only (see [testing/e2e/README.md](testing/e2e/README.md)).
 
 F-Droid submission is open: [RFP #4874](https://gitlab.com/fdroid/rfp/-/work_items/4874)
 and [fdroiddata !59255](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/59255).
