@@ -204,7 +204,35 @@ class MainActivity : AppCompatActivity() {
                     TAG,
                     "E2E contact dial request name=[$name] force_unencrypted=[$preferCellular]"
                 )
-                placeFromInput(preferCellular = preferCellular)
+                // Bypass RoleManager dialer-role UI gate: OEM tablets (Samsung) often cannot
+                // grant ROLE_DIALER via adb. placeCall still needs an enabled PhoneAccount.
+                placeFromInputForDebug(preferCellular = preferCellular)
+            }
+            "org.saga.TEST_MSG_SEND" -> {
+                if (!isDebuggableBuild()) {
+                    Log.e(TAG, "TEST_MSG_SEND refused — not a debuggable build")
+                    return
+                }
+                val rawPeer = intent.getStringExtra("peer")
+                    ?: intent.getStringExtra("contact_name")
+                    ?: return
+                val text = intent.getStringExtra("text") ?: return
+                // Resolve display names to digit peer ids (Iroh mock-token labels).
+                val target = DialTargetResolver.fromInput(this, rawPeer, preferCellular = false)
+                val peer = when (target) {
+                    is DialTarget.Iroh -> target.peerId.raw
+                    is DialTarget.Cellular -> target.number.filter { it.isDigit() }
+                    else -> rawPeer.filter { it.isDigit() }.ifBlank { rawPeer }
+                }
+                Log.i(
+                    TAG,
+                    "E2E msg send peer=[$rawPeer] iroh=[$peer] bytes=${text.length}"
+                )
+                try {
+                    org.saga.msg.MessageService.enqueueOutbound(this, peer, text)
+                } catch (e: IllegalStateException) {
+                    Log.e(TAG, "E2E msg send refused: ${e.message}")
+                }
             }
             "org.saga.TEST_ADD_PARTICIPANT" -> {
                 // Prefer delivering this via SagaInCallActivity (keeps the live leg visible).
@@ -341,10 +369,11 @@ class MainActivity : AppCompatActivity() {
     private fun openMessageForInput() {
         val raw = binding.peerIdInput.text?.toString()?.trim().orEmpty()
         val target = DialTargetResolver.fromInput(this, raw, preferCellular = false)
+        // Iroh msg ALPN expects digit peer labels / EndpointIds, not E.164 with '+'.
         val peer = when (target) {
-            is DialTarget.Iroh -> target.lookupKey
-            is DialTarget.Cellular -> target.number
-            else -> raw
+            is DialTarget.Iroh -> target.peerId.raw
+            is DialTarget.Cellular -> target.number.filter { it.isDigit() }
+            else -> raw.filter { it.isDigit() }.ifBlank { raw }
         }
         if (peer.isBlank()) {
             Toast.makeText(this, R.string.invalid_dial_target, Toast.LENGTH_SHORT).show()
@@ -366,6 +395,11 @@ class MainActivity : AppCompatActivity() {
             requestDefaultDialerRole()
             return
         }
+        placeFromInputForDebug(preferCellular = preferCellular)
+    }
+
+    /** Debug/e2e path: resolve + place without requiring ROLE_DIALER (PA still required). */
+    private fun placeFromInputForDebug(preferCellular: Boolean = false) {
         val raw = binding.peerIdInput.text?.toString().orEmpty()
         val target = selectedContactUri?.let {
             DialTargetResolver.fromContactUri(this, it, preferCellular = preferCellular)
@@ -433,8 +467,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isDialerRoleHeld(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        return getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_DIALER)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        if (getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_DIALER)) {
+            return true
+        }
+        // Samsung One UI: RoleManager grant via adb often fails; Settings may still
+        // record the preferred dialer after settings put / user confirmation.
+        val preferred = android.provider.Settings.Secure.getString(
+            contentResolver,
+            "dialer_default_application",
+        )
+        return preferred == packageName
     }
 
     private fun updateRoleStatus() {
