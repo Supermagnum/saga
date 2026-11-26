@@ -26,6 +26,9 @@ mod iroh_transport;
 /// Native mesh (needs the token handshake, so `mock-token` until a production backend lands).
 #[cfg(feature = "mock-token")]
 mod mesh;
+/// Encrypted 1:1 text messaging (issue #41 / Part 3).
+#[cfg(feature = "iroh-transport")]
+mod messaging;
 
 mod media_bridge;
 
@@ -421,6 +424,44 @@ fn connect_peer(peer_id: &str, session_id: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "iroh-transport")]
+fn notify_msg_delivered(peer_label: &str, text: &str) {
+    let Some(vm) = JAVA_VM.get() else {
+        error!("notifyMsgDelivered: JavaVM not cached");
+        return;
+    };
+    let peer = peer_label.to_string();
+    let body = text.to_string();
+    thread::spawn(move || {
+        let mut env = match vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                error!("notifyMsgDelivered attach failed: {e}");
+                return;
+            }
+        };
+        let Some(jclass) = bridge_jclass(&mut env) else {
+            error!("notifyMsgDelivered: IrohNativeBridge class not cached");
+            return;
+        };
+        let Ok(jpeer) = env.new_string(&peer) else {
+            return;
+        };
+        let Ok(jtext) = env.new_string(&body) else {
+            return;
+        };
+        if let Err(e) = env.call_static_method(
+            &jclass,
+            "notifyMsgDelivered",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[JValue::from(&jpeer), JValue::from(&jtext)],
+        ) {
+            error!("notifyMsgDelivered failed: {e}");
+        }
+        clear_pending_exception(&mut env, "notifyMsgDelivered");
+    });
+}
+
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jint {
     init_logging();
@@ -432,6 +473,12 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jint 
     match JAVA_VM.get().unwrap().attach_current_thread() {
         Ok(mut env) => ensure_bridge_class_cached(&mut env),
         Err(e) => error!("JNI_OnLoad attach_current_thread failed: {e}"),
+    }
+    #[cfg(feature = "iroh-transport")]
+    {
+        messaging::set_on_delivered(|peer, text| {
+            notify_msg_delivered(&peer, &text);
+        });
     }
     JNI_VERSION_1_6
 }
@@ -1251,5 +1298,55 @@ pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMeshPeerFingerp
     {
         let _ = (group, link, env);
         std::ptr::null_mut()
+    }
+}
+
+/// Send encrypted text to a peer label / EndpointId. Returns a status string
+/// (`delivered` / `sent` / `TOKEN_NEEDED` / `HANDSHAKE_FAILED` / `NOT_REACHABLE:…`).
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMsgSend(
+    mut env: JNIEnv,
+    _thiz: JObject,
+    peer_id: JString,
+    text: JString,
+) -> jni::sys::jstring {
+    let (Some(peer), Some(body)) = (
+        jstring_to_rust(&mut env, &peer_id),
+        jstring_to_rust(&mut env, &text),
+    ) else {
+        return env
+            .new_string("MALFORMED")
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut());
+    };
+    #[cfg(feature = "iroh-transport")]
+    {
+        let status = messaging::send_text(&peer, &body);
+        env.new_string(status)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = (peer, body);
+        env.new_string("TOKEN_NEEDED")
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_saga_iroh_IrohNativeBridge_nativeMsgSetForceTokenUnavailable(
+    _env: JNIEnv,
+    _thiz: JObject,
+    force: jboolean,
+) {
+    #[cfg(feature = "iroh-transport")]
+    {
+        messaging::set_force_token_unavailable(force == jni::sys::JNI_TRUE);
+    }
+    #[cfg(not(feature = "iroh-transport"))]
+    {
+        let _ = force;
     }
 }

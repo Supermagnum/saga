@@ -1,15 +1,29 @@
 # Saga Test Results
 
-**Last updated:** 2026-11-18 (release gate closed — compile-out remains)
+**Last updated:** 2026-11-26 (Part 3 messaging — in progress on branch)
 
-**Status:** Release gate **BLOCKED for enabling Iroh group calls in release**.
-[#58](https://github.com/Supermagnum/saga/pull/58) merged (session-alias fix + gate
-docs). Post-merge re-check on `main` @ `fc0470a`: G2/G4/G5/G6 soak **10/10** and
-Alice35→Bob29 Case2 **PASS**. Leftovers unchanged (G6 hear-three, G11 A/B
-auto-link, G5 bob Not-encrypted UI). Group calls stay compile-out of release.
-[#30](https://github.com/Supermagnum/saga/issues/30). **STOP before Part 3.**
+**Status:** Part 3 encrypted Saga-to-Saga messaging (`saga/msg/1`) implements
+issue #41 after evaluation recommended **C** (`docs/messaging-evaluation.md`).
+Group-call release gate remains compile-out (unchanged leftovers).
 
 ---
+
+## 2026-11-26 — Part 3 messaging (`feat/saga-messaging-part3`)
+
+Branch: `feat/saga-messaging-part3` from `main` @ `0388bc1`.
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| Eval gate | **C** | `docs/messaging-evaluation.md` |
+| `saga-msg` unit tests | **PASS** | seal/open, padding buckets, replay, key directions |
+| `saga-iroh-core` messaging unit | **PASS** | ALPN distinct; TOKEN_NEEDED fault |
+| `saga-peer` host msg roundtrip | **PASS** | `host_msg_roundtrip` |
+| Android UI compile | **PASS** | `:app:compileDebugKotlin`; Message / conversations / chat / notify |
+| Call regression | **PENDING on PR** | Full suite + API29 before human merge |
+| Release hygiene | Messaging ALPN allowed in release | Mesh-join still forbidden |
+
+---
+
 
 ## 2026-11-18 — Release gate (G1–G11) + mesh session-alias fix
 

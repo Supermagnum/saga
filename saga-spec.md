@@ -1002,29 +1002,59 @@ exceed that do not ship. Measure and record latency in `TEST_RESULTS.md`.
   Saga media path (not ephemeral-session wire). Sent at media start and on
   every in-call toggle; peer shows "Caller is using voice disguise".
 
-## 17. Text messaging (evaluation gate)
+## 17. Text messaging (encrypted Saga-to-Saga)
 
 Saga does **not** become the default SMS app. Carrier SMS/MMS stay in a
-dedicated SMS client. Encrypted text between Saga contacts is gated on the
-Step 1 evaluation in issue #29.
+dedicated SMS client.
 
-**Evaluation deliverable (2026-11-15):** `docs/messaging-evaluation.md`
-compares Delta Chat, Briar, SimpleX, Conversations/Cheogram, Jami, Molly,
-Session, and Iroh-based chat experiments against the issue #29 criteria
-table (sourced facts).
+**Evaluation (2026-11-15):** `docs/messaging-evaluation.md` recommended
+**C — build in Saga**. Part 3 implements issue #41.
 
-**Evaluator recommendation:** **C — build in Saga** (no existing app meets
-required criterion 3: long-term messaging identity on an OpenPGP card /
-CCID aligned with Saga's token-backed call identity). Options A (intent
-handoff) and B (upstream contribution) do not deliver the same verified
-contacts as Encrypted calls. No Message-action prototype shipped while A
-is not recommended.
+### Transport and keys
 
-**Owner decision:** record A/B/C on issue #29 before any messaging code.
-If **C**, implement under issue #41 (separate Iroh ALPN, same
-ephemeral-session handshake / trust UX as calls, no new crypto, no silent
-unencrypted send). If **A** or **B**, close #41 and document the handoff
-or upstream plan instead.
+- Separate Iroh ALPN: `saga/msg/1` (not voice / mesh-join / RoQ).
+- Each messaging session runs the normal Saga handshake (ephemeral-session +
+  EndpointId channel binding + confirmation MACs).
+- Message keys: HKDF-Expand over `saga_session_key` with labels
+  `saga-msg-initiator-to-responder-v1` /
+  `saga-msg-responder-to-initiator-v1` plus `transcript_hash` (never media
+  or confirmation keys). Implemented in crate `saga-msg`.
+- AES-256-GCM per message; sequence-based nonce; AAD binds version / type /
+  seq / msg_id. Replay window rejects duplicates. Keys zeroized when the
+  session ends.
+- Token required for handshake. Without it, messages stay in the outbox as
+  `TOKEN_NEEDED` and are never sent unencrypted.
+
+### Delivery
+
+- Peer-to-peer only (no store-and-forward server). Both peers must be online
+  and reachable for delivery. Encrypted outbox with automatic retry; statuses
+  queued → sent → delivered / failed / token_needed.
+
+### Storage and UI
+
+- At rest: SQLite body column is AES-256-GCM under an Android Keystore key
+  (per-row AEAD; chosen over SQLCipher to avoid a second native cipher and
+  match the wire AEAD family). `allowBackup="false"` already. No message
+  content in logs.
+- Optional auto-delete timer: reserved (off by default; not wired in v1 UI).
+- Padlock per conversation; Message action on dialer and in-call screens;
+  disabled when the contact has no verified key.
+- Lock-screen notifications: title "New message", content hidden
+  (`VISIBILITY_SECRET`).
+
+### Metadata and limits
+
+- Plaintext padded to buckets 256 B / 1 KB / 4 KB before seal.
+- Delivery receipts only (encrypted ack). No read receipts or typing
+  indicators.
+- v1: text only, ≤ ~4 KB; no attachments, groups, reactions, edits, or
+  multi-device.
+
+### Host / tests
+
+- `saga-peer msg-listen` / `msg-send`; host round-trip in `saga-peer` tests.
+- Unit tests in `saga-msg` (seal/open, padding, replay).
 
 ## 18. F-Droid readiness (prepare, do not submit)
 
