@@ -23,7 +23,7 @@ Repo: https://github.com/Supermagnum/saga.git
 Builds:
   - versionName: 0.1.0-preview.2
     versionCode: 2
-    commit: d204a82f49d5524410a9c5f73797a12053f91553
+    commit: 108b49171fa56ee8311f1ede49cf0d388f63ee1f
     timeout: 14400
     subdir: android
     sudo:
@@ -48,6 +48,7 @@ Builds:
       - bash ../scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
     ndk: r27c
 
+Binaries: https://github.com/Supermagnum/saga/releases/download/v%v/saga-%v-arm64-v8a.apk
 AllowedAPKSigningKeys: 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
 
 AutoUpdateMode: None
