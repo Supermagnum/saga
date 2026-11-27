@@ -9,6 +9,7 @@ Categories:
   - Security
 License: AGPL-3.0-or-later
 AuthorName: Saga contributors
+AuthorEmail: krbjhvee@online.no
 WebSite: https://github.com/Supermagnum/saga
 SourceCode: https://github.com/Supermagnum/saga
 IssueTracker: https://github.com/Supermagnum/saga/issues
@@ -22,7 +23,7 @@ Repo: https://github.com/Supermagnum/saga.git
 Builds:
   - versionName: 0.1.0-preview.2
     versionCode: 2
-    commit: 13d29e08b2fbd11560e6f063c1e3379626efab07
+    commit: d204a82f49d5524410a9c5f73797a12053f91553
     timeout: 14400
     subdir: android
     sudo:
@@ -33,7 +34,7 @@ Builds:
     prebuild:
       - rustup toolchain install 1.94.0 --profile minimal
       - rustup default 1.94.0
-      - rustup target add aarch64-linux-android x86_64-linux-android
+      - rustup target add aarch64-linux-android
       - cargo install cargo-ndk --locked --version 3.5.4
       - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > local.properties
       - printf 'sdk.dir=%s\nndk.dir=%s\n' "$$SDK$$" "$$NDK$$" > ../local.properties
@@ -43,7 +44,7 @@ Builds:
       - export ANDROID_NDK_ROOT="$$NDK$$"
       - export SAGA_REQUIRE_NATIVE=1
       - export CMAKE_POLICY_VERSION_MINIMUM=3.5
-      - gradle assembleRelease --no-daemon -Psaga.requireNative=true
+      - gradle assembleRelease --no-daemon -Psaga.requireNative=true -Psaga.abis=arm64-v8a
       - bash ../scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
     ndk: r27c
 
