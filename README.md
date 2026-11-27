@@ -25,7 +25,7 @@ Encrypted voice calling for Android — default dialer + Iroh transport.
 - [What is Iroh?](#what-is-iroh)
 - [Adding contacts](#adding-contacts)
 - [Verifying downloads](#verifying-downloads)
-- [Using GnuPG](#using-gnupg)
+- [Managing keys with PGPony](#managing-keys-with-pgpony)
 - [Recommended OS](#recommended-os)
 - [Galdralag hardware](#galdralag-hardware)
 - [Privacy: what Saga does and doesn't protect](#privacy-what-saga-does-and-doesnt-protect)
@@ -66,8 +66,8 @@ called whom, Encrypted / messaging). Historical run notes remain in
 Preview APKs are on the
 [GitHub Releases](https://github.com/Supermagnum/saga/releases) page. A signed
 debug APK for local verify lives in [`compiled/`](compiled/) (`SHA256SUMS` +
-GnuPG signature). See [Verifying downloads](#verifying-downloads) and
-[Using GnuPG](#using-gnupg) before installing.
+optional detached signature). See [Verifying downloads](#verifying-downloads)
+before installing.
 
 ## What is Iroh?
 
@@ -117,16 +117,12 @@ before saving.
 | **NFC** | On devices with `android.hardware.nfc` / `nfc.hce`: Share via NFC (HCE, armed only while that screen is open) or Receive via NFC. Hidden when the hardware is missing (for example Galaxy Tab S6 Lite SM-P613). Device-to-device HCE is not assumed tested on every form factor. |
 | **Galdra import** | One-way import of a Galdra `sync export` SQLite file (Storage Access Framework). Only Brainpool P-256/P-384 verifying keys map to Saga fingerprints; others are marked not importable. Additive only — never deletes Contacts data. |
 
-**OpenPGP / hardware tokens (separate from Saga contact fingerprints).** For managing
-OpenPGP keys and tokens on Android, a current F-Droid candidate is
-[PGPony](https://f-droid.org/packages/com.pgpony.android/) (`com.pgpony.android`) —
-OpenPGP with hardware security key support and an OpenKeychain-compatible API.
-Checked **2026-11-26** against F-Droid. Do **not** use OpenKeychain (maintenance
-mode since 2021). PGPony helps with token/OpenPGP setup; it does **not** replace
-Saga's contact fingerprint. The OpenPGP v4 fingerprint GnuPG/PGPony show is a
-**different value** from Saga's ephemeral-session contact fingerprint (SHA-256 of
-the Brainpool AUT SEC1 key). Saga needs Brainpool P-256/P-384 AUT on Nitrokey —
-confirm that workflow against current PGPony docs when provisioning a card.
+**OpenPGP / hardware tokens (separate from Saga contact fingerprints).** Manage
+OpenPGP keys and Nitrokey cards on Android with
+[PGPony](https://f-droid.org/packages/com.pgpony.android/) — see
+[Managing keys with PGPony](#managing-keys-with-pgpony). PGPony does **not**
+replace Saga's contact fingerprint; the OpenPGP fingerprint it shows is a
+**different value** from the Saga contact fingerprint used for Encrypted calls.
 
 ## Verifying downloads
 
@@ -135,9 +131,11 @@ preview build from GitHub:
 
 1. Download the APK and the matching `SHA256SUMS` file from the same release
    (and `SHA256SUMS.asc` when present).
-2. Prefer verifying the sums file with GnuPG first — see
-   [Using GnuPG](#using-gnupg) — then check the file hash:
-   `sha256sum -c SHA256SUMS` (or compare the APK line manually).
+2. Check the file hash: `sha256sum -c SHA256SUMS` (or compare the APK line
+   manually). When a `SHA256SUMS.asc` is published, you may also verify that
+   detached signature with an OpenPGP tool (PGPony or GnuPG) against maintainer
+   fingerprint `80EF2F63B22E9BC26E63B3DC80788803ED4C7A02` — trust the
+   fingerprint only; ignore any name or email on the key.
 3. Confirm the **APK signing certificate** SHA-256 matches the fingerprint below
    (not only the APK file hash).
 
@@ -178,64 +176,58 @@ Unsigned build and signing steps for maintainers: [docs/release.md](docs/release
 | Group call (supported in release) | ![Group](fastlane/metadata/android/en-US/images/phoneScreenshots/07-group-call.png) |
 | Voice disguise | ![Disguise](fastlane/metadata/android/en-US/images/phoneScreenshots/05-voice-disguise-chip.png) |
 
-## Using GnuPG
+## Managing keys with PGPony
 
-[GnuPG](https://gnupg.org/) (`gpg`) checks that a detached signature was made by
-a known key. Saga uses it for `compiled/SHA256SUMS.asc` (and the same pattern for
-release `SHA256SUMS` when published). This is separate from the Android APK
-signing certificate above, and separate from Nitrokey / OpenPGP Aut keys used
-inside Saga calls.
+[PGPony](https://f-droid.org/packages/com.pgpony.android/) (`com.pgpony.android`)
+is the recommended Android OpenPGP app for Saga users. It manages OpenPGP keys
+and hardware security keys (Nitrokey and similar OpenPGP cards), with an
+OpenKeychain-compatible API. Do **not** use OpenKeychain (maintenance mode since
+2021). Checked against F-Droid **2026-11-27**.
 
-**Trust the fingerprint only** — ignore any name or email GnuPG may print from a
-key’s local user ID packet.
+This is separate from the Android APK signing certificate under
+[Verifying downloads](#verifying-downloads), and separate from how Saga stores
+peer contact fingerprints for Encrypted calls.
 
-| Field | Value |
-|-------|-------|
-| OpenPGP fingerprint | `80EF2F63B22E9BC26E63B3DC80788803ED4C7A02` |
+### Install from F-Droid
 
-**1. Install GnuPG** (if needed): Debian/Ubuntu `sudo apt install gnupg`; Fedora
-`sudo dnf install gnupg2`; macOS `brew install gnupg`.
+1. Install [F-Droid](https://f-droid.org/) from a trusted source if you do not
+   already have it.
+2. Open F-Droid and search for **PGPony**, or open
+   [f-droid.org/packages/com.pgpony.android](https://f-droid.org/packages/com.pgpony.android/).
+3. Install PGPony from F-Droid (preferred over sideloading an APK from elsewhere).
 
-**2. Obtain the public key** out of band (keyserver, or a copy you already trust),
-then confirm the fingerprint:
+### What PGPony covers for Saga
 
-```bash
-gpg --recv-keys 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
-# or: gpg --import path/to/pubkey.asc
-gpg --fingerprint 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
-```
+| Concern | Where |
+|---------|-------|
+| OpenPGP keys, Nitrokey / OpenPGP card setup, PINs, on-card key work | **PGPony** |
+| Peer identity for Encrypted Saga calls (contact fingerprint in Android Contacts) | **Saga** — [Adding contacts](#adding-contacts) |
+| APK signing certificate before install | AppVerifier / `apksigner` — [Verifying downloads](#verifying-downloads) |
 
-Proceed only if the fingerprint matches exactly.
+**Saga contact fingerprint ≠ OpenPGP fingerprint.** The OpenPGP v4 fingerprint
+PGPony shows is a **different value** from Saga's contact fingerprint (SHA-256
+of the Brainpool AUT SEC1 key). Confirm peer identity in Saga itself; do not
+treat a matching OpenPGP fingerprint in PGPony as confirmation of a Saga
+contact. Intake paths and confirmation rules: [Adding contacts](#adding-contacts).
 
-**3. Verify a detached signature** next to `SHA256SUMS`:
+### Practical steps
 
-```bash
-cd compiled   # or the directory with the downloaded release files
-gpg --verify SHA256SUMS.asc SHA256SUMS
-```
+1. **Install PGPony** from F-Droid as above.
+2. **Connect a Nitrokey** over USB or NFC (as your phone and key support). Saga
+   Encrypted calls need Brainpool P-256/P-384 AUT on the card — confirm that
+   curve and workflow against current PGPony docs when provisioning or
+   inspecting a card.
+3. **Generate, import, or export keys** in PGPony for OpenPGP use (token
+   management, signing, mail). Share public keys via QR, file, or text when
+   exchanging OpenPGP identity with others.
+4. **Manage the card in PGPony** (PINs, generate keys on card, reset) for
+   day-to-day Android token work rather than relying on desktop GnuPG alone.
+5. **Add Saga contacts in the Saga app** (QR / link, Saga keys list, NFC, or
+   Galdra import). PGPony's keyring and contacts list do **not** populate Saga's
+   Encrypted-call contact rows.
 
-Expect a good signature whose **primary key fingerprint** is the value above.
-GnuPG may still print `WARNING: This key is not certified with a trusted
-signature!` until you assign local trust; that does not mean the signature
-failed.
-
-**4. Check the APK hash** after the signature verifies:
-
-```bash
-sha256sum -c SHA256SUMS
-```
-
-**5. Optional — mark the key as ultimately trusted locally** (only after the
-fingerprint matches):
-
-```bash
-gpg --edit-key 80EF2F63B22E9BC26E63B3DC80788803ED4C7A02
-# then: trust  →  5  →  y  →  quit
-```
-
-For Android OpenPGP card management (Nitrokey), prefer
-[PGPony](https://f-droid.org/packages/com.pgpony.android/) rather than desktop
-GnuPG alone; see [Adding contacts](#adding-contacts).
+Optional release `SHA256SUMS.asc` verification stays under
+[Verifying downloads](#verifying-downloads) (short note only).
 
 ## Recommended OS
 
