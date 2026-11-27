@@ -19,6 +19,7 @@ AutoName: Saga
 
 RepoType: git
 Repo: https://github.com/Supermagnum/saga.git
+Binaries: https://github.com/Supermagnum/saga/releases/download/v%v/saga-%v-arm64-v8a.apk
 
 Builds:
   - versionName: 0.1.0-preview.2
@@ -48,7 +49,6 @@ Builds:
       - bash ../scripts/check-release-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk
     ndk: r27c
 
-Binaries: https://github.com/Supermagnum/saga/releases/download/v%v/saga-%v-arm64-v8a.apk
 AllowedAPKSigningKeys: 7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a
 
 AutoUpdateMode: None
