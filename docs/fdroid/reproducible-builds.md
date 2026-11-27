@@ -36,7 +36,14 @@ sha256sum /tmp/saga-a.apk /tmp/saga-b.apk
 - Native Rust/LTO and cmake Opus builds may still embed non-deterministic
   metadata unless the full F-Droid environment sets `SOURCE_DATE_EPOCH`,
   `CFLAGS`/`LDFLAGS` `-ffile-prefix-map`, and stable path layouts.
-- No signing keys are stored in this repository; F-Droid signs binaries.
+- No signing keys are stored in this repository; F-Droid signs binaries
+  unless/until `Binaries:` + developer signature verification is enabled.
 - Treat bit-identity as a goal for the fdroiddata build VM; local developer
   paths often differ. Document any remaining diff when first building in
   fdroidserver Docker.
+- **2026-11-27 (v0.1.0-preview.2):** same-host double-builds match; F-Droid
+  `fdroid build` with `Binaries:` failed because
+  `lib/arm64-v8a/libsaga_iroh_core.so` differed from the GitHub release APK
+  (F-Droid unsigned APK SHA-256
+  `2976e727ae49ac81b00e3e72fad162b4895d3929d07e0d9acb1c32af72b9debc`).
+  Recipe omits `Binaries:` until that cross-host `.so` matches.

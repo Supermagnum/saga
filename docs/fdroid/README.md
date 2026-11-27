@@ -37,20 +37,23 @@ fdroiddata MR / Fastlane package paths before F-Droid publishes.
 
 Keep `android/app/build.gradle.kts` and `org.saga.yml` in sync when bumping.
 Prior tag `v0.1.0-preview.1` remains on GitHub for the first preview release assets.
-`Binaries:` for reproducible developer-signature builds is commented in the
-recipe until signed `saga-0.1.0-preview.2-arm64-v8a.apk` is published.
 
 ## Developer signature (GitHub ↔ F-Droid updates)
 
-F-Droid should use **reproducible builds** that retain the **developer
-signature** (`Binaries:` pointing at the GitHub release APK, plus
-`AllowedAPKSigningKeys:` with the signing certificate SHA-256 hex). That way
-an install from GitHub and one from F-Droid can update each other.
+Goal: **reproducible builds** that retain the **developer signature**
+(`Binaries:` pointing at the GitHub release APK, plus
+`AllowedAPKSigningKeys:` with the signing certificate SHA-256 hex) so a
+GitHub install and an F-Droid install can update each other.
 
-[`org.saga.yml`](org.saga.yml) sets `Binaries:` to the GitHub arm64-v8a APK and
-`AllowedAPKSigningKeys:` to certificate SHA-256
+[`org.saga.yml`](org.saga.yml) currently sets `AllowedAPKSigningKeys:` to
+certificate SHA-256
 `7a6a218e8a497a51232ca11c9a10b362769c4969fa7dd26b359838a08cb7dd9a`
 (see [`../release.md`](../release.md) and README “Verifying downloads”).
+`Binaries:` is **omitted for now**: F-Droid CI compared the published
+`v0.1.0-preview.2` arm64 APK to a buildserver build and found
+`lib/arm64-v8a/libsaga_iroh_core.so` byte-different (local double-builds
+match; cross-host Rust/NDK output does not yet). Re-add `Binaries:` only
+after an F-Droid-VM-matching unsigned APK is signed and published.
 Do **not** put keystore material in this repository.
 
 ## Local checks
