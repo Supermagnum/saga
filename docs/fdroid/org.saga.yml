@@ -59,7 +59,7 @@ Repo: https://github.com/Supermagnum/saga.git
 Builds:
   - versionName: 0.1.0-preview.2
     versionCode: 2
-    commit: 108b49171fa56ee8311f1ede49cf0d388f63ee1f
+    commit: 58468ee5b20d81381286e517f3082343efdb38f8
     timeout: 14400
     subdir: android
     sudo:
