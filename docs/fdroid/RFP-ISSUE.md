@@ -63,12 +63,13 @@ Why do you want this app added to F-Droid:
 
 Summary:
 
-> Encrypted voice calling: default dialer with Iroh transport and hardware tokens
+> Encrypted voice and messaging: dialer with Iroh transport and hardware tokens.
 
 Description:
 
 > Saga is a free/libre Android dialer that places ordinary cellular calls and
-> encrypted peer-to-peer voice calls over the Iroh network.
+> encrypted peer-to-peer voice calls over the Iroh network. It also provides
+> end-to-end encrypted Saga-to-Saga text messaging over Iroh.
 >
 > Encrypted Saga calls use a hardware SessionToken for the long-term signature.
 > Supported today: Nitrokey OpenPGP cards with a Brainpool AUT key (USB).
@@ -78,8 +79,13 @@ Description:
 >
 > Transport defaults to n0 public relays (open-source relay software).
 > Discovery and call metadata are visible to those operators. Encrypted call
-> content is protected, but IP address, who you call, and timing/volume
-> metadata remain visible unless you use a system-wide privacy-focused VPN.
+> and message content is protected, but IP address, who you call or message,
+> and timing/volume metadata remain visible unless you use a system-wide
+> privacy-focused VPN.
+>
+> Verified on Android emulators (API 35 and API 29), and as a physical peer on
+> a Samsung Galaxy Tab S6 Lite (SM-P613) for encrypted messaging and call
+> answer.
 >
 > Licence: AGPL-3.0-or-later. Source: https://github.com/Supermagnum/saga
 >
