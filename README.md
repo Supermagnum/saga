@@ -1,6 +1,6 @@
 # Saga
 
-Encrypted voice calling for Android — default dialer + Iroh transport.
+Encrypted voice calling and text messaging for Android — default dialer + Iroh transport.
 
 **Canonical spec:** [saga-spec.md](saga-spec.md)
 
